@@ -1,0 +1,549 @@
+:root {
+  --text: #6b6375;
+  --text-h: #08060d;
+  --bg: #fff;
+  --border: #e5e4e7;
+  --code-bg: #f4f3ec;
+  --accent: #aa3bff;
+  --accent-bg: rgba(170, 59, 255, 0.1);
+  --accent-border: rgba(170, 59, 255, 0.5);
+  --social-bg: rgba(244, 243, 236, 0.5);
+  --shadow:
+    rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+
+  --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --mono: ui-monospace, Consolas, monospace;
+
+  font: 18px/145% var(--sans);
+  letter-spacing: 0.18px;
+  color-scheme: light dark;
+  color: var(--text);
+  background: var(--bg);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+
+  @media (max-width: 1024px) {
+    font-size: 16px;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #9ca3af;
+    --text-h: #f3f4f6;
+    --bg: #16171d;
+    --border: #2e303a;
+    --code-bg: #1f2028;
+    --accent: #c084fc;
+    --accent-bg: rgba(192, 132, 252, 0.15);
+    --accent-border: rgba(192, 132, 252, 0.5);
+    --social-bg: rgba(47, 48, 58, 0.5);
+    --shadow:
+      rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+  }
+
+  #social .button-icon {
+    filter: invert(1) brightness(2);
+  }
+}
+
+body {
+  margin: 0;
+}
+
+#root {
+  width: 1126px;
+  max-width: 100%;
+  margin: 0 auto;
+  text-align: center;
+  border-inline: 1px solid var(--border);
+  min-height: 100svh;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+}
+
+h1,
+h2 {
+  font-family: var(--heading);
+  font-weight: 500;
+  color: var(--text-h);
+}
+
+h1 {
+  font-size: 56px;
+  letter-spacing: -1.68px;
+  margin: 32px 0;
+  @media (max-width: 1024px) {
+    font-size: 36px;
+    margin: 20px 0;
+  }
+}
+h2 {
+  font-size: 24px;
+  line-height: 118%;
+  letter-spacing: -0.24px;
+  margin: 0 0 8px;
+  @media (max-width: 1024px) {
+    font-size: 20px;
+  }
+}
+p {
+  margin: 0;
+}
+
+code,
+.counter {
+  font-family: var(--mono);
+  display: inline-flex;
+  border-radius: 4px;
+  color: var(--text-h);
+}
+
+code {
+  font-size: 15px;
+  line-height: 135%;
+  padding: 4px 8px;
+  background: var(--code-bg);
+}
+/* =====================================================
+   RC MANAGER — VISUAL PROFISSIONAL E RESPONSIVO
+===================================================== */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+  margin: 0;
+}
+
+body {
+  background: #f4f7fb;
+  color: #172033;
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
+}
+
+/* Estrutura principal */
+
+.app-layout {
+  display: flex;
+  min-height: 100vh;
+  background: #f4f7fb;
+}
+
+/* Menu lateral */
+
+.app-sidebar {
+  position: sticky;
+  top: 0;
+  width: 250px;
+  min-width: 250px;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 22px 16px;
+  background:
+    linear-gradient(
+      180deg,
+      #172236 0%,
+      #1e293b 55%,
+      #111827 100%
+    );
+  color: #ffffff;
+  box-shadow: 8px 0 30px rgba(15, 23, 42, 0.12);
+  z-index: 20;
+}
+
+.sidebar-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 4px 24px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.sidebar-logo {
+  width: 58px;
+  height: 58px;
+  flex-shrink: 0;
+  object-fit: cover;
+  border-radius: 15px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+}
+
+.sidebar-brand-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+
+.sidebar-brand-text strong {
+  color: #ffffff;
+  font-size: 20px;
+  font-weight: 800;
+  line-height: 1.15;
+}
+
+.sidebar-brand-text span {
+  margin-top: 4px;
+  color: #cbd5e1;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.sidebar-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.sidebar-link {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  min-height: 52px;
+  padding: 12px 14px;
+  border: 1px solid transparent;
+  border-radius: 14px;
+  color: #f8fafc;
+  text-decoration: none;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.25;
+  transition:
+    background 0.2s ease,
+    transform 0.2s ease,
+    border-color 0.2s ease;
+}
+
+.sidebar-link:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.08);
+  transform: translateX(3px);
+}
+
+.sidebar-link-active {
+  background:
+    linear-gradient(
+      135deg,
+      rgba(37, 99, 235, 0.95),
+      rgba(79, 70, 229, 0.95)
+    );
+  color: #ffffff;
+  box-shadow: 0 8px 22px rgba(37, 99, 235, 0.28);
+}
+
+.sidebar-icon {
+  width: 27px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 21px;
+}
+
+.sidebar-label {
+  color: inherit;
+  opacity: 1;
+}
+
+/* Área das páginas */
+
+.app-main {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding: 30px;
+  background:
+    radial-gradient(
+      circle at top right,
+      rgba(59, 130, 246, 0.07),
+      transparent 32%
+    ),
+    #f4f7fb;
+}
+
+.app-content {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  max-width: 1500px;
+  margin: 0 auto;
+}
+
+/* Logo discreta no fundo */
+
+.app-watermark {
+  position: fixed;
+  right: 5%;
+  bottom: 4%;
+  z-index: 0;
+  pointer-events: none;
+  user-select: none;
+  opacity: 0.035;
+}
+
+.app-watermark img {
+  width: min(440px, 42vw);
+  height: auto;
+  border-radius: 35px;
+}
+
+/* Corrige títulos apagados */
+
+.app-main h1,
+.app-main h2,
+.app-main h3,
+.app-main h4 {
+  color: #1e293b !important;
+  opacity: 1 !important;
+  text-shadow: none !important;
+}
+
+.app-main h1 {
+  font-weight: 850 !important;
+}
+
+.app-main p,
+.app-main label,
+.app-main span {
+  opacity: 1;
+}
+
+/* Corrige números digitados invisíveis */
+
+.app-main input,
+.app-main select,
+.app-main textarea {
+  width: 100%;
+  min-height: 48px;
+  color: #111827 !important;
+  background-color: #ffffff !important;
+  caret-color: #2563eb;
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  font-size: 17px !important;
+  font-weight: 650 !important;
+  opacity: 1 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+
+.app-main input:focus,
+.app-main select:focus,
+.app-main textarea:focus {
+  outline: none;
+  border-color: #2563eb !important;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+}
+
+.app-main input::placeholder,
+.app-main textarea::placeholder {
+  color: #94a3b8 !important;
+  font-weight: 450 !important;
+  opacity: 1 !important;
+  -webkit-text-fill-color: #94a3b8 !important;
+}
+
+.app-main select option {
+  color: #111827;
+  background: #ffffff;
+}
+
+/* Remove cores claras que escondem valores */
+
+.app-main input[type="number"] {
+  color: #111827 !important;
+  -webkit-text-fill-color: #111827 !important;
+}
+
+.app-main input:disabled,
+.app-main select:disabled,
+.app-main textarea:disabled {
+  color: #475569 !important;
+  background: #eef2f7 !important;
+  opacity: 1 !important;
+  -webkit-text-fill-color: #475569 !important;
+}
+
+/* Cartões mais profissionais */
+
+.app-main section,
+.app-main article {
+  position: relative;
+}
+
+.app-main button {
+  min-height: 43px;
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+/* Responsividade para celular */
+
+@media (max-width: 760px) {
+  .app-sidebar {
+    width: 94px;
+    min-width: 94px;
+    padding: 15px 9px;
+  }
+
+  .sidebar-brand {
+    justify-content: center;
+    padding-bottom: 17px;
+  }
+
+  .sidebar-logo {
+    width: 54px;
+    height: 54px;
+  }
+
+  .sidebar-brand-text {
+    display: none;
+  }
+
+  .sidebar-menu {
+    gap: 7px;
+  }
+
+  .sidebar-link {
+    flex-direction: column;
+    justify-content: center;
+    gap: 5px;
+    min-height: 74px;
+    padding: 9px 4px;
+    border-radius: 13px;
+    text-align: center;
+  }
+
+  .sidebar-icon {
+    width: auto;
+    font-size: 22px;
+  }
+
+  .sidebar-label {
+    font-size: 11px;
+    font-weight: 750;
+    line-height: 1.15;
+  }
+
+  .app-main {
+    padding: 18px 12px;
+  }
+
+  .app-watermark {
+    right: -15%;
+    bottom: 5%;
+  }
+
+  .app-watermark img {
+    width: 320px;
+  }
+
+  .app-main h1 {
+    font-size: 31px !important;
+    line-height: 1.12;
+  }
+
+  .app-main h2 {
+    font-size: 25px !important;
+  }
+
+  .app-main input,
+  .app-main select,
+  .app-main textarea {
+    min-height: 52px;
+    font-size: 16px !important;
+  }
+}
+
+@media (max-width: 430px) {
+  .app-sidebar {
+    width: 84px;
+    min-width: 84px;
+    padding-right: 7px;
+    padding-left: 7px;
+  }
+
+  .sidebar-logo {
+    width: 48px;
+    height: 48px;
+  }
+
+  .sidebar-link {
+    min-height: 70px;
+  }
+
+  .sidebar-label {
+    font-size: 10px;
+  }
+
+  .app-main {
+    padding: 14px 9px;
+  }
+}
+.app-watermark {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.app-watermark img {
+  width: 420px;
+  max-width: 70%;
+  opacity: 0.04;
+  filter: grayscale(100%);
+  user-select: none;
+}
+
+.app-content {
+  position: relative;
+  z-index: 1;
+}
+/* Efeito de vidro nos cartões do RC Manager */
+
+.app-main section,
+.app-main article,
+.app-main .card,
+.app-main .dashboard-card,
+.app-main .summary-card,
+.app-main .stat-card {
+  background: rgba(255, 255, 255, 0.72) !important;
+  border: 1px solid rgba(255, 255, 255, 0.88) !important;
+  box-shadow:
+    0 18px 45px rgba(15, 23, 42, 0.10),
+    inset 0 1px 0 rgba(255, 255, 255, 0.85) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+.app-main button {
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    filter 0.18s ease;
+}
+
+.app-main button:hover {
+  transform: translateY(-2px);
+  filter: brightness(1.03);
+}
+
+.app-main button:active {
+  transform: translateY(0);
+}
