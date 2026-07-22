@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
+import ReceiptTemplate from "../components/receipts/ReceiptTemplate";
+import { generateReceiptPdf } from "../components/receipts/generateReceiptPdf";
 import {
   collection,
   doc,
@@ -24,6 +26,9 @@ const emptySale = {
 };
 
 export default function SalesPage() {
+  const receiptRef = useRef(null);
+  const [selectedReceiptSale, setSelectedReceiptSale] = useState(null);
+  const [showReceipt, setShowReceipt] = useState(false);
   const [clients, setClients] = useState([]);
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
@@ -518,68 +523,61 @@ export default function SalesPage() {
     }
   }
 
-  function handlePrintReceipt(currentSale) {
-    const receiptWindow = window.open("", "_blank");
+  function prepareReceiptSale(currentSale) {
+    const saleDate = currentSale.createdAt?.toDate
+      ? currentSale.createdAt.toDate()
+      : currentSale.createdAt || new Date();
 
-    if (!receiptWindow) {
-      alert("O navegador bloqueou a abertura do recibo.");
-      return;
+    let dueDate =
+      currentSale.dueDate ||
+      currentSale.paymentDueDate ||
+      currentSale.collectionDate ||
+      currentSale.dataCobranca ||
+      null;
+
+    if (!dueDate && currentSale.paymentMethod === "prazo") {
+      const calculatedDueDate = new Date(saleDate);
+      calculatedDueDate.setDate(calculatedDueDate.getDate() + 90);
+      dueDate = calculatedDueDate;
     }
 
-    const productsText = (currentSale.items || [])
-      .map(
-        (item) => `
-          <tr>
-            <td>${item.quantity}x ${item.name}</td>
-            <td>${formatCurrency(item.unitPrice)}</td>
-            <td>${formatCurrency(item.subtotal)}</td>
-          </tr>
-        `
-      )
-      .join("");
+    return {
+      ...currentSale,
+      saleDate,
+      dueDate,
+      receiptNumber:
+        currentSale.receiptNumber ||
+        String(currentSale.id || Date.now()).slice(-6),
+    };
+  }
 
-    receiptWindow.document.write(`
-      <!DOCTYPE html>
-      <html lang="pt-BR">
-        <head>
-          <meta charset="UTF-8" />
-          <title>Recibo RC Confecções</title>
-          <style>
-            body { font-family: Arial, sans-serif; padding: 35px; color: #0f172a; }
-            table { width: 100%; border-collapse: collapse; margin: 25px 0; }
-            th, td { border-bottom: 1px solid #ddd; padding: 10px; text-align: left; }
-            .total { font-size: 20px; font-weight: bold; }
-            .footer { margin-top: 50px; text-align: center; }
-          </style>
-        </head>
-        <body>
-          <h1>RC Confecções</h1>
-          <p>Recibo de venda</p>
-          <p><strong>Cliente:</strong> ${currentSale.clientName || "Não informado"}</p>
-          <p><strong>Data:</strong> ${formatDate(currentSale.createdAt)}</p>
-          <table>
-            <thead>
-              <tr>
-                <th>Produto</th>
-                <th>Preço</th>
-                <th>Subtotal</th>
-              </tr>
-            </thead>
-            <tbody>${productsText}</tbody>
-          </table>
-          <p class="total">Total: ${formatCurrency(currentSale.total)}</p>
-          <p>Recebido: ${formatCurrency(currentSale.amountPaid)}</p>
-          <p>Saldo pendente: ${formatCurrency(currentSale.pendingAmount)}</p>
-          <div class="footer">
-            ______________________________________
-            <p>RC Confecções</p>
-          </div>
-          <script>window.onload = function () { window.print(); };</script>
-        </body>
-      </html>
-    `);
+  function handleOpenReceipt(currentSale) {
+    setSelectedReceiptSale(prepareReceiptSale(currentSale));
+    setShowReceipt(true);
+  }
 
-    receiptWindow.document.close();
+  function handleCloseReceipt() {
+    setShowReceipt(false);
+    setSelectedReceiptSale(null);
+  }
+
+  async function handleDownloadReceipt() {
+    if (!receiptRef.current || !selectedReceiptSale) return;
+
+    try {
+      await generateReceiptPdf(
+        receiptRef.current,
+        selectedReceiptSale.receiptNumber
+      );
+    } catch (error) {
+      console.error("Erro ao gerar PDF do recibo:", error);
+      alert("Não foi possível gerar o PDF do recibo.");
+    }
+  }
+
+  function handlePrintReceipt() {
+    if (!selectedReceiptSale) return;
+    window.print();
   }
 
   async function handleDeleteSale(currentSale) {
@@ -1688,7 +1686,7 @@ export default function SalesPage() {
 
                       <button
                         type="button"
-                        onClick={() => handlePrintReceipt(currentSale)}
+                        onClick={() => handleOpenReceipt(currentSale)}
                         style={styles.receiptButton}
                       >
                         📄 Recibo
@@ -1709,6 +1707,68 @@ export default function SalesPage() {
           )}
         </section>
       </section>
+
+      {showReceipt && selectedReceiptSale && (
+        <div style={styles.receiptModalOverlay}>
+          <div style={styles.receiptModal}>
+            <div style={styles.receiptModalHeader}>
+              <div>
+                <strong style={styles.receiptModalTitle}>
+                  Visualizar recibo
+                </strong>
+                <span style={styles.receiptModalSubtitle}>
+                  Confira os dados antes de baixar ou imprimir.
+                </span>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCloseReceipt}
+                style={styles.receiptCloseButton}
+                aria-label="Fechar recibo"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div style={styles.receiptPreviewArea}>
+              <ReceiptTemplate
+                ref={receiptRef}
+                sale={selectedReceiptSale}
+                receiptNumber={selectedReceiptSale.receiptNumber}
+                sellerName="Robson Henrique"
+                companyName="RC Confecções"
+              />
+            </div>
+
+            <div style={styles.receiptModalActions}>
+              <button
+                type="button"
+                onClick={handleCloseReceipt}
+                style={styles.receiptCancelButton}
+              >
+                Fechar
+              </button>
+
+              <button
+                type="button"
+                onClick={handlePrintReceipt}
+                style={styles.receiptPrintButton}
+              >
+                🖨️ Imprimir
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadReceipt}
+                style={styles.receiptDownloadButton}
+              >
+                ⬇️ Baixar PDF
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2051,6 +2111,109 @@ const styles = {
     background: "#7c3aed",
     color: "#ffffff",
     fontWeight: "700",
+    cursor: "pointer",
+  },
+
+
+  receiptModalOverlay: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 9999,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: "20px",
+    background: "rgba(15, 23, 42, 0.82)",
+    backdropFilter: "blur(4px)",
+  },
+
+  receiptModal: {
+    width: "min(1180px, 100%)",
+    maxHeight: "96vh",
+    display: "flex",
+    flexDirection: "column",
+    overflow: "hidden",
+    borderRadius: "18px",
+    background: "#ffffff",
+    boxShadow: "0 30px 80px rgba(0, 0, 0, 0.35)",
+  },
+
+  receiptModalHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: "16px",
+    padding: "16px 20px",
+    borderBottom: "1px solid #e2e8f0",
+  },
+
+  receiptModalTitle: {
+    display: "block",
+    color: "#0f172a",
+    fontSize: "18px",
+  },
+
+  receiptModalSubtitle: {
+    display: "block",
+    marginTop: "3px",
+    color: "#64748b",
+    fontSize: "12px",
+  },
+
+  receiptCloseButton: {
+    width: "38px",
+    height: "38px",
+    border: 0,
+    borderRadius: "50%",
+    background: "#f1f5f9",
+    color: "#0f172a",
+    fontSize: "18px",
+    cursor: "pointer",
+  },
+
+  receiptPreviewArea: {
+    flex: 1,
+    overflow: "auto",
+    padding: "18px",
+    background: "#e2e8f0",
+  },
+
+  receiptModalActions: {
+    display: "flex",
+    justifyContent: "flex-end",
+    flexWrap: "wrap",
+    gap: "10px",
+    padding: "14px 20px",
+    borderTop: "1px solid #e2e8f0",
+  },
+
+  receiptCancelButton: {
+    border: 0,
+    borderRadius: "9px",
+    padding: "11px 16px",
+    background: "#e2e8f0",
+    color: "#334155",
+    fontWeight: "700",
+    cursor: "pointer",
+  },
+
+  receiptPrintButton: {
+    border: 0,
+    borderRadius: "9px",
+    padding: "11px 16px",
+    background: "#0f172a",
+    color: "#ffffff",
+    fontWeight: "700",
+    cursor: "pointer",
+  },
+
+  receiptDownloadButton: {
+    border: 0,
+    borderRadius: "9px",
+    padding: "11px 16px",
+    background: "#e0aa00",
+    color: "#111111",
+    fontWeight: "800",
     cursor: "pointer",
   },
 
