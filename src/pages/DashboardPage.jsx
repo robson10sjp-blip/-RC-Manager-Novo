@@ -3,27 +3,48 @@ import { onAuthStateChanged } from "firebase/auth";
 import { collection, onSnapshot } from "firebase/firestore";
 
 import { auth, db } from "../firebase/config";
+import {
+  calculateConsolidatedReceivables,
+  calculateTripFinancialSummary,
+  organizeSalesByTrip2026,
+  selectSalesForTrip,
+} from "../domain/sales";
+import { filterPayablesByTrip, summarizePayables } from "../domain/payables";
+import { toDate } from "../utils/dates";
+import "./DashboardPayables.css";
 
 export default function DashboardPage() {
   const [clients, setClients] = useState([]);
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
+  const [expenses, setExpenses] = useState([]);
+  const [payables, setPayables] = useState([]);
+  const [tripFilter, setTripFilter] = useState("all");
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let unsubscribeClients = null;
     let unsubscribeProducts = null;
     let unsubscribeSales = null;
+    let unsubscribeExpenses = null;
+    let unsubscribePayables = null;
+    let authGeneration = 0;
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      const generation = ++authGeneration;
       if (unsubscribeClients) unsubscribeClients();
       if (unsubscribeProducts) unsubscribeProducts();
       if (unsubscribeSales) unsubscribeSales();
+      if (unsubscribeExpenses) unsubscribeExpenses();
+      if (unsubscribePayables) unsubscribePayables();
+      setClients([]);
+      setProducts([]);
+      setSales([]);
+      setExpenses([]);
+      setPayables([]);
+      setLoading(Boolean(user));
 
       if (!user) {
-        setClients([]);
-        setProducts([]);
-        setSales([]);
         setLoading(false);
         return;
       }
@@ -52,6 +73,7 @@ export default function DashboardPage() {
       unsubscribeClients = onSnapshot(
         clientsReference,
         (snapshot) => {
+          if (generation !== authGeneration) return;
           const list = snapshot.docs.map((document) => ({
             id: document.id,
             ...document.data(),
@@ -60,6 +82,7 @@ export default function DashboardPage() {
           setClients(list);
         },
         (error) => {
+          if (generation !== authGeneration) return;
           console.error("Erro ao carregar clientes:", error);
         }
       );
@@ -67,6 +90,7 @@ export default function DashboardPage() {
       unsubscribeProducts = onSnapshot(
         productsReference,
         (snapshot) => {
+          if (generation !== authGeneration) return;
           const list = snapshot.docs.map((document) => ({
             id: document.id,
             ...document.data(),
@@ -75,6 +99,7 @@ export default function DashboardPage() {
           setProducts(list);
         },
         (error) => {
+          if (generation !== authGeneration) return;
           console.error("Erro ao carregar produtos:", error);
         }
       );
@@ -82,14 +107,21 @@ export default function DashboardPage() {
       unsubscribeSales = onSnapshot(
         salesReference,
         (snapshot) => {
+          if (generation !== authGeneration) return;
           const list = snapshot.docs.map((document) => ({
             id: document.id,
             ...document.data(),
           }));
 
           list.sort((first, second) => {
-            const firstDate = first.createdAt?.toMillis?.() || 0;
-            const secondDate = second.createdAt?.toMillis?.() || 0;
+            const firstDate =
+              toDate(first.saleDate)?.getTime() ||
+              first.createdAt?.toMillis?.() ||
+              0;
+            const secondDate =
+              toDate(second.saleDate)?.getTime() ||
+              second.createdAt?.toMillis?.() ||
+              0;
             return secondDate - firstDate;
           });
 
@@ -97,20 +129,96 @@ export default function DashboardPage() {
           setLoading(false);
         },
         (error) => {
+          if (generation !== authGeneration) return;
           console.error("Erro ao carregar vendas:", error);
           setLoading(false);
+        }
+      );
+
+      unsubscribeExpenses = onSnapshot(
+        collection(db, "users", user.uid, "expenses"),
+        (snapshot) => {
+          if (generation !== authGeneration) return;
+          setExpenses(
+            snapshot.docs.map((document) => ({
+              id: document.id,
+              ...document.data(),
+            }))
+          );
+        },
+        (error) => {
+          if (generation !== authGeneration) return;
+          console.error("Erro ao carregar despesas:", error);
+        }
+      );
+      unsubscribePayables = onSnapshot(
+        collection(db, "users", user.uid, "payables"),
+        (snapshot) => {
+          if (generation !== authGeneration) return;
+          setPayables(
+            snapshot.docs.map((document) => ({
+              id: document.id,
+              ...document.data(),
+            }))
+          );
+        },
+        (error) => {
+          if (generation !== authGeneration) return;
+          console.error("Erro ao carregar contas a pagar:", error);
         }
       );
     });
 
     return () => {
       unsubscribeAuth();
+      authGeneration += 1;
 
       if (unsubscribeClients) unsubscribeClients();
       if (unsubscribeProducts) unsubscribeProducts();
       if (unsubscribeSales) unsubscribeSales();
+      if (unsubscribeExpenses) unsubscribeExpenses();
+      if (unsubscribePayables) unsubscribePayables();
     };
   }, []);
+
+  const tripOrganization = useMemo(
+    () => organizeSalesByTrip2026(sales),
+    [sales]
+  );
+  const selectedSales = useMemo(
+    () => selectSalesForTrip(tripOrganization, tripFilter),
+    [tripOrganization, tripFilter]
+  );
+  const selectedExpenses = useMemo(
+    () =>
+      tripFilter === "all"
+        ? expenses
+        : tripFilter === "review"
+          ? []
+        : expenses.filter(
+            (expense) =>
+              String(expense.tripNumber || "") ===
+              (tripFilter === "third" ? "3" : tripFilter === "fourth" ? "4" : "")
+          ),
+    [expenses, tripFilter]
+  );
+  const selectedPayables = useMemo(
+    () => filterPayablesByTrip(payables, tripFilter),
+    [payables, tripFilter]
+  );
+  const tripFinancials = useMemo(
+    () => calculateTripFinancialSummary(
+      selectedSales,
+      selectedExpenses,
+      products,
+      selectedPayables
+    ),
+    [products, selectedExpenses, selectedPayables, selectedSales]
+  );
+  const payableSummary = useMemo(
+    () => summarizePayables(payables),
+    [payables]
+  );
 
   const dashboard = useMemo(() => {
     const today = new Date();
@@ -148,48 +256,36 @@ export default function DashboardPage() {
       (product) => Number(product.quantity || 0) <= 0
     );
 
-    let salesToday = 0;
-    let totalPending = 0;
-    let pendingSales = 0;
+    const tripScopedClients =
+      tripFilter === "all"
+        ? clients
+        : clients.map((client) => ({ ...client, totalDebt: 0 }));
+    const receivables = calculateConsolidatedReceivables(
+      tripScopedClients,
+      selectedSales
+    );
+    const totalPending = receivables.totalPending;
+    const pendingSales = selectedSales.filter(
+      (sale) => Number(sale.pendingAmount || 0) > 0
+    ).length;
     let receivedThisMonth = 0;
+    let selectedSalesToday = 0;
+    let sold = 0;
+    let received = 0;
 
-    const debtorMap = new Map();
-
-    for (const sale of sales) {
-      const pending = Number(sale.pendingAmount || 0);
+    for (const sale of selectedSales) {
       const amountPaid = Number(sale.amountPaid || 0);
       const total = Number(sale.total || 0);
-      const saleDate = sale.createdAt?.toDate?.();
+      const saleDate = toDate(sale.saleDate) || toDate(sale.createdAt);
+      sold += total;
+      received += amountPaid;
 
       if (
         saleDate &&
         saleDate >= startOfToday &&
         saleDate < startOfTomorrow
       ) {
-        salesToday += total;
-      }
-
-      if (pending > 0) {
-        totalPending += pending;
-        pendingSales += 1;
-
-        const current = debtorMap.get(sale.clientId) || {
-          clientId: sale.clientId,
-          clientName: sale.clientName || "Cliente",
-          pending: 0,
-          oldestSaleDate: saleDate || null,
-        };
-
-        current.pending += pending;
-
-        if (
-          saleDate &&
-          (!current.oldestSaleDate || saleDate < current.oldestSaleDate)
-        ) {
-          current.oldestSaleDate = saleDate;
-        }
-
-        debtorMap.set(sale.clientId, current);
+        selectedSalesToday += total;
       }
 
       if (saleDate && saleDate >= startOfMonth) {
@@ -197,9 +293,22 @@ export default function DashboardPage() {
       }
     }
 
-    const debtorClients = Array.from(debtorMap.values()).sort(
-      (first, second) => second.pending - first.pending
-    );
+    const debtorClients = receivables.clients
+      .filter((client) => client.totalPending > 0)
+      .map((client) => ({
+        clientId: client.clientId,
+        clientName: client.clientName,
+        pending: client.totalPending,
+      }));
+
+    if (receivables.unassignedPending > 0) {
+      debtorClients.push({
+        clientId: "unassigned",
+        clientName: "Vendas sem cliente vinculado",
+        pending: receivables.unassignedPending,
+      });
+    }
+    debtorClients.sort((first, second) => second.pending - first.pending);
 
     const priorities = [];
 
@@ -232,14 +341,24 @@ export default function DashboardPage() {
       totalPieces,
       lowStockCount: lowStockProducts.length,
       outOfStockCount: outOfStockProducts.length,
-      salesToday,
+      salesToday: selectedSalesToday,
+      sold,
+      received,
+      salesCount: selectedSales.length,
+      tripExpenses: tripFinancials.expenses,
+      tripEstimatedProfit: tripFinancials.estimatedProfit,
+      tripCostDataComplete: tripFinancials.hasCompleteCostData,
+      tripCashFlow: tripFinancials.cashFlow,
+      supplierPayments: tripFinancials.supplierPayments,
+      supplierOperationalPurchases:
+        tripFinancials.supplierOperationalPurchases,
       totalPending,
       pendingSales,
       receivedThisMonth,
       debtorClients,
       priorities,
     };
-  }, [clients, products, sales]);
+  }, [clients, products, selectedSales, tripFinancials, tripFilter]);
 
   function formatCurrency(value) {
     return Number(value || 0).toLocaleString("pt-BR", {
@@ -277,27 +396,79 @@ export default function DashboardPage() {
         </div>
       ) : (
         <>
+          <section style={styles.tripSection}>
+            <div style={styles.tripHeader}>
+              <div>
+                <h2 style={styles.cardTitle}>Resultado das vendas por viagem</h2>
+                <p style={styles.cardSubtitle}>
+                  Classificação proposta pela data da venda ou, se ausente,
+                  pela criação do registro. Nenhum dado foi alterado.
+                  {" "}Despesas vinculadas acompanham a viagem selecionada.
+                </p>
+              </div>
+
+              <label style={styles.tripFilterLabel}>
+                Viagem
+                <select
+                  value={tripFilter}
+                  onChange={(event) => setTripFilter(event.target.value)}
+                  style={styles.tripSelect}
+                >
+                  <option value="all">Geral</option>
+                  <option value="third">3ª viagem</option>
+                  <option value="fourth">4ª viagem</option>
+                  <option value="review">Revisão necessária</option>
+                </select>
+              </label>
+            </div>
+
+            <div style={styles.tripSummaryGrid}>
+              {[
+                { label: "Vendido", value: formatCurrency(dashboard.sold) },
+                { label: "Recebido", value: formatCurrency(dashboard.received) },
+                {
+                  label: "Pendente",
+                  value: formatCurrency(dashboard.totalPending),
+                },
+                { label: "Vendas", value: dashboard.salesCount },
+                {
+                  label: "Despesas vinculadas",
+                  value: formatCurrency(dashboard.tripExpenses),
+                },
+                {
+                  label: "Lucro estimado",
+                  value: dashboard.tripCostDataComplete
+                    ? formatCurrency(dashboard.tripEstimatedProfit)
+                    : "Dados de custo incompletos",
+                },
+                {
+                  label: "Fluxo de caixa",
+                  value: formatCurrency(dashboard.tripCashFlow),
+                },
+                {
+                  label: "Pagamentos a fornecedores",
+                  value: formatCurrency(dashboard.supplierPayments),
+                },
+                {
+                  label: "Compras operacionais de fornecedores",
+                  value: formatCurrency(dashboard.supplierOperationalPurchases),
+                },
+              ].map(({ label, value }) => (
+                <div key={label} style={styles.tripSummaryCard}>
+                  <span style={styles.summaryLabel}>{label}</span>
+                  <strong style={styles.summaryValue}>{value}</strong>
+                </div>
+              ))}
+            </div>
+            {tripFilter !== "all" && (
+              <p style={styles.tripNotice}>
+                Esta visão usa a classificação proposta e ainda não confirmada.
+                Apenas despesas explicitamente vinculadas são incluídas.
+              </p>
+            )}
+          </section>
+
           <section style={styles.summaryGrid}>
-            <div style={styles.summaryCardBlue}>
-              <div style={styles.iconBox}>💰</div>
-              <div>
-                <span style={styles.summaryLabel}>Vendas de hoje</span>
-                <strong style={styles.summaryValue}>
-                  {formatCurrency(dashboard.salesToday)}
-                </strong>
-              </div>
-            </div>
-
-            <div style={styles.summaryCardGreen}>
-              <div style={styles.iconBox}>💵</div>
-              <div>
-                <span style={styles.summaryLabel}>Valor a receber</span>
-                <strong style={styles.summaryValue}>
-                  {formatCurrency(dashboard.totalPending)}
-                </strong>
-              </div>
-            </div>
-
             <div style={styles.summaryCardPurple}>
               <div style={styles.iconBox}>👥</div>
               <div>
@@ -319,87 +490,32 @@ export default function DashboardPage() {
             </div>
           </section>
 
-          <section style={styles.contentGrid}>
-            <div style={styles.card}>
-              <div style={styles.cardHeader}>
-                <div>
-                  <h2 style={styles.cardTitle}>Prioridades do dia</h2>
-                  <p style={styles.cardSubtitle}>
-                    Clientes e produtos que precisam de atenção
-                  </p>
-                </div>
-
-                <span style={styles.counterBadge}>
-                  {dashboard.priorities.length} pendência(s)
-                </span>
+          <section className="dashboard-payables">
+            <div className="dashboard-payables-heading">
+              <div>
+                <p>Fornecedores</p>
+                <h2>Contas a pagar</h2>
+                <span>Visão geral das obrigações da empresa, independente do filtro de viagem acima.</span>
               </div>
-
-              {dashboard.priorities.length === 0 ? (
-                <div style={styles.empty}>
-                  <span style={styles.emptyIcon}>✅</span>
-                  <strong>Nenhuma prioridade cadastrada</strong>
-                  <p>As pendências aparecerão aqui.</p>
-                </div>
-              ) : (
-                <div style={styles.priorityList}>
-                  {dashboard.priorities.map((item) => (
-                    <article key={item.id} style={styles.priorityItem}>
-                      <div>
-                        <h3 style={styles.priorityTitle}>{item.title}</h3>
-                        <p style={styles.prioritySubtitle}>
-                          {item.subtitle}
-                        </p>
-                      </div>
-
-                      <span
-                        style={{
-                          ...styles.priorityBadge,
-                          color: item.badgeColor,
-                          background: item.badgeBackground,
-                        }}
-                      >
-                        {item.badge}
-                      </span>
-                    </article>
-                  ))}
-                </div>
-              )}
+              <a href="/financeiro">Abrir Financeiro</a>
             </div>
-
-            <div style={styles.card}>
-              <h2 style={styles.cardTitle}>Resumo rápido</h2>
-              <p style={styles.cardSubtitle}>
-                Situação atual da sua empresa
-              </p>
-
-              <div style={styles.quickList}>
-                <div style={styles.quickItem}>
-                  <span>Clientes devedores</span>
-                  <strong>{dashboard.debtorClients.length}</strong>
-                </div>
-
-                <div style={styles.quickItem}>
-                  <span>Produtos com estoque baixo</span>
-                  <strong>{dashboard.lowStockCount}</strong>
-                </div>
-
-                <div style={styles.quickItem}>
-                  <span>Produtos sem estoque</span>
-                  <strong>{dashboard.outOfStockCount}</strong>
-                </div>
-
-                <div style={styles.quickItem}>
-                  <span>Vendas pendentes</span>
-                  <strong>{dashboard.pendingSales}</strong>
-                </div>
-
-                <div style={styles.quickItem}>
-                  <span>Recebimentos do mês</span>
-                  <strong style={styles.greenText}>
-                    {formatCurrency(dashboard.receivedThisMonth)}
-                  </strong>
-                </div>
-              </div>
+            <div className="dashboard-payables-metrics">
+              <article><span>Total a pagar</span><strong>{formatCurrency(payableSummary.totalToPay)}</strong></article>
+              <article><span>Contas vencidas</span><strong>{payableSummary.overdueCount} · {formatCurrency(payableSummary.overdueTotal)}</strong></article>
+              <article><span>A vencer em 30 dias</span><strong>{payableSummary.upcomingCount} · {formatCurrency(payableSummary.upcomingTotal)}</strong></article>
+              <article><span>Total pago</span><strong>{formatCurrency(payableSummary.totalPaid)}</strong></article>
+            </div>
+            <div className="dashboard-payables-upcoming">
+              <h3>Próximos vencimentos</h3>
+              {payableSummary.upcomingItems.length ? (
+                payableSummary.upcomingItems.slice(0, 5).map((item) => (
+                  <p key={`${item.payableId}-${item.identification}-${item.dueDate.getTime()}`}>
+                    <strong>{item.dueDate.toLocaleDateString("pt-BR")}</strong> · {item.supplierName} · {item.method === "cheque" ? "Cheque" : "Parcela"} {item.identification ? `#${item.identification}` : ""} · {formatCurrency(item.amount)}
+                  </p>
+                ))
+              ) : (
+                <p>Nenhum vencimento previsto para os próximos 30 dias.</p>
+              )}
             </div>
           </section>
         </>
@@ -470,6 +586,62 @@ const styles = {
     marginBottom: "22px",
   },
 
+  tripSection: {
+    marginBottom: "22px",
+    padding: "22px",
+    borderRadius: "18px",
+    background: "#ffffff",
+    border: "1px solid #e2e8f0",
+    boxShadow: "0 10px 25px rgba(15, 23, 42, 0.06)",
+  },
+
+  tripHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    gap: "16px",
+    flexWrap: "wrap",
+    marginBottom: "18px",
+  },
+
+  tripFilterLabel: {
+    display: "grid",
+    gap: "6px",
+    color: "#475569",
+    fontSize: "13px",
+    fontWeight: "700",
+  },
+
+  tripSelect: {
+    minWidth: "190px",
+    padding: "10px 12px",
+    border: "1px solid #cbd5e1",
+    borderRadius: "10px",
+    background: "#ffffff",
+    color: "#0f172a",
+    font: "inherit",
+  },
+
+  tripSummaryGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+    gap: "12px",
+  },
+
+  tripSummaryCard: {
+    padding: "15px",
+    borderRadius: "13px",
+    background: "#f8fafc",
+    border: "1px solid #e2e8f0",
+  },
+
+  tripNotice: {
+    margin: "14px 0 0",
+    color: "#64748b",
+    fontSize: "13px",
+    lineHeight: 1.5,
+  },
+
   summaryCardBlue: {
     display: "flex",
     alignItems: "center",
@@ -535,28 +707,6 @@ const styles = {
     fontSize: "22px",
   },
 
-  contentGrid: {
-    display: "grid",
-    gridTemplateColumns:
-      "repeat(auto-fit, minmax(320px, 1fr))",
-    gap: "22px",
-  },
-
-  card: {
-    padding: "24px",
-    borderRadius: "18px",
-    background: "#ffffff",
-    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.08)",
-  },
-
-  cardHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: "15px",
-    flexWrap: "wrap",
-  },
-
   cardTitle: {
     margin: "0 0 7px",
     fontSize: "21px",
@@ -566,85 +716,5 @@ const styles = {
     margin: 0,
     color: "#64748b",
     fontSize: "14px",
-  },
-
-  counterBadge: {
-    padding: "6px 10px",
-    borderRadius: "999px",
-    background: "#dbeafe",
-    color: "#2563eb",
-    fontSize: "12px",
-    fontWeight: "800",
-  },
-
-  empty: {
-    minHeight: "260px",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    textAlign: "center",
-    color: "#64748b",
-  },
-
-  emptyIcon: {
-    marginBottom: "12px",
-    fontSize: "42px",
-  },
-
-  priorityList: {
-    display: "grid",
-    gap: "12px",
-    marginTop: "20px",
-  },
-
-  priorityItem: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "14px",
-    padding: "15px",
-    borderRadius: "13px",
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
-  },
-
-  priorityTitle: {
-    margin: "0 0 5px",
-    fontSize: "16px",
-  },
-
-  prioritySubtitle: {
-    margin: 0,
-    color: "#64748b",
-    fontSize: "13px",
-  },
-
-  priorityBadge: {
-    padding: "5px 9px",
-    borderRadius: "999px",
-    fontSize: "11px",
-    fontWeight: "800",
-    whiteSpace: "nowrap",
-  },
-
-  quickList: {
-    display: "grid",
-    gap: "0",
-    marginTop: "18px",
-  },
-
-  quickItem: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "14px",
-    padding: "15px 0",
-    borderBottom: "1px solid #e2e8f0",
-    color: "#475569",
-  },
-
-  greenText: {
-    color: "#16a34a",
   },
 };

@@ -8,6 +8,7 @@ import SalesPage from "./pages/SalesPage";
 import StockPage from "./pages/StockPage";
 import FinancePage from "./pages/FinancePage";
 import IntelligencePage from "./pages/IntelligencePage";
+import SuppliersPage from "./pages/SuppliersPage";
 
 import Layout from "./components/Layout";
 
@@ -25,6 +26,7 @@ function App() {
         <Route path="/vendas" element={<SalesPage />} />
         <Route path="/estoque" element={<StockPage />} />
         <Route path="/financeiro" element={<FinancePage />} />
+        <Route path="/fornecedores" element={<SuppliersPage />} />
         <Route path="/inteligencia" element={<IntelligencePage />} />
       </Route>
 

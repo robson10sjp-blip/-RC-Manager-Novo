@@ -1,0 +1,114 @@
+.dashboard-payables {
+  margin-bottom: 22px;
+  padding: 20px;
+  border: 1px solid #e2e8f0;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 10px 25px rgba(15, 23, 42, 0.06);
+}
+
+.dashboard-payables-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+
+.dashboard-payables-heading p {
+  margin: 0;
+  color: #2563eb;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dashboard-payables-heading h2 {
+  margin: 3px 0;
+  color: #1f2e43;
+  font-size: 19px;
+}
+
+.dashboard-payables-heading span {
+  color: #6b788c;
+  font-size: 12px;
+}
+
+.dashboard-payables-heading a {
+  flex-shrink: 0;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: #eff6ff;
+  color: #235391;
+  font-size: 11px;
+  font-weight: 750;
+  text-decoration: none;
+}
+
+.dashboard-payables-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dashboard-payables-metrics article {
+  display: grid;
+  gap: 7px;
+  padding: 13px;
+  border: 1px solid #e8edf3;
+  border-radius: 11px;
+  background: #f8fafc;
+}
+
+.dashboard-payables-metrics span {
+  color: #6c788b;
+  font-size: 11px;
+}
+
+.dashboard-payables-metrics strong {
+  color: #25364d;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-payables-upcoming {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+
+.dashboard-payables-upcoming h3 {
+  margin: 0 0 7px;
+  color: #43536b;
+  font-size: 12px;
+}
+
+.dashboard-payables-upcoming p {
+  margin: 5px 0;
+  color: #65738a;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+@media (max-width: 760px) {
+  .dashboard-payables-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-payables {
+    padding: 15px;
+  }
+
+  .dashboard-payables-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .dashboard-payables-metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

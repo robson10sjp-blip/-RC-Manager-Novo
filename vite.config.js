@@ -6,6 +6,22 @@ export default defineConfig({
   plugins: [
     react(),
 
+    {
+      name: "rc-safe-demo-entry",
+      apply: "serve",
+      configureServer(server) {
+        if (server.config.mode === "readonly") return;
+
+        server.middlewares.use((request, response, next) => {
+          if (request.url === "/") {
+            request.url = "/preview.html";
+          }
+
+          next();
+        });
+      },
+    },
+
     VitePWA({
       registerType: "autoUpdate",
 

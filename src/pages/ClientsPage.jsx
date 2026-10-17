@@ -1,20 +1,23 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import {
-    runTransaction,
-  addDoc,
   getDocs,
   collection,
-  deleteDoc,
   doc,
   onSnapshot,
   orderBy,
   query,
   serverTimestamp,
-  updateDoc,
 } from "firebase/firestore";
 
 import { auth, db } from "../firebase/config";
+import {
+  addDoc,
+  deleteDoc,
+  runTransaction,
+  updateDoc,
+} from "../firebase/firestoreAccess";
+import { analyzeLegacyBalances } from "../domain/sales";
 
 const emptyForm = {
   name: "",
@@ -31,26 +34,38 @@ const emptyForm = {
 
 export default function ClientsPage() {
   const [clients, setClients] = useState([]);
+  const [sales, setSales] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
   const [searchText, setSearchText] = useState("");
   const [loadingClients, setLoadingClients] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [receivingClientId, setReceivingClientId] = useState(null);
+  const receivingClientLock = useRef(false);
 
   useEffect(() => {
     let unsubscribeClients = null;
+    let unsubscribeSales = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (unsubscribeClients) {
         unsubscribeClients();
         unsubscribeClients = null;
       }
+      if (unsubscribeSales) {
+        unsubscribeSales();
+        unsubscribeSales = null;
+      }
+
+      setClients([]);
+      setSales([]);
 
       if (!user) {
-        setClients([]);
         setLoadingClients(false);
         return;
       }
+
+      setLoadingClients(true);
 
       const clientsReference = collection(
         db,
@@ -83,6 +98,22 @@ export default function ClientsPage() {
           setLoadingClients(false);
         }
       );
+
+      unsubscribeSales = onSnapshot(
+        collection(db, "users", user.uid, "sales"),
+        (snapshot) => {
+          setSales(
+            snapshot.docs.map((document) => ({
+              id: document.id,
+              ...document.data(),
+            }))
+          );
+        },
+        (error) => {
+          console.error("Erro ao carregar compras dos clientes:", error);
+          alert(`Erro ao carregar compras dos clientes: ${error.message}`);
+        }
+      );
     });
 
     return () => {
@@ -90,6 +121,9 @@ export default function ClientsPage() {
 
       if (unsubscribeClients) {
         unsubscribeClients();
+      }
+      if (unsubscribeSales) {
+        unsubscribeSales();
       }
     };
   }, []);
@@ -127,6 +161,50 @@ export default function ClientsPage() {
     );
   }, [clients]);
 
+  const salesByClient = useMemo(() => {
+    const byClient = new Map();
+
+    for (const sale of sales) {
+      if (!sale.clientId) continue;
+
+      const current = byClient.get(sale.clientId) || {
+        count: 0,
+        pending: 0,
+      };
+
+      current.count += 1;
+      current.pending += Number(sale.pendingAmount || 0);
+      byClient.set(sale.clientId, current);
+    }
+
+    return byClient;
+  }, [sales]);
+
+  const totalOpenPurchases = useMemo(
+    () =>
+      sales.reduce(
+        (total, sale) => total + Number(sale.pendingAmount || 0),
+        0
+      ),
+    [sales]
+  );
+
+  const reconciliation = useMemo(
+    () => analyzeLegacyBalances(clients, sales),
+    [clients, sales]
+  );
+
+  const reconciliationCandidates = useMemo(
+    () => reconciliation.filter((entry) => entry.needsReview),
+    [reconciliation]
+  );
+  const legacyOnlyCount = reconciliation.filter(
+    (entry) => entry.hasLegacyOnly
+  ).length;
+  const purchasesOnlyCount = reconciliation.filter(
+    (entry) => entry.hasPurchasesOnly
+  ).length;
+
   function handleChange(event) {
     const { name, value } = event.target;
 
@@ -141,6 +219,8 @@ export default function ClientsPage() {
     setEditingId(null);
   }
 async function handleReceivePayment(client) {
+  if (receivingClientLock.current) return;
+
   const user = auth.currentUser;
 
   if (!user) {
@@ -150,11 +230,19 @@ async function handleReceivePayment(client) {
 
   const currentBalance = Number(client.totalDebt || 0);
 
+  if (salesByClient.has(client.id)) {
+    alert(
+      "Este cliente possui compras registradas. Para não misturar o saldo antigo com uma compra, registre cada recebimento na venda correspondente pela tela Financeiro."
+    );
+    return;
+  }
+
   if (currentBalance <= 0) {
     alert("Este cliente já está com o saldo pago.");
     return;
   }
 
+  receivingClientLock.current = true;
   const typedValue = window.prompt(
     `Saldo atual de ${client.name}: ${formatCurrency(
       currentBalance
@@ -162,6 +250,7 @@ async function handleReceivePayment(client) {
   );
 
   if (typedValue === null) {
+    receivingClientLock.current = false;
     return;
   }
 
@@ -171,15 +260,19 @@ async function handleReceivePayment(client) {
 
   if (!paymentValue || paymentValue <= 0) {
     alert("Digite um valor válido.");
+    receivingClientLock.current = false;
     return;
   }
 
   if (paymentValue > currentBalance) {
     alert("O valor recebido não pode ser maior que o saldo.");
+    receivingClientLock.current = false;
     return;
   }
 
   try {
+    setReceivingClientId(client.id);
+
     const clientReference = doc(
       db,
       "users",
@@ -198,7 +291,6 @@ async function handleReceivePayment(client) {
         "payments"
       )
     );
-
     await runTransaction(db, async (transaction) => {
       const clientSnapshot = await transaction.get(clientReference);
 
@@ -209,6 +301,12 @@ async function handleReceivePayment(client) {
       const savedBalance = Number(
         clientSnapshot.data().totalDebt || 0
       );
+
+      if (paymentValue > savedBalance) {
+        throw new Error(
+          `O saldo histórico atual é ${formatCurrency(savedBalance)}.`
+        );
+      }
 
       const updatedBalance = Math.max(
         savedBalance - paymentValue,
@@ -240,6 +338,9 @@ async function handleReceivePayment(client) {
   } catch (error) {
     console.error("Erro ao registrar pagamento:", error);
     alert(`Erro ao registrar pagamento: ${error.message}`);
+  } finally {
+    receivingClientLock.current = false;
+    setReceivingClientId(null);
   }
 }
 function getClientStatus(client) {
@@ -419,6 +520,13 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
       return;
     }
 
+    if (salesByClient.has(client.id)) {
+      alert(
+        "Este cliente possui compras vinculadas. Não é possível excluí-lo sem preservar a associação das compras."
+      );
+      return;
+    }
+
     const confirmed = window.confirm(
       `Deseja realmente excluir o cliente ${client.name}?`
     );
@@ -462,9 +570,11 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
       : `55${phone}`;
 
     const message = encodeURIComponent(
-      `Olá, ${client.nickname || client.name}! Tudo bem? Estou entrando em contato pela RC Confecções sobre seu saldo de ${formatCurrency(
-        client.totalDebt
-      )}.`
+      salesByClient.has(client.id)
+        ? `Olá, ${client.nickname || client.name}! Tudo bem? Estou entrando em contato pela RC Confecções. Suas compras estão registradas separadamente; vou confirmar com você cada saldo em aberto.`
+        : `Olá, ${client.nickname || client.name}! Tudo bem? Estou entrando em contato pela RC Confecções sobre seu saldo histórico de ${formatCurrency(
+            client.totalDebt
+          )}.`
     );
 
     window.open(
@@ -499,13 +609,64 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
           </div>
 
           <div style={styles.counter}>
-            <span style={styles.counterLabel}>Total a receber</span>
+            <span style={styles.counterLabel}>Saldo histórico agregado</span>
             <strong style={styles.moneyValue}>
               {formatCurrency(totalToReceive)}
             </strong>
           </div>
+
+          <div style={styles.counter}>
+            <span style={styles.counterLabel}>Compras abertas</span>
+            <strong style={styles.moneyValue}>
+              {formatCurrency(totalOpenPurchases)}
+            </strong>
+          </div>
         </div>
       </header>
+
+      <section style={{ ...styles.card, marginBottom: "22px" }}>
+        <h2 style={styles.cardTitle}>Conciliação de saldos históricos</h2>
+        <p style={styles.helperText}>
+          Comparação somente para revisão. Não altera clientes, compras ou pagamentos.
+          O saldo legado pode já incluir compras antigas; não some nem migre os valores
+          sem confirmar os registros e recibos de origem.
+        </p>
+        <div style={styles.reconciliationSummary}>
+          <span>{reconciliationCandidates.length} cliente(s) com possível sobreposição</span>
+          <span>{legacyOnlyCount} somente com saldo legado</span>
+          <span>{purchasesOnlyCount} somente com compras</span>
+        </div>
+
+        {loadingClients ? (
+          <p style={styles.clientInfo}>Carregando saldos para comparação...</p>
+        ) : reconciliationCandidates.length === 0 ? (
+          <p style={styles.clientInfo}>
+            Nenhum cliente tem simultaneamente saldo legado e saldo pendente em compras
+            nesta leitura.
+          </p>
+        ) : (
+          <div style={styles.reconciliationList}>
+            {reconciliationCandidates.map((entry) => (
+              <article
+                key={entry.clientId}
+                style={styles.reconciliationItem}
+              >
+                <strong>{entry.clientName}</strong>
+                <span>Saldo legado: {formatCurrency(entry.legacyBalance)}</span>
+                <span>Compras abertas: {formatCurrency(entry.purchaseBalance)}</span>
+                <span>
+                  Diferença matemática (não é valor para migração):{" "}
+                  {formatCurrency(entry.difference)}
+                </span>
+                <small>
+                  Conferir histórico de compras e recebimentos antes de qualquer
+                  ajuste. Valores podem representar a mesma dívida.
+                </small>
+              </article>
+            ))}
+          </div>
+        )}
+      </section>
 
       <section style={styles.grid}>
         <form onSubmit={handleSubmit} style={styles.card}>
@@ -633,7 +794,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
           </div>
 
           <label style={styles.label}>
-            Valor a receber
+            Saldo legado/agregado (não conciliado)
             <input
               type="number"
               name="totalDebt"
@@ -642,9 +803,18 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
               placeholder="0,00"
               min="0"
               step="0.01"
-              disabled={saving}
+              disabled={
+                saving ||
+                Boolean(editingId && salesByClient.has(editingId))
+              }
               style={styles.input}
             />
+            <span style={styles.helperText}>
+              Saldo histórico preservado. Compras novas e seus recebimentos são controlados individualmente.
+              {editingId && salesByClient.has(editingId)
+                ? " Não alterável enquanto houver compras registradas."
+                : ""}
+            </span>
           </label>
 
           <label style={styles.label}>
@@ -708,18 +878,25 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
             </div>
           ) : (
             <div style={styles.list}>
-              {filteredClients.map((client) => (
+              {filteredClients.map((client) => {
+                const purchases = salesByClient.get(client.id);
+                const hasOpenPurchase = Number(purchases?.pending || 0) > 0;
+                const clientStatus = getClientStatus(client);
+
+                return (
                 <article key={client.id} style={styles.clientItem}>
                   <div style={styles.clientContent}>
-     <span
-  style={{
-    ...styles.statusBadge,
-    color: getClientStatus(client).color,
-    background: getClientStatus(client).background,
-  }}
->
-  {getClientStatus(client).label}
-</span>
+                    <span
+                      style={{
+                        ...styles.statusBadge,
+                        color: hasOpenPurchase ? "#dc2626" : clientStatus.color,
+                        background: hasOpenPurchase
+                          ? "#fee2e2"
+                          : clientStatus.background,
+                      }}
+                    >
+                      {hasOpenPurchase ? "Compra em aberto" : clientStatus.label}
+                    </span>
                     <h3 style={styles.clientName}>{client.name}</h3>
 
                     {client.nickname && (
@@ -749,21 +926,43 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
 
                   <div style={styles.rightArea}>
                     <div style={styles.debtBox}>
-                      <span style={styles.debtLabel}>A receber</span>
+                      <span style={styles.debtLabel}>
+                        Saldo histórico agregado
+                      </span>
 
                       <strong style={styles.debtValue}>
                         {formatCurrency(client.totalDebt)}
                       </strong>
                     </div>
 
+                    {purchases && (
+                      <div style={styles.debtBox}>
+                        <span style={styles.debtLabel}>
+                          {purchases.count} compra(s) • saldo em compras
+                        </span>
+                        <strong style={styles.debtValue}>
+                          {formatCurrency(purchases.pending)}
+                        </strong>
+                      </div>
+                    )}
+
                     <div style={styles.actions}>
+                      {purchases ? (
+                        <span style={styles.helperText}>
+                          Para não misturar saldos, receba cada compra pela tela Financeiro.
+                        </span>
+                      ) : (
                         <button
-  type="button"
-  onClick={() => handleReceivePayment(client)}
-  style={styles.receiveButton}
->
-  Receber
-</button>
+                          type="button"
+                          onClick={() => handleReceivePayment(client)}
+                          disabled={receivingClientId === client.id}
+                          style={styles.receiveButton}
+                        >
+                          {receivingClientId === client.id
+                            ? "Registrando..."
+                            : "Receber saldo legado"}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => handleShowHistory(client)}
@@ -799,7 +998,8 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                     </div>
                   </div>
                 </article>
-              ))}
+                );
+              })}
             </div>
           )}
         </section>
@@ -874,7 +1074,7 @@ const styles = {
 
   grid: {
     display: "grid",
-    gridTemplateColumns: "minmax(280px, 360px) minmax(0, 1fr)",
+    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
     gap: "22px",
   },
 
@@ -883,6 +1083,32 @@ const styles = {
     borderRadius: "18px",
     background: "#ffffff",
     boxShadow: "0 10px 30px rgba(15, 23, 42, 0.08)",
+  },
+
+  reconciliationList: {
+    display: "grid",
+    gap: "10px",
+  },
+
+  reconciliationSummary: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+    marginBottom: "14px",
+    color: "#475569",
+    fontSize: "12px",
+  },
+
+  reconciliationItem: {
+    display: "grid",
+    gap: "5px",
+    padding: "14px",
+    border: "1px solid #fde68a",
+    borderRadius: "12px",
+    background: "#fffbeb",
+    color: "#475569",
+    overflowWrap: "anywhere",
+    fontSize: "13px",
   },
 
   formHeader: {

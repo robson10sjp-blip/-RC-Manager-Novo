@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:readonly": "vite --mode readonly",
     "build": "vite build",
     "lint": "eslint .",
+    "test": "node --test src/domain/*.test.js src/firebase/*.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

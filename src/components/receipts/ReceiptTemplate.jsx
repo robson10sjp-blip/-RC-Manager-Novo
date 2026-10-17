@@ -227,6 +227,11 @@ const number = savedNumber
             <p>
               Nº <strong>{String(number).padStart(6, '0')}</strong>
             </p>
+            {sale.id && (
+              <p>
+                COMPRA <strong>{String(sale.id).slice(0, 8)}</strong>
+              </p>
+            )}
           </section>
         </header>
 
@@ -261,6 +266,21 @@ const number = savedNumber
                 </span>
               </div>
             </div>
+
+            {(sale.tripName || sale.tripCity) && (
+              <div className="rc-information-row">
+                <div className="rc-information-icon">⌖</div>
+
+                <div className="rc-information-content">
+                  <strong>VIAGEM / CIDADE:</strong>
+                  <span>
+                    {[sale.tripName, sale.tripCity]
+                      .filter(Boolean)
+                      .join(' • ')}
+                  </span>
+                </div>
+              </div>
+            )}
 
             <div className="rc-information-row">
               <div className="rc-information-icon">▰</div>

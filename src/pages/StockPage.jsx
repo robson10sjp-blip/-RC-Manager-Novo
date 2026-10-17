@@ -4,11 +4,11 @@ import {
   collection,
   doc,
   onSnapshot,
-  runTransaction,
   serverTimestamp,
 } from "firebase/firestore";
 
 import { auth, db } from "../firebase/config";
+import { runTransaction } from "../firebase/firestoreAccess";
 
 export default function StockPage() {
   const [products, setProducts] = useState([]);

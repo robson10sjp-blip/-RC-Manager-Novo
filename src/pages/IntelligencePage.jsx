@@ -1,108 +1,367 @@
-import { useEffect, useMemo, useState } from "react";
-import { onAuthStateChanged } from "firebase/auth";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { onAuthStateChanged, signInWithEmailAndPassword } from "firebase/auth";
 import { collection, onSnapshot } from "firebase/firestore";
 
 import { auth, db } from "../firebase/config";
+import { toDate } from "../utils/dates";
+import {
+  answerSecretaryQueryWithContext,
+  createSecretarySnapshot,
+} from "../domain/secretary";
+import "./SecretaryPage.css";
+
+const quickSuggestions = [
+  { label: "Resumo de hoje", prompt: "Resumo de hoje", icon: "☀️" },
+  { label: "Quem devo cobrar?", prompt: "Quem devo cobrar?", icon: "💬" },
+  { label: "Quanto recebi?", prompt: "Quanto recebi?", icon: "💸" },
+  { label: "Minhas vendas", prompt: "Minhas vendas", icon: "🧾" },
+  { label: "Estoque", prompt: "Estoque", icon: "📦" },
+];
+const legacyPanelsEnabled = false;
 
 export default function IntelligencePage() {
   const [clients, setClients] = useState([]);
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
   const [expenses, setExpenses] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [monthlyGoal, setMonthlyGoal] = useState(30000);
+  const [suppliers, setSuppliers] = useState([]);
+  const [payables, setPayables] = useState([]);
+  const [paymentsBySale, setPaymentsBySale] = useState({});
+  const [legacyPaymentsByClient, setLegacyPaymentsByClient] = useState({});
+  const [dataReady, setDataReady] = useState(false);
+  const [authStatus, setAuthStatus] = useState("loading");
+  const [dataError, setDataError] = useState("");
+  const [dataLoadFailed, setDataLoadFailed] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [loginSubmitting, setLoginSubmitting] = useState(false);
+  const [messages, setMessages] = useState([
+    {
+      id: "welcome",
+      role: "assistant",
+      text: "Bom dia! Sou a Secretária RC. Posso consultar os dados do seu usuário para ajudar com vendas, recebimentos, cobranças, despesas, estoque, viagens e contas a pagar de fornecedores.",
+    },
+  ]);
+  const [draft, setDraft] = useState("");
+  const messageId = useRef(0);
+  const messagesEndRef = useRef(null);
+  const tripContext = useRef(null);
+  const monthlyGoal = 30000;
 
   useEffect(() => {
     let unsubscribeClients = null;
     let unsubscribeProducts = null;
     let unsubscribeSales = null;
     let unsubscribeExpenses = null;
+    let unsubscribeSuppliers = null;
+    let unsubscribePayables = null;
+    let authGeneration = 0;
+    const salePaymentListeners = new Map();
+    const clientPaymentListeners = new Map();
+    const readyCoreCollections = new Set();
+
+    const markCoreReady = (collectionName) => {
+      readyCoreCollections.add(collectionName);
+      if (readyCoreCollections.size === 6) setDataReady(true);
+    };
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      const generation = ++authGeneration;
       if (unsubscribeClients) unsubscribeClients();
       if (unsubscribeProducts) unsubscribeProducts();
       if (unsubscribeSales) unsubscribeSales();
       if (unsubscribeExpenses) unsubscribeExpenses();
+      if (unsubscribeSuppliers) unsubscribeSuppliers();
+      if (unsubscribePayables) unsubscribePayables();
+      for (const unsubscribe of salePaymentListeners.values()) unsubscribe();
+      for (const unsubscribe of clientPaymentListeners.values()) unsubscribe();
+      salePaymentListeners.clear();
+      clientPaymentListeners.clear();
+      readyCoreCollections.clear();
+
+      setClients([]);
+      setProducts([]);
+      setSales([]);
+      setExpenses([]);
+      setSuppliers([]);
+      setPayables([]);
+      setPaymentsBySale({});
+      setLegacyPaymentsByClient({});
+      setDataReady(false);
+      setDataLoadFailed(false);
+      setDataError("");
+      tripContext.current = null;
+      setMessages([
+        {
+          id: "welcome",
+          role: "assistant",
+          text: "Bom dia! Sou a Secretária RC. Posso consultar os dados do seu usuário para ajudar com vendas, recebimentos, cobranças, despesas, estoque, viagens e contas a pagar de fornecedores.",
+        },
+      ]);
 
       if (!user) {
-        setClients([]);
-        setProducts([]);
-        setSales([]);
-        setExpenses([]);
-        setLoading(false);
+        setAuthStatus("signed-out");
         return;
       }
 
+      setAuthStatus("signed-in");
       unsubscribeClients = onSnapshot(
         collection(db, "users", user.uid, "clients"),
         (snapshot) => {
+          if (generation !== authGeneration) return;
+          const documents = snapshot.docs;
+          const clientIds = new Set(documents.map((document) => document.id));
+
+          for (const [clientId, unsubscribe] of clientPaymentListeners) {
+            if (clientIds.has(clientId)) continue;
+            unsubscribe();
+            clientPaymentListeners.delete(clientId);
+            setLegacyPaymentsByClient((current) => {
+              const next = { ...current };
+              delete next[clientId];
+              return next;
+            });
+          }
+
+          for (const document of documents) {
+            if (clientPaymentListeners.has(document.id)) continue;
+
+            clientPaymentListeners.set(
+              document.id,
+              onSnapshot(
+                collection(
+                  db,
+                  "users",
+                  user.uid,
+                  "clients",
+                  document.id,
+                  "payments"
+                ),
+                (paymentSnapshot) => {
+                  if (generation !== authGeneration) return;
+                  setLegacyPaymentsByClient((current) => ({
+                    ...current,
+                    [document.id]: paymentSnapshot.docs.map((payment) => ({
+                      id: payment.id,
+                      ...payment.data(),
+                    })),
+                  }));
+                },
+                (error) => {
+                  if (generation !== authGeneration) return;
+                  console.error("Erro ao carregar recebimentos antigos:", error);
+                  setDataError((current) =>
+                    current ||
+                    "Não foi possível carregar todo o histórico de recebimentos."
+                  );
+                }
+              )
+            );
+          }
+
           setClients(
-            snapshot.docs.map((document) => ({
+            documents.map((document) => ({
               id: document.id,
               ...document.data(),
             }))
           );
+          markCoreReady("clients");
         },
-        (error) => console.error("Erro ao carregar clientes:", error)
+        (error) => {
+          if (generation !== authGeneration) return;
+          console.error("Erro ao carregar clientes:", error);
+          setDataLoadFailed(true);
+          setDataError((current) => current || "Não foi possível carregar os clientes.");
+          markCoreReady("clients");
+        }
       );
 
       unsubscribeProducts = onSnapshot(
         collection(db, "users", user.uid, "products"),
         (snapshot) => {
+          if (generation !== authGeneration) return;
           setProducts(
             snapshot.docs.map((document) => ({
               id: document.id,
               ...document.data(),
             }))
           );
+          markCoreReady("products");
         },
-        (error) => console.error("Erro ao carregar produtos:", error)
+        (error) => {
+          if (generation !== authGeneration) return;
+          console.error("Erro ao carregar produtos:", error);
+          setDataLoadFailed(true);
+          setDataError((current) => current || "Não foi possível carregar os produtos.");
+          markCoreReady("products");
+        }
       );
 
       unsubscribeSales = onSnapshot(
         collection(db, "users", user.uid, "sales"),
         (snapshot) => {
-          const list = snapshot.docs.map((document) => ({
+          if (generation !== authGeneration) return;
+          const documents = snapshot.docs;
+          const saleIds = new Set(documents.map((document) => document.id));
+
+          for (const [saleId, unsubscribe] of salePaymentListeners) {
+            if (saleIds.has(saleId)) continue;
+            unsubscribe();
+            salePaymentListeners.delete(saleId);
+            setPaymentsBySale((current) => {
+              const next = { ...current };
+              delete next[saleId];
+              return next;
+            });
+          }
+
+          for (const document of documents) {
+            if (salePaymentListeners.has(document.id)) continue;
+
+            salePaymentListeners.set(
+              document.id,
+              onSnapshot(
+                collection(
+                  db,
+                  "users",
+                  user.uid,
+                  "sales",
+                  document.id,
+                  "payments"
+                ),
+                (paymentSnapshot) => {
+                  if (generation !== authGeneration) return;
+                  setPaymentsBySale((current) => ({
+                    ...current,
+                    [document.id]: paymentSnapshot.docs.map((payment) => ({
+                      id: payment.id,
+                      saleId: document.id,
+                      ...payment.data(),
+                    })),
+                  }));
+                },
+                (error) => {
+                  if (generation !== authGeneration) return;
+                  console.error("Erro ao carregar recebimentos:", error);
+                  setDataError((current) =>
+                    current ||
+                    "Não foi possível carregar todo o histórico de recebimentos."
+                  );
+                }
+              )
+            );
+          }
+
+          const list = documents.map((document) => ({
             id: document.id,
             ...document.data(),
           }));
 
           list.sort((first, second) => {
-            const firstDate = first.createdAt?.toMillis?.() || 0;
-            const secondDate = second.createdAt?.toMillis?.() || 0;
+            const firstDate =
+              toDate(first.saleDate)?.getTime() ||
+              first.createdAt?.toMillis?.() ||
+              0;
+            const secondDate =
+              toDate(second.saleDate)?.getTime() ||
+              second.createdAt?.toMillis?.() ||
+              0;
             return secondDate - firstDate;
           });
 
           setSales(list);
-          setLoading(false);
+          markCoreReady("sales");
         },
         (error) => {
+          if (generation !== authGeneration) return;
           console.error("Erro ao carregar vendas:", error);
-          setLoading(false);
+          setDataLoadFailed(true);
+          setDataError((current) => current || "Não foi possível carregar as vendas.");
+          markCoreReady("sales");
         }
       );
 
       unsubscribeExpenses = onSnapshot(
         collection(db, "users", user.uid, "expenses"),
         (snapshot) => {
+          if (generation !== authGeneration) return;
           setExpenses(
             snapshot.docs.map((document) => ({
               id: document.id,
               ...document.data(),
             }))
           );
+          markCoreReady("expenses");
         },
-        (error) => console.error("Erro ao carregar despesas:", error)
+        (error) => {
+          if (generation !== authGeneration) return;
+          console.error("Erro ao carregar despesas:", error);
+          setDataLoadFailed(true);
+          setDataError((current) => current || "Não foi possível carregar as despesas.");
+          markCoreReady("expenses");
+        }
       );
+
+      unsubscribeSuppliers = onSnapshot(
+        collection(db, "users", user.uid, "suppliers"),
+        (snapshot) => {
+          if (generation !== authGeneration) return;
+          setSuppliers(
+            snapshot.docs.map((document) => ({
+              id: document.id,
+              ...document.data(),
+            }))
+          );
+          markCoreReady("suppliers");
+        },
+        (error) => {
+          if (generation !== authGeneration) return;
+          console.error("Erro ao carregar fornecedores para a Secretária:", error);
+          setDataError((current) => current || "Não foi possível carregar os fornecedores.");
+          setDataLoadFailed(true);
+          markCoreReady("suppliers");
+        }
+      );
+
+      unsubscribePayables = onSnapshot(
+        collection(db, "users", user.uid, "payables"),
+        (snapshot) => {
+          if (generation !== authGeneration) return;
+          setPayables(
+            snapshot.docs.map((document) => ({
+              id: document.id,
+              ...document.data(),
+            }))
+          );
+          markCoreReady("payables");
+        },
+        (error) => {
+          if (generation !== authGeneration) return;
+          console.error("Erro ao carregar contas a pagar para a Secretária:", error);
+          setDataError((current) => current || "Não foi possível carregar as contas a pagar.");
+          setDataLoadFailed(true);
+          markCoreReady("payables");
+        }
+      );
+    }, (error) => {
+      console.error("Erro ao verificar a sessão da Secretária RC:", error);
+      setAuthStatus("error");
+      setDataError("Não foi possível confirmar sua sessão. Entre novamente no RC Manager.");
     });
 
     return () => {
+      authGeneration += 1;
       unsubscribeAuth();
 
       if (unsubscribeClients) unsubscribeClients();
       if (unsubscribeProducts) unsubscribeProducts();
       if (unsubscribeSales) unsubscribeSales();
       if (unsubscribeExpenses) unsubscribeExpenses();
+      if (unsubscribeSuppliers) unsubscribeSuppliers();
+      if (unsubscribePayables) unsubscribePayables();
+      for (const unsubscribe of salePaymentListeners.values()) unsubscribe();
+      for (const unsubscribe of clientPaymentListeners.values()) unsubscribe();
     };
   }, []);
 
@@ -115,6 +374,115 @@ export default function IntelligencePage() {
     () => new Map(products.map((product) => [product.id, product])),
     [products]
   );
+
+  const secretarySnapshot = useMemo(
+    () =>
+      createSecretarySnapshot({
+        clients,
+        sales,
+        products,
+        expenses,
+        suppliers,
+        payables,
+        payments: Object.values(paymentsBySale).flat(),
+        legacyPayments: Object.values(legacyPaymentsByClient).flat(),
+      }),
+    [
+      clients,
+      sales,
+      products,
+      expenses,
+      suppliers,
+      payables,
+      paymentsBySale,
+      legacyPaymentsByClient,
+    ]
+  );
+  const secretaryLoading =
+    authStatus === "loading" ||
+    (authStatus === "signed-in" && !dataReady);
+  const secretaryCanQuery =
+    authStatus === "signed-in" && dataReady && !dataLoadFailed;
+  const loading = !dataReady;
+
+  async function handleSecretaryLogin(event) {
+    event.preventDefault();
+    setLoginError("");
+
+    if (!loginEmail.trim() || !loginPassword) {
+      setLoginError("Informe o e-mail e a senha da sua conta RC Manager.");
+      return;
+    }
+
+    try {
+      setLoginSubmitting(true);
+      await signInWithEmailAndPassword(
+        auth,
+        loginEmail.trim(),
+        loginPassword
+      );
+      setLoginPassword("");
+    } catch (error) {
+      console.error("Erro ao autenticar na Secretária RC:", error);
+      const messages = {
+        "auth/invalid-email": "O formato do e-mail é inválido.",
+        "auth/invalid-credential": "E-mail ou senha incorretos.",
+        "auth/user-not-found": "Não foi encontrada uma conta com esse e-mail.",
+        "auth/wrong-password": "E-mail ou senha incorretos.",
+        "auth/too-many-requests":
+          "Muitas tentativas. Aguarde alguns minutos e tente novamente.",
+        "auth/network-request-failed":
+          "Falha de conexão com o Firebase Authentication. Verifique a rede e tente novamente.",
+        "auth/operation-not-allowed":
+          "O login por e-mail e senha não está habilitado no Firebase Authentication deste projeto.",
+      };
+
+      if (error?.code === "auth/unauthorized-domain") {
+        setLoginError(
+          `O Firebase não autorizou o domínio ${window.location.hostname}. No Firebase Console, abra Authentication > Settings > Authorized domains e adicione esse domínio.`
+        );
+      } else {
+        setLoginError(
+          messages[error?.code] ||
+            "Não foi possível entrar. Confira os dados e tente novamente."
+        );
+      }
+    } finally {
+      setLoginSubmitting(false);
+    }
+  }
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest",
+    });
+  }, [messages]);
+
+  function sendMessage(text = draft) {
+    const question = text.trim();
+    if (!question || !secretaryCanQuery) return;
+
+    const userMessageId = `message-${++messageId.current}`;
+    const assistantMessageId = `message-${++messageId.current}`;
+    const response = answerSecretaryQueryWithContext(
+      question,
+      secretarySnapshot,
+      intelligence,
+      tripContext.current
+    );
+    tripContext.current = response.tripContext;
+    setMessages((current) => [
+      ...current,
+      { id: userMessageId, role: "user", text: question },
+      {
+        id: assistantMessageId,
+        role: "assistant",
+        text: response.answer,
+      },
+    ]);
+    setDraft("");
+  }
 
   const intelligence = useMemo(() => {
     const now = new Date();
@@ -139,14 +507,15 @@ export default function IntelligencePage() {
     const cityStats = new Map();
 
     for (const sale of sales) {
-      const saleDate = sale.createdAt?.toDate?.();
+      const saleDate = toDate(sale.saleDate) || toDate(sale.createdAt);
       const isThisMonth =
         saleDate &&
         saleDate >= monthStart &&
         saleDate < nextMonthStart;
 
       const client = clientMap.get(sale.clientId);
-      const city = client?.city || "Cidade não informada";
+      const city =
+        sale.tripCity || client?.city || "Cidade não informada";
       const total = Number(sale.total || 0);
       const received = Number(sale.amountPaid || 0);
       const pending = Number(sale.pendingAmount || 0);
@@ -346,7 +715,7 @@ export default function IntelligencePage() {
 
     const last30DaysSales = sales
       .filter((sale) => {
-        const date = sale.createdAt?.toDate?.();
+        const date = toDate(sale.saleDate) || toDate(sale.createdAt);
         return date && date >= last30DaysStart;
       })
       .reduce((sum, sale) => sum + Number(sale.total || 0), 0);
@@ -426,7 +795,6 @@ export default function IntelligencePage() {
     };
   }, [
     sales,
-    clients,
     products,
     expenses,
     clientMap,
@@ -439,12 +807,6 @@ export default function IntelligencePage() {
       style: "currency",
       currency: "BRL",
     });
-  }
-
-  function formatDate(date) {
-    if (!date) return "Sem data";
-
-    return date.toLocaleDateString("pt-BR");
   }
 
   function getAlertStyle(level) {
@@ -474,26 +836,255 @@ export default function IntelligencePage() {
       <header style={styles.header}>
         <div>
           <p style={styles.eyebrow}>RC Confecções</p>
-          <h1 style={styles.title}>Inteligência RC</h1>
+          <h1 style={styles.title}>Secretária RC</h1>
           <p style={styles.subtitle}>
-            Análises automáticas para vender mais, cobrar melhor e comprar certo.
+            Sua assistente de gestão para a rotina da RC Confecções.
           </p>
         </div>
-
-        <label style={styles.goalControl}>
-          Meta mensal
-          <input
-            type="number"
-            min="0"
-            step="100"
-            value={monthlyGoal}
-            onChange={(event) =>
-              setMonthlyGoal(Number(event.target.value || 0))
-            }
-            style={styles.goalInput}
-          />
-        </label>
       </header>
+
+      <section className="secretary-dashboard">
+        <div className="secretary-morning-card">
+          <div className="secretary-section-heading">
+            <div>
+              <p className="secretary-eyebrow">Seu começo de dia</p>
+              <h2>Resumo matinal</h2>
+            </div>
+            <span className="secretary-today">
+              {new Date().toLocaleDateString("pt-BR", {
+                weekday: "long",
+                day: "numeric",
+                month: "long",
+              })}
+            </span>
+          </div>
+
+          {secretaryLoading ? (
+            <p className="secretary-muted">Consultando seus dados autorizados...</p>
+          ) : authStatus !== "signed-in" ? (
+            <p className="secretary-muted">
+              Entre no RC Manager para consultar seus dados privados.
+            </p>
+          ) : (
+            <>
+              <div className="secretary-morning-metrics">
+                <div>
+                  <span>Vendas de hoje</span>
+                  <strong>
+                    {secretarySnapshot.salesToday.length} ·{" "}
+                    {formatCurrency(secretarySnapshot.salesTodayTotal)}
+                  </strong>
+                </div>
+                <div>
+                  <span>Recebido hoje</span>
+                  <strong>{formatCurrency(secretarySnapshot.receivedToday)}</strong>
+                </div>
+                <div>
+                  <span>Despesas de hoje</span>
+                  <strong>{formatCurrency(secretarySnapshot.expensesTodayTotal)}</strong>
+                </div>
+                <div>
+                  <span>Total pendente</span>
+                  <strong>{formatCurrency(secretarySnapshot.totalPending)}</strong>
+                </div>
+              </div>
+
+              <div className="secretary-priorities">
+                <h3>Prioridades e vencimentos</h3>
+                {secretarySnapshot.overdueSales.length === 0 &&
+                secretarySnapshot.dueSoonSales.length === 0 &&
+                secretarySnapshot.lowStockProducts.length === 0 ? (
+                  <p className="secretary-muted">
+                    Nenhum vencimento próximo ou alerta de estoque baixo encontrado.
+                  </p>
+                ) : (
+                  <ul>
+                    {secretarySnapshot.overdueSales.slice(0, 3).map((sale) => (
+                      <li key={`overdue-${sale.id}`} className="priority-overdue">
+                        <span>🔴 Cobrança vencida · {sale.clientName}</span>
+                        <strong>
+                          {formatCurrency(sale.value)} ·{" "}
+                          {sale.dueDate.toLocaleDateString("pt-BR")}
+                        </strong>
+                      </li>
+                    ))}
+                    {secretarySnapshot.dueSoonSales.slice(0, 3).map((sale) => (
+                      <li key={`due-${sale.id}`}>
+                        <span>📅 Vencimento próximo · {sale.clientName}</span>
+                        <strong>
+                          {formatCurrency(sale.value)} ·{" "}
+                          {sale.dueDate.toLocaleDateString("pt-BR")}
+                        </strong>
+                      </li>
+                    ))}
+                    {secretarySnapshot.lowStockProducts.slice(0, 3).map((product) => (
+                      <li key={`stock-${product.id}`}>
+                        <span>📦 Estoque baixo · {product.name || "Produto"}</span>
+                        <strong>{Number(product.quantity || 0)} unidade(s)</strong>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="secretary-chat-card">
+          <div className="secretary-section-heading">
+            <div>
+              <p className="secretary-eyebrow">Atendimento local e privado</p>
+              <h2>Converse com a Secretária</h2>
+            </div>
+            <span className="secretary-readonly-badge">Somente consulta</span>
+          </div>
+
+          <div className="secretary-suggestions" aria-label="Sugestões rápidas">
+            {quickSuggestions.map((suggestion) => (
+              <button
+                key={suggestion.prompt}
+                type="button"
+                className="secretary-suggestion"
+                disabled={!secretaryCanQuery}
+                onClick={() => sendMessage(suggestion.prompt)}
+              >
+                <span aria-hidden="true">{suggestion.icon}</span>
+                {suggestion.label}
+              </button>
+            ))}
+          </div>
+
+          <div
+            className="secretary-message-list"
+            role="log"
+            aria-live="polite"
+            aria-label="Histórico da conversa"
+          >
+            {messages.map((message) => (
+              <div
+                key={message.id}
+                className={`secretary-message secretary-message-${message.role}`}
+              >
+                <span className="secretary-message-avatar" aria-hidden="true">
+                  {message.role === "assistant" ? "👩‍💼" : "Você"}
+                </span>
+                <p>{message.text}</p>
+              </div>
+            ))}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {dataError && (
+            <p className="secretary-error" role="alert">
+              {dataError}
+              {!dataLoadFailed && " Alguns dados auxiliares podem estar incompletos."}
+            </p>
+          )}
+          {authStatus === "signed-out" && (
+            <form
+              className="secretary-login-form"
+              onSubmit={handleSecretaryLogin}
+            >
+              <p>Entre com sua conta existente do RC Manager para carregar seus dados.</p>
+              <label>
+                <span>E-mail</span>
+                <input
+                  type="email"
+                  autoComplete="username"
+                  value={loginEmail}
+                  onChange={(event) => setLoginEmail(event.target.value)}
+                  disabled={loginSubmitting}
+                  required
+                />
+              </label>
+              <label>
+                <span>Senha</span>
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  value={loginPassword}
+                  onChange={(event) => setLoginPassword(event.target.value)}
+                  disabled={loginSubmitting}
+                  required
+                />
+              </label>
+              {loginError && (
+                <p className="secretary-error" role="alert">
+                  {loginError}
+                </p>
+              )}
+              <button
+                className="secretary-send-button"
+                type="submit"
+                disabled={loginSubmitting}
+              >
+                {loginSubmitting ? "Entrando..." : "Entrar"}
+              </button>
+            </form>
+          )}
+
+          <form
+            className="secretary-composer"
+            onSubmit={(event) => {
+              event.preventDefault();
+              sendMessage();
+            }}
+          >
+            <label className="secretary-sr-only" htmlFor="secretary-question">
+              Escreva uma pergunta para a Secretária RC
+            </label>
+            <input
+              id="secretary-question"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder={
+                authStatus === "signed-out"
+                  ? "Entre no RC Manager para continuar"
+                  : authStatus === "error"
+                    ? "Não foi possível confirmar sua sessão"
+                    : secretaryLoading
+                  ? "Aguarde a conexão segura com seus dados..."
+                  : "Pergunte sobre cobranças, vendas, estoque..."
+              }
+              disabled={!secretaryCanQuery}
+            />
+            <button
+              className="secretary-send-button"
+              type="submit"
+              disabled={!secretaryCanQuery || !draft.trim()}
+            >
+              Enviar
+            </button>
+          </form>
+
+          <div className="secretary-voice-area">
+            <button
+              className="secretary-voice-button"
+              type="button"
+              disabled
+              aria-describedby="secretary-voice-help"
+            >
+              🎙️ Comando de voz
+            </button>
+            <p id="secretary-voice-help">
+              Reconhecimento de voz ainda não ativado. Nenhum áudio é gravado ou enviado.
+            </p>
+          </div>
+          <p className="secretary-privacy-note">
+            Consultas executadas no aplicativo com dados do seu usuário. Nenhum dado é enviado a uma IA externa.
+          </p>
+        </div>
+      </section>
+
+      {legacyPanelsEnabled && (
+      <>
+      <div className="secretary-analytics-heading">
+        <p className="secretary-eyebrow">Ferramentas que você já conhece</p>
+        <h2>Análises da Inteligência RC</h2>
+        <p>
+          Indicadores, tendências, clientes, produtos e resultados por cidade continuam disponíveis abaixo.
+        </p>
+      </div>
 
       {loading ? (
         <div style={styles.loadingBox}>
@@ -846,7 +1437,7 @@ export default function IntelligencePage() {
             <div style={styles.card}>
               <h2 style={styles.cardTitle}>🏙️ Ranking por cidade</h2>
               <p style={styles.helperText}>
-                Cidades ordenadas pelo maior valor vendido.
+                Cidades da viagem; em vendas antigas, usa a cidade cadastrada do cliente.
               </p>
 
               {intelligence.bestCities.length === 0 ? (
@@ -886,15 +1477,10 @@ export default function IntelligencePage() {
           </section>
         </>
       )}
+      </>
+      )}
     </div>
   );
-}
-
-function formatCurrency(value) {
-  return Number(value || 0).toLocaleString("pt-BR", {
-    style: "currency",
-    currency: "BRL",
-  });
 }
 
 const styles = {

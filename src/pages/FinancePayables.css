@@ -1,0 +1,637 @@
+.payables-section {
+  margin: 22px 0;
+  padding: 22px;
+  border: 1px solid #e1e8f0;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 10px 28px rgba(15, 34, 62, 0.06);
+  color: #17263b;
+}
+
+.payables-heading,
+.payables-list-heading,
+.payables-schedule-heading,
+.payable-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.payables-heading {
+  margin-bottom: 18px;
+}
+
+.payables-heading h2 {
+  margin: 3px 0 6px;
+  font-size: 22px;
+}
+
+.payables-heading p,
+.payables-schedule-heading p {
+  margin: 0;
+  color: #66758a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.payables-current-filter {
+  display: inline-block;
+  margin-top: 8px;
+  color: #31598b;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.payables-eyebrow {
+  color: #2563eb !important;
+  font-size: 10px !important;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.payables-filter {
+  display: grid;
+  min-width: min(100%, 220px);
+  gap: 6px;
+  color: #53637a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.payables-filter select,
+.payables-form input,
+.payables-form select,
+.payables-form textarea {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 10px 11px;
+  border: 1px solid #d1dbe7;
+  border-radius: 9px;
+  background: #fff;
+  color: #1d2d43;
+  font: inherit;
+  font-size: 13px;
+}
+
+.payables-message {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.payables-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 15px;
+}
+
+.payables-metrics article {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid #e7edf4;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.payables-metrics span {
+  color: #68778c;
+  font-size: 11px;
+}
+
+.payables-metrics strong {
+  color: #24344b;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.check-forecast {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: -3px 0 18px;
+}
+
+.check-forecast article {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border: 1px solid #dce7f5;
+  border-radius: 11px;
+  background: #f3f7fc;
+}
+
+.check-forecast span {
+  color: #68778c;
+  font-size: 11px;
+}
+
+.check-forecast strong {
+  color: #24344b;
+  font-size: 15px;
+}
+
+.payables-workspace {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px;
+  margin-bottom: 20px;
+}
+
+.payables-panel {
+  align-self: start;
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid #e3eaf2;
+  border-radius: 12px;
+  background: #fcfdff;
+}
+
+.payables-panel > summary {
+  color: #314159;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.payables-panel[open] > summary {
+  margin-bottom: 14px;
+}
+
+.payables-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px;
+}
+
+.payables-form label {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  color: #46566c;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.payables-notes-field,
+.payables-wide-field,
+.payables-schedule,
+.payables-form > .payables-primary-button {
+  grid-column: 1 / -1;
+}
+
+.payables-form textarea {
+  resize: vertical;
+}
+
+.payables-schedule {
+  min-width: 0;
+  padding-top: 11px;
+  border-top: 1px solid #e7edf4;
+}
+
+.payables-schedule-heading {
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.payables-schedule-heading h3,
+.payables-list-heading h3,
+.payables-upcoming h3 {
+  margin: 0 0 4px;
+  color: #314159;
+  font-size: 13px;
+}
+
+.payables-schedule-heading button,
+.payables-installment-row button {
+  flex-shrink: 0;
+  padding: 8px 10px;
+  border: 1px solid #c9d8ee;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #235391;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.payables-installment-row {
+  display: grid;
+  grid-template-columns: 0.7fr 0.9fr 0.9fr 1fr 1fr auto;
+  align-items: end;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 9px;
+  border: 1px solid #e7edf4;
+  border-radius: 9px;
+}
+
+.payables-primary-button,
+.payables-secondary-button {
+  min-height: 38px;
+  padding: 9px 12px;
+  border: 0;
+  border-radius: 9px;
+  background: #2563eb;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.payables-primary-button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.payables-secondary-button {
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+  color: #235391;
+}
+
+.payables-list-heading {
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.payables-list-heading h3 {
+  margin: 0;
+}
+
+.payables-list-heading span {
+  color: #718096;
+  font-size: 11px;
+}
+
+.checks-section {
+  margin: 18px 0 22px;
+  padding: 15px;
+  border: 1px solid #e3eaf2;
+  border-radius: 13px;
+  background: #fbfcfe;
+}
+
+.checks-heading {
+  align-items: center;
+}
+
+.checks-heading p {
+  margin: 5px 0 0;
+  color: #718096;
+  font-size: 11px;
+}
+
+.checks-filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  margin: 13px 0;
+}
+
+.checks-filters label {
+  display: grid;
+  gap: 5px;
+  color: #53637a;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.checks-filters select {
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid #d1dbe7;
+  border-radius: 8px;
+  background: #fff;
+  color: #1d2d43;
+  font: inherit;
+  font-size: 12px;
+}
+
+.checks-list {
+  display: grid;
+  gap: 9px;
+}
+
+.check-card {
+  padding: 12px;
+  border: 1px solid #e3eaf2;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.check-card-main,
+.check-card-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 13px;
+}
+
+.check-card-main > div {
+  display: grid;
+  gap: 4px;
+}
+
+.check-card-main > div strong {
+  color: #27364d;
+  font-size: 13px;
+}
+
+.check-card-main > div span,
+.check-card-meta {
+  color: #63728a;
+  font-size: 11px;
+}
+
+.check-card-meta {
+  justify-content: flex-start;
+  margin-top: 10px;
+}
+
+.check-card-meta strong {
+  color: #34445b;
+}
+
+.check-status {
+  padding: 4px 8px;
+  border-radius: 99px;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.check-status-compensated {
+  background: #ecfdf3;
+  color: #15803d;
+}
+
+.check-status-returned {
+  background: #fff7ed;
+  color: #c2410c;
+}
+
+.check-status-cancelled {
+  background: #f1f5f9;
+  color: #64748b;
+}
+
+.check-history {
+  margin-top: 9px;
+  color: #617087;
+  font-size: 10px;
+}
+
+.check-history summary {
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.check-history p {
+  margin: 6px 0 0;
+}
+
+.check-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.check-actions button {
+  padding: 8px 10px;
+  border: 1px solid #d5dee9;
+  border-radius: 8px;
+  background: #fff;
+  color: #485970;
+  cursor: pointer;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 750;
+}
+
+.check-actions .check-action-primary {
+  border-color: #bbd2f3;
+  background: #eff6ff;
+  color: #1e4f91;
+}
+
+.payables-list {
+  display: grid;
+  gap: 10px;
+}
+
+.payable-card {
+  padding: 14px;
+  border: 1px solid #e3eaf2;
+  border-radius: 13px;
+  background: #fff;
+}
+
+.payable-card-heading {
+  align-items: center;
+}
+
+.payable-card-heading h3 {
+  margin: 0 0 5px;
+  color: #27364d;
+  font-size: 15px;
+}
+
+.payable-card-heading p {
+  margin: 0;
+  color: #748197;
+  font-size: 11px;
+}
+
+.payable-card-heading > strong {
+  color: #b42318;
+  font-size: 14px;
+  text-align: right;
+}
+
+.payable-card-heading > .payable-paid-status {
+  color: #15803d;
+}
+
+.payable-card-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 14px;
+  margin-top: 11px;
+  color: #5c6b80;
+  font-size: 11px;
+}
+
+.payable-notes {
+  margin: 10px 0 0;
+  color: #617087;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+
+.payable-payment-history {
+  margin: 9px 0;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: #f8fafc;
+  color: #526179;
+  font-size: 10px;
+}
+
+.payable-payment-history summary {
+  cursor: pointer;
+  font-weight: 750;
+}
+
+.payable-payment-history p {
+  margin: 7px 0 0;
+  line-height: 1.45;
+}
+
+.payable-installments {
+  display: grid;
+  gap: 5px;
+  margin: 10px 0;
+}
+
+.payable-installment {
+  display: flex;
+  justify-content: space-between;
+  gap: 9px;
+  padding: 8px 9px;
+  border-radius: 8px;
+  background: #f7f9fc;
+  color: #617087;
+  font-size: 10px;
+}
+
+.payable-installment strong {
+  color: #35445a;
+}
+
+.payable-installment.overdue {
+  background: #fff1f2;
+  color: #a42323;
+}
+
+.payable-installment.overdue strong {
+  color: #a42323;
+}
+
+.payables-upcoming {
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 11px;
+  background: #f8fafc;
+}
+
+.payables-upcoming h3 {
+  margin-bottom: 8px;
+}
+
+.payables-upcoming p {
+  margin: 5px 0;
+  color: #5c6b80;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.payables-empty,
+.payables-accounting-note {
+  color: #718096;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.payables-accounting-note {
+  margin: 14px 0 0;
+}
+
+@media (max-width: 900px) {
+  .payables-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .payables-installment-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .payables-workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 620px) {
+  .payables-section {
+    padding: 15px;
+  }
+
+  .payables-heading {
+    display: grid;
+  }
+
+  .payables-filter {
+    width: 100%;
+  }
+
+  .payables-metrics {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .payables-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .payables-installment-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .payables-installment-row button {
+    grid-column: 1 / -1;
+  }
+
+  .payable-card-heading {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .payable-card-heading > strong {
+    text-align: left;
+  }
+
+  .payable-installment {
+    flex-wrap: wrap;
+  }
+
+  .check-forecast,
+  .checks-filters {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .checks-section {
+    padding: 11px;
+  }
+
+  .check-card-main {
+    align-items: flex-start;
+  }
+
+  .check-actions button {
+    flex: 1 1 100%;
+  }
+}

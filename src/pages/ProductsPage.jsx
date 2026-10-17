@@ -1,16 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
 import {
-  addDoc,
   collection,
-  deleteDoc,
   doc,
   onSnapshot,
   serverTimestamp,
-  updateDoc,
 } from "firebase/firestore";
 
 import { auth, db } from "../firebase/config";
+import {
+  addDoc,
+  deleteDoc,
+  updateDoc,
+} from "../firebase/firestoreAccess";
 
 const emptyForm = {
   code: "",

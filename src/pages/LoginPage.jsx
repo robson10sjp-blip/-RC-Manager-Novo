@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   createUserWithEmailAndPassword,
   sendPasswordResetEmail,
@@ -12,6 +12,7 @@ import "../styles/login-premium.css";
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const [mode, setMode] = useState("login");
   const [form, setForm] = useState({
@@ -130,7 +131,22 @@ export default function LoginPage() {
         await signInWithEmailAndPassword(auth, email, password);
       }
 
-      navigate("/dashboard", { replace: true });
+      const requestedDestination = searchParams.get("returnTo");
+      const allowedDestinations = new Set([
+        "/dashboard",
+        "/clientes",
+        "/produtos",
+        "/vendas",
+        "/estoque",
+        "/financeiro",
+        "/inteligencia",
+      ]);
+      navigate(
+        allowedDestinations.has(requestedDestination)
+          ? requestedDestination
+          : "/dashboard",
+        { replace: true }
+      );
     } catch (authError) {
       console.error("Erro de autenticação:", authError);
       setError(translateAuthError(authError));

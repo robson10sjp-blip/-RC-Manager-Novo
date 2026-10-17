@@ -3,14 +3,26 @@ import { onAuthStateChanged } from "firebase/auth";
 import ReceiptTemplate from "../components/receipts/ReceiptTemplate";
 import { generateReceiptPdf } from "../components/receipts/generateReceiptPdf";
 import {
+  adjustLegacyClientDebt,
+  applyPaymentToSale,
+  calculateSaleAmounts,
+  isSaleOverdue as checkSaleOverdue,
+  organizeSalesByTrip2026,
+  prepareSaleReceipt,
+  reusePaymentOperation,
+  updateStockAfterSale,
+  updateStockAfterSaleEdit,
+} from "../domain/sales";
+import { toDate, toDateInputValue } from "../utils/dates";
+import {
   collection,
   doc,
   onSnapshot,
-  runTransaction,
   serverTimestamp,
 } from "firebase/firestore";
 
 import { auth, db } from "../firebase/config";
+import { runTransaction } from "../firebase/firestoreAccess";
 
 const emptyItem = {
   productId: "",
@@ -18,12 +30,22 @@ const emptyItem = {
   price: "",
 };
 
-const emptySale = {
-  clientId: "",
-  paymentMethod: "prazo",
-  amountPaid: "",
-  items: [{ ...emptyItem }],
-};
+function createEmptySale() {
+  const saleDate = new Date();
+  const dueDate = new Date(saleDate);
+  dueDate.setDate(dueDate.getDate() + 90);
+
+  return {
+    clientId: "",
+    paymentMethod: "prazo",
+    amountPaid: "",
+    saleDate: toDateInputValue(saleDate),
+    dueDate: toDateInputValue(dueDate),
+    tripName: "",
+    tripCity: "",
+    items: [{ ...emptyItem }],
+  };
+}
 
 export default function SalesPage() {
   const receiptRef = useRef(null);
@@ -32,11 +54,19 @@ export default function SalesPage() {
   const [clients, setClients] = useState([]);
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
+  const [tripFilter, setTripFilter] = useState("all");
+  const [searchText, setSearchText] = useState("");
+  const [sortOrder, setSortOrder] = useState("newest");
+  const [salesLoadError, setSalesLoadError] = useState("");
 
-  const [sale, setSale] = useState(emptySale);
+  const [sale, setSale] = useState(createEmptySale);
+  const [showSaleForm, setShowSaleForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editingSaleId, setEditingSaleId] = useState(null);
+  const [receivingSaleId, setReceivingSaleId] = useState(null);
+  const receivingSaleLock = useRef(false);
+  const pendingPaymentOperation = useRef(null);
 
   useEffect(() => {
     let unsubscribeClients = null;
@@ -52,10 +82,13 @@ export default function SalesPage() {
         setClients([]);
         setProducts([]);
         setSales([]);
+        setSalesLoadError("");
         setLoading(false);
         return;
       }
 
+      setSalesLoadError("");
+      setLoading(true);
       const clientsReference = collection(
         db,
         "users",
@@ -131,19 +164,27 @@ export default function SalesPage() {
 
           list.sort((first, second) => {
             const firstDate =
-              first.createdAt?.toMillis?.() || 0;
+              toDate(first.saleDate)?.getTime() ||
+              first.createdAt?.toMillis?.() ||
+              0;
 
             const secondDate =
-              second.createdAt?.toMillis?.() || 0;
+              toDate(second.saleDate)?.getTime() ||
+              second.createdAt?.toMillis?.() ||
+              0;
 
             return secondDate - firstDate;
           });
 
           setSales(list);
+          setSalesLoadError("");
           setLoading(false);
         },
         (error) => {
           console.error("Erro ao carregar vendas:", error);
+          setSalesLoadError(
+            "Não foi possível carregar o histórico de vendas. Confira sua conexão e tente novamente."
+          );
           setLoading(false);
         }
       );
@@ -164,28 +205,20 @@ export default function SalesPage() {
     );
   }, [clients, sale.clientId]);
 
+  const clientsById = useMemo(
+    () => new Map(clients.map((client) => [client.id, client])),
+    [clients]
+  );
+
   const total = useMemo(() => {
-    return sale.items.reduce((sum, item) => {
-      return (
-        sum +
-        Number(item.quantity || 0) *
-          Number(item.price || 0)
-      );
-    }, 0);
+    return calculateSaleAmounts(sale.items).total;
   }, [sale.items]);
 
   const amountPaid = Number(sale.amountPaid || 0);
 
   const pendingAmount = Math.max(total - amountPaid, 0);
 
-  const saleStatus =
-    total <= 0
-      ? "pending"
-      : amountPaid >= total
-        ? "paid"
-        : amountPaid > 0
-          ? "partial"
-          : "pending";
+  const saleStatus = calculateSaleAmounts(sale.items, amountPaid).status;
 
   const dashboardTotals = useMemo(() => {
     return sales.reduce(
@@ -212,6 +245,70 @@ export default function SalesPage() {
     );
   }, [sales]);
 
+  const tripOrganization = useMemo(
+    () => organizeSalesByTrip2026(sales),
+    [sales]
+  );
+
+  const tripClassificationById = useMemo(() => {
+    const classified = new Map();
+    for (const sale of [
+      ...tripOrganization.thirdTrip.sales,
+      ...tripOrganization.fourthTrip.sales,
+      ...tripOrganization.review.sales,
+    ]) {
+      classified.set(sale.id, sale);
+    }
+    return classified;
+  }, [tripOrganization]);
+
+  const displayedSales = useMemo(() => {
+    let filteredSales;
+    if (tripFilter === "third") filteredSales = tripOrganization.thirdTrip.sales;
+    else if (tripFilter === "fourth") filteredSales = tripOrganization.fourthTrip.sales;
+    else if (tripFilter === "review") filteredSales = tripOrganization.review.sales;
+    else {
+      filteredSales = sales.map((sale) => {
+      const classification = tripClassificationById.get(sale.id);
+      return {
+        ...sale,
+        originalSaleDate: classification?.originalSaleDate || null,
+        dateSource: classification?.dateSource || null,
+        tripNumber: classification?.tripNumber || null,
+        reviewReason:
+          classification?.reviewReason || "Não foi possível avaliar esta venda.",
+      };
+      });
+    }
+
+    const search = searchText.trim().toLocaleLowerCase("pt-BR");
+    return filteredSales
+      .filter((sale) => {
+        if (!search) return true;
+        const clientName =
+          clientsById.get(sale.clientId)?.name || sale.clientName || "";
+        return clientName.toLocaleLowerCase("pt-BR").includes(search);
+      })
+      .sort((first, second) => {
+        const firstDate = toDate(first.originalSaleDate)?.getTime();
+        const secondDate = toDate(second.originalSaleDate)?.getTime();
+        if (firstDate === undefined && secondDate === undefined) return 0;
+        if (firstDate === undefined) return 1;
+        if (secondDate === undefined) return -1;
+        return sortOrder === "oldest"
+          ? firstDate - secondDate
+          : secondDate - firstDate;
+      });
+  }, [
+    sales,
+    tripFilter,
+    tripOrganization,
+    tripClassificationById,
+    clientsById,
+    searchText,
+    sortOrder,
+  ]);
+
   function formatCurrency(value) {
     return Number(value || 0).toLocaleString("pt-BR", {
       style: "currency",
@@ -220,11 +317,24 @@ export default function SalesPage() {
   }
 
   function formatDate(timestamp) {
-    if (!timestamp?.toDate) {
-      return "Data não informada";
-    }
+    const date = toDate(timestamp);
+    if (!date) return "Data não informada";
 
-    return timestamp.toDate().toLocaleString("pt-BR");
+    return date.toLocaleString("pt-BR");
+  }
+
+  function formatDateOnly(value) {
+    const date = toDate(value);
+    if (!date) return "Não informado";
+
+    return date.toLocaleDateString("pt-BR");
+  }
+
+  function isSaleOverdue(currentSale) {
+    return checkSaleOverdue(
+      currentSale.dueDate,
+      currentSale.pendingAmount
+    );
   }
 
   function formatStatus(status) {
@@ -266,6 +376,8 @@ export default function SalesPage() {
         paymentMethod === "avista"
           ? String(total)
           : "",
+      dueDate:
+        paymentMethod === "avista" ? "" : current.dueDate || createEmptySale().dueDate,
     }));
   }
 
@@ -370,23 +482,36 @@ export default function SalesPage() {
   }
 
   function clearSale() {
-    setSale({
-      clientId: "",
-      paymentMethod: "prazo",
-      amountPaid: "",
-      items: [{ ...emptyItem }],
-    });
+    setSale(createEmptySale());
 
     setEditingSaleId(null);
+    setShowSaleForm(false);
   }
 
   function handleEditSale(currentSale) {
+    const saleDate =
+      toDate(currentSale.saleDate) ||
+      toDate(currentSale.createdAt) ||
+      new Date();
+
+    const legacyDueDate =
+      currentSale.dueDate ||
+      currentSale.paymentDueDate ||
+      currentSale.collectionDate ||
+      currentSale.dataCobranca ||
+      "";
+
     setEditingSaleId(currentSale.id);
+    setShowSaleForm(true);
 
     setSale({
       clientId: currentSale.clientId || "",
       paymentMethod: currentSale.paymentMethod || "prazo",
       amountPaid: String(currentSale.amountPaid || 0),
+      saleDate: toDateInputValue(saleDate),
+      dueDate: toDateInputValue(legacyDueDate),
+      tripName: currentSale.tripName || "",
+      tripCity: currentSale.tripCity || "",
       items:
         (currentSale.items || []).length > 0
           ? currentSale.items.map((item) => ({
@@ -401,6 +526,8 @@ export default function SalesPage() {
   }
 
   async function handleReceiveSale(currentSale) {
+    if (receivingSaleLock.current) return;
+
     const user = auth.currentUser;
 
     if (!user) {
@@ -415,11 +542,15 @@ export default function SalesPage() {
       return;
     }
 
+    receivingSaleLock.current = true;
     const typedValue = window.prompt(
       `Saldo pendente: ${formatCurrency(currentPending)}\n\nDigite o valor recebido:`
     );
 
-    if (typedValue === null) return;
+    if (typedValue === null) {
+      receivingSaleLock.current = false;
+      return;
+    }
 
     const receivedValue = Number(
       typedValue.replace(",", ".").replace(/[^\d.-]/g, "")
@@ -427,15 +558,19 @@ export default function SalesPage() {
 
     if (!receivedValue || receivedValue <= 0) {
       alert("Digite um valor válido.");
+      receivingSaleLock.current = false;
       return;
     }
 
     if (receivedValue > currentPending) {
       alert("O recebimento não pode ser maior que o saldo pendente.");
+      receivingSaleLock.current = false;
       return;
     }
 
     try {
+      setReceivingSaleId(currentSale.id);
+
       const saleReference = doc(
         db,
         "users",
@@ -444,41 +579,68 @@ export default function SalesPage() {
         currentSale.id
       );
 
-      const clientReference = doc(
+      const paymentsReference = collection(
         db,
         "users",
         user.uid,
-        "clients",
-        currentSale.clientId
+        "sales",
+        currentSale.id,
+        "payments"
       );
-
+      const paymentOperation = reusePaymentOperation(
+        pendingPaymentOperation.current,
+        currentSale.id,
+        receivedValue,
+        () => doc(paymentsReference).id
+      );
+      pendingPaymentOperation.current = paymentOperation;
       const paymentReference = doc(
-        collection(
-          db,
-          "users",
-          user.uid,
-          "sales",
-          currentSale.id,
-          "payments"
-        )
+        paymentsReference,
+        paymentOperation.id
       );
 
-      await runTransaction(db, async (transaction) => {
+      const alreadyRecorded = await runTransaction(db, async (transaction) => {
+        const paymentSnapshot = await transaction.get(paymentReference);
+        if (paymentSnapshot.exists()) return true;
+
         const saleSnapshot = await transaction.get(saleReference);
-        const clientSnapshot = await transaction.get(clientReference);
 
         if (!saleSnapshot.exists()) {
           throw new Error("Venda não encontrada.");
         }
 
-        if (!clientSnapshot.exists()) {
-          throw new Error("Cliente não encontrado.");
-        }
-
         const savedSale = saleSnapshot.data();
-        const savedClient = clientSnapshot.data();
         const savedPaid = Number(savedSale.amountPaid || 0);
         const savedPending = Number(savedSale.pendingAmount || 0);
+        let legacyClientReference = null;
+        let legacyClientData = null;
+
+        if (savedSale.balanceModel !== "per-sale") {
+          if (!savedSale.clientId) {
+            throw new Error(
+              "Esta compra antiga não está vinculada a um cliente. Concilie-a antes de registrar o recebimento."
+            );
+          }
+
+          legacyClientReference = doc(
+            db,
+            "users",
+            user.uid,
+            "clients",
+            savedSale.clientId
+          );
+          const legacyClientSnapshot = await transaction.get(
+            legacyClientReference
+          );
+
+          if (!legacyClientSnapshot.exists()) {
+            throw new Error(
+              "O cliente desta compra antiga não foi encontrado."
+            );
+          }
+
+          legacyClientData = legacyClientSnapshot.data();
+        }
 
         if (receivedValue > savedPending) {
           throw new Error(
@@ -486,73 +648,68 @@ export default function SalesPage() {
           );
         }
 
-        const updatedPaid = savedPaid + receivedValue;
-        const updatedPending = Math.max(savedPending - receivedValue, 0);
-        const updatedClientDebt = Math.max(
-          Number(savedClient.totalDebt || 0) - receivedValue,
-          0
+        const updatedBalance = applyPaymentToSale(
+          {
+            total: savedSale.total,
+            amountPaid: savedPaid,
+            pendingAmount: savedPending,
+          },
+          receivedValue
         );
 
         transaction.update(saleReference, {
-          amountPaid: updatedPaid,
-          pendingAmount: updatedPending,
-          status: updatedPending === 0 ? "paid" : "partial",
+          ...updatedBalance,
           updatedAt: serverTimestamp(),
         });
 
-        transaction.update(clientReference, {
-          totalDebt: updatedClientDebt,
-          totalReceived:
-            Number(savedClient.totalReceived || 0) + receivedValue,
-          status: updatedClientDebt === 0 ? "paid" : "partial",
-          updatedAt: serverTimestamp(),
-        });
+        if (legacyClientReference && legacyClientData) {
+          const updatedLegacyDebt = adjustLegacyClientDebt(
+            savedSale,
+            legacyClientData.totalDebt,
+            savedPending,
+            updatedBalance.pendingAmount
+          );
+
+          transaction.update(legacyClientReference, {
+            totalDebt: updatedLegacyDebt,
+            totalReceived:
+              Number(legacyClientData.totalReceived || 0) +
+              receivedValue,
+            status: updatedLegacyDebt === 0 ? "paid" : "partial",
+            updatedAt: serverTimestamp(),
+          });
+        }
 
         transaction.set(paymentReference, {
+          operationId: paymentOperation.id,
+          saleId: currentSale.id,
+          clientId: currentSale.clientId || "",
           value: receivedValue,
           previousBalance: savedPending,
-          remainingBalance: updatedPending,
+          remainingBalance: updatedBalance.pendingAmount,
           createdAt: serverTimestamp(),
         });
+
+        return false;
       });
 
-      alert("Recebimento registrado com sucesso!");
+      pendingPaymentOperation.current = null;
+      alert(
+        alreadyRecorded
+          ? "Este recebimento já havia sido registrado. O saldo não foi baixado novamente."
+          : "Recebimento registrado com sucesso!"
+      );
     } catch (error) {
       console.error("Erro ao registrar recebimento:", error);
       alert(`Erro ao registrar recebimento: ${error.message}`);
+    } finally {
+      receivingSaleLock.current = false;
+      setReceivingSaleId(null);
     }
-  }
-
-  function prepareReceiptSale(currentSale) {
-    const saleDate = currentSale.createdAt?.toDate
-      ? currentSale.createdAt.toDate()
-      : currentSale.createdAt || new Date();
-
-    let dueDate =
-      currentSale.dueDate ||
-      currentSale.paymentDueDate ||
-      currentSale.collectionDate ||
-      currentSale.dataCobranca ||
-      null;
-
-    if (!dueDate && currentSale.paymentMethod === "prazo") {
-      const calculatedDueDate = new Date(saleDate);
-      calculatedDueDate.setDate(calculatedDueDate.getDate() + 90);
-      dueDate = calculatedDueDate;
-    }
-
-    return {
-      ...currentSale,
-      saleDate,
-      dueDate,
-      receiptNumber:
-        currentSale.receiptNumber ||
-        String(currentSale.id || Date.now()).slice(-6),
-    };
   }
 
   function handleOpenReceipt(currentSale) {
-    setSelectedReceiptSale(prepareReceiptSale(currentSale));
+    setSelectedReceiptSale(prepareSaleReceipt(currentSale));
     setShowReceipt(true);
   }
 
@@ -605,23 +762,50 @@ export default function SalesPage() {
         currentSale.id
       );
 
-      const clientReference = doc(
-        db,
-        "users",
-        user.uid,
-        "clients",
-        currentSale.clientId
-      );
-
       await runTransaction(db, async (transaction) => {
         const saleSnapshot = await transaction.get(saleReference);
-        const clientSnapshot = await transaction.get(clientReference);
 
         if (!saleSnapshot.exists()) {
           throw new Error("Venda não encontrada.");
         }
 
         const savedSale = saleSnapshot.data();
+        if (Number(savedSale.amountPaid || 0) > 0) {
+          throw new Error(
+            "Esta compra possui recebimentos. Para preservar o histórico financeiro, ajuste-a sem excluir."
+          );
+        }
+
+        let legacyClientReference = null;
+        let legacyClientData = null;
+
+        if (savedSale.balanceModel !== "per-sale") {
+          if (!savedSale.clientId) {
+            throw new Error(
+              "Esta compra antiga não está vinculada a um cliente. Concilie-a antes de excluí-la."
+            );
+          }
+
+          legacyClientReference = doc(
+            db,
+            "users",
+            user.uid,
+            "clients",
+            savedSale.clientId
+          );
+          const legacyClientSnapshot = await transaction.get(
+            legacyClientReference
+          );
+
+          if (!legacyClientSnapshot.exists()) {
+            throw new Error(
+              "O cliente desta compra antiga não foi encontrado."
+            );
+          }
+
+          legacyClientData = legacyClientSnapshot.data();
+        }
+
         const productDataList = [];
 
         for (const item of savedSale.items || []) {
@@ -656,17 +840,17 @@ export default function SalesPage() {
           }
         }
 
-        if (clientSnapshot.exists()) {
-          const clientData = clientSnapshot.data();
-          const updatedDebt = Math.max(
-            Number(clientData.totalDebt || 0) -
-              Number(savedSale.pendingAmount || 0),
+        if (legacyClientReference && legacyClientData) {
+          const updatedLegacyDebt = adjustLegacyClientDebt(
+            savedSale,
+            legacyClientData.totalDebt,
+            Number(savedSale.pendingAmount || 0),
             0
           );
 
-          transaction.update(clientReference, {
-            totalDebt: updatedDebt,
-            status: updatedDebt === 0 ? "paid" : "partial",
+          transaction.update(legacyClientReference, {
+            totalDebt: updatedLegacyDebt,
+            status: updatedLegacyDebt === 0 ? "paid" : "partial",
             updatedAt: serverTimestamp(),
           });
         }
@@ -698,6 +882,26 @@ export default function SalesPage() {
       return;
     }
 
+    if (!sale.saleDate) {
+      alert("Informe a data da compra.");
+      return;
+    }
+
+    if (
+      sale.paymentMethod === "prazo" &&
+      !sale.dueDate
+    ) {
+      alert("Informe o vencimento da compra a prazo.");
+      return;
+    }
+
+    if (
+      sale.dueDate &&
+      toDate(sale.dueDate) < toDate(sale.saleDate)
+    ) {
+      alert("O vencimento não pode ser anterior à data da compra.");
+      return;
+    }
     if (sale.items.length === 0) {
       alert("Adicione pelo menos um produto.");
       return;
@@ -749,6 +953,7 @@ export default function SalesPage() {
     }
 
     if (
+      !editingSaleId &&
       sale.paymentMethod === "avista" &&
       amountPaid !== total
     ) {
@@ -762,6 +967,21 @@ export default function SalesPage() {
       setSaving(true);
 
       if (editingSaleId) {
+        const originalSale = sales.find(
+          (currentSale) => currentSale.id === editingSaleId
+        );
+
+        if (
+          originalSale &&
+          Number(originalSale.amountPaid || 0) > 0 &&
+          originalSale.clientId !== sale.clientId
+        ) {
+          alert(
+            "Não é possível trocar o cliente de uma compra com recebimentos registrados."
+          );
+          return;
+        }
+
         await updateExistingSale();
         alert("Venda atualizada com sucesso!");
         clearSale();
@@ -784,6 +1004,20 @@ export default function SalesPage() {
           "sales"
         )
       );
+
+      const initialPaymentReference =
+        amountPaid > 0
+          ? doc(
+              collection(
+                db,
+                "users",
+                user.uid,
+                "sales",
+                saleReference.id,
+                "payments"
+              )
+            )
+          : null;
 
       const productReferences = sale.items.map(
         (item) => ({
@@ -849,8 +1083,10 @@ export default function SalesPage() {
               }
 
               transaction.update(reference, {
-                quantity:
-                  currentQuantity - saleQuantity,
+                quantity: updateStockAfterSale(
+                  currentQuantity,
+                  saleQuantity
+                ),
                 updatedAt: serverTimestamp(),
               });
 
@@ -873,23 +1109,8 @@ export default function SalesPage() {
 
           const clientData = clientSnapshot.data();
 
-          const previousDebt = Number(
-            clientData.totalDebt || 0
-          );
-
-          if (pendingAmount > 0) {
-            transaction.update(clientReference, {
-              totalDebt:
-                previousDebt + pendingAmount,
-              status:
-                amountPaid > 0
-                  ? "partial"
-                  : "pending",
-              updatedAt: serverTimestamp(),
-            });
-          }
-
           transaction.set(saleReference, {
+            balanceModel: "per-sale",
             clientId: sale.clientId,
             clientName:
               clientData.name ||
@@ -902,9 +1123,27 @@ export default function SalesPage() {
             paymentMethod:
               sale.paymentMethod,
             status: saleStatus,
+            saleDate: new Date(`${sale.saleDate}T12:00:00`),
+            dueDate: sale.dueDate
+              ? new Date(`${sale.dueDate}T12:00:00`)
+              : null,
+            tripName: sale.tripName.trim(),
+            tripCity: sale.tripCity.trim(),
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
+
+          if (initialPaymentReference) {
+            transaction.set(initialPaymentReference, {
+              saleId: saleReference.id,
+              clientId: sale.clientId,
+              value: amountPaid,
+              previousBalance: total,
+              remainingBalance: pendingAmount,
+              type: "initial",
+              createdAt: serverTimestamp(),
+            });
+          }
         }
       );
 
@@ -946,14 +1185,25 @@ export default function SalesPage() {
       }
 
       const oldSale = oldSaleSnapshot.data();
+      const savedPaid = Number(oldSale.amountPaid || 0);
 
-      const oldClientReference = doc(
-        db,
-        "users",
-        user.uid,
-        "clients",
-        oldSale.clientId
-      );
+      if (
+        savedPaid > 0 &&
+        Math.round(total * 100) !==
+          Math.round(Number(oldSale.total || 0) * 100)
+      ) {
+        throw new Error(
+          "Não é possível alterar os produtos ou o total de uma compra com recebimentos. Ajuste somente os dados de data e viagem."
+        );
+      }
+
+      if (total < savedPaid) {
+        throw new Error(
+          `O total da compra não pode ser menor que o valor já recebido (${formatCurrency(savedPaid)}).`
+        );
+      }
+
+      const updatedPending = Math.max(total - savedPaid, 0);
 
       const newClientReference = doc(
         db,
@@ -963,10 +1213,49 @@ export default function SalesPage() {
         sale.clientId
       );
 
-      const clientReferences = new Map([
-        [oldSale.clientId, oldClientReference],
-        [sale.clientId, newClientReference],
-      ]);
+      const newClientSnapshot = await transaction.get(newClientReference);
+
+      if (!newClientSnapshot.exists()) {
+        throw new Error("O cliente selecionado não foi encontrado.");
+      }
+
+      let oldLegacyClientReference = null;
+      let oldLegacyClientData = null;
+      let newLegacyClientData = null;
+
+      if (oldSale.balanceModel !== "per-sale") {
+        if (!oldSale.clientId) {
+          throw new Error(
+            "Esta compra antiga não está vinculada a um cliente. Concilie-a antes de editá-la."
+          );
+        }
+
+        oldLegacyClientReference = doc(
+          db,
+          "users",
+          user.uid,
+          "clients",
+          oldSale.clientId
+        );
+
+        if (oldSale.clientId === sale.clientId) {
+          oldLegacyClientData = newClientSnapshot.data();
+        } else {
+          const oldLegacyClientSnapshot = await transaction.get(
+            oldLegacyClientReference
+          );
+
+          if (!oldLegacyClientSnapshot.exists()) {
+            throw new Error(
+              "O cliente original desta compra antiga não foi encontrado."
+            );
+          }
+
+          oldLegacyClientData = oldLegacyClientSnapshot.data();
+        }
+
+        newLegacyClientData = newClientSnapshot.data();
+      }
 
       const productReferences = new Map();
 
@@ -996,27 +1285,10 @@ export default function SalesPage() {
         );
       }
 
-      const clientSnapshots = new Map();
-
-      for (const [clientId, reference] of clientReferences) {
-        clientSnapshots.set(clientId, await transaction.get(reference));
-      }
-
       const productSnapshots = new Map();
 
       for (const [productId, reference] of productReferences) {
         productSnapshots.set(productId, await transaction.get(reference));
-      }
-
-      const oldClientSnapshot = clientSnapshots.get(oldSale.clientId);
-      const newClientSnapshot = clientSnapshots.get(sale.clientId);
-
-      if (!oldClientSnapshot?.exists()) {
-        throw new Error("O cliente original da venda não foi encontrado.");
-      }
-
-      if (!newClientSnapshot?.exists()) {
-        throw new Error("O cliente selecionado não foi encontrado.");
       }
 
       const oldQuantities = new Map();
@@ -1081,14 +1353,11 @@ export default function SalesPage() {
         const currentQuantity = Number(snapshot.data().quantity || 0);
         const oldQuantity = Number(oldQuantities.get(productId) || 0);
         const newQuantity = Number(newQuantities.get(productId) || 0);
-        const updatedQuantity =
-          currentQuantity + oldQuantity - newQuantity;
-
-        if (updatedQuantity < 0) {
-          throw new Error(
-            `Estoque insuficiente para ${snapshot.data().name || "um produto"}.`
-          );
-        }
+        const updatedQuantity = updateStockAfterSaleEdit(
+          currentQuantity,
+          oldQuantity,
+          newQuantity
+        );
 
         transaction.update(reference, {
           quantity: updatedQuantity,
@@ -1096,57 +1365,50 @@ export default function SalesPage() {
         });
       }
 
-      const oldPending = Number(oldSale.pendingAmount || 0);
+      if (oldLegacyClientReference && oldLegacyClientData) {
+        const oldPending = Number(oldSale.pendingAmount || 0);
 
-      if (oldSale.clientId === sale.clientId) {
-        const clientData = oldClientSnapshot.data();
-        const updatedDebt = Math.max(
-          Number(clientData.totalDebt || 0) -
-            oldPending +
-            pendingAmount,
-          0
-        );
+        if (oldSale.clientId === sale.clientId) {
+          const updatedLegacyDebt = adjustLegacyClientDebt(
+            oldSale,
+            oldLegacyClientData.totalDebt,
+            oldPending,
+            updatedPending
+          );
 
-        transaction.update(oldClientReference, {
-          totalDebt: updatedDebt,
-          status:
-            updatedDebt === 0
-              ? "paid"
-              : amountPaid > 0
-                ? "partial"
-                : "pending",
-          updatedAt: serverTimestamp(),
-        });
-      } else {
-        const oldClientData = oldClientSnapshot.data();
-        const oldClientDebt = Math.max(
-          Number(oldClientData.totalDebt || 0) - oldPending,
-          0
-        );
+          transaction.update(oldLegacyClientReference, {
+            totalDebt: updatedLegacyDebt,
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          const updatedOldClientDebt = adjustLegacyClientDebt(
+            oldSale,
+            oldLegacyClientData.totalDebt,
+            oldPending,
+            0
+          );
+          const updatedNewClientDebt = adjustLegacyClientDebt(
+            oldSale,
+            newLegacyClientData.totalDebt,
+            0,
+            updatedPending
+          );
 
-        transaction.update(oldClientReference, {
-          totalDebt: oldClientDebt,
-          status: oldClientDebt === 0 ? "paid" : "partial",
-          updatedAt: serverTimestamp(),
-        });
-
-        const newClientData = newClientSnapshot.data();
-        const newClientDebt =
-          Number(newClientData.totalDebt || 0) + pendingAmount;
-
-        transaction.update(newClientReference, {
-          totalDebt: newClientDebt,
-          status:
-            newClientDebt === 0
-              ? "paid"
-              : amountPaid > 0
-                ? "partial"
-                : "pending",
-          updatedAt: serverTimestamp(),
-        });
+          transaction.update(oldLegacyClientReference, {
+            totalDebt: updatedOldClientDebt,
+            updatedAt: serverTimestamp(),
+          });
+          transaction.update(newClientReference, {
+            totalDebt: updatedNewClientDebt,
+            updatedAt: serverTimestamp(),
+          });
+        }
       }
 
       transaction.update(saleReference, {
+        ...(oldSale.balanceModel === "per-sale"
+          ? { balanceModel: "per-sale" }
+          : {}),
         clientId: sale.clientId,
         clientName:
           newClientSnapshot.data().name ||
@@ -1154,10 +1416,16 @@ export default function SalesPage() {
           "",
         items: savedItems,
         total,
-        amountPaid,
-        pendingAmount,
+        amountPaid: savedPaid,
+        pendingAmount: updatedPending,
         paymentMethod: sale.paymentMethod,
-        status: saleStatus,
+        status: updatedPending === 0 ? "paid" : savedPaid > 0 ? "partial" : "pending",
+        saleDate: new Date(`${sale.saleDate}T12:00:00`),
+        dueDate: sale.dueDate
+          ? new Date(`${sale.dueDate}T12:00:00`)
+          : null,
+        tripName: sale.tripName.trim(),
+        tripCity: sale.tripCity.trim(),
         updatedAt: serverTimestamp(),
       });
     });
@@ -1174,9 +1442,18 @@ export default function SalesPage() {
           <h1 style={styles.title}>Vendas</h1>
 
           <p style={styles.subtitle}>
-            Registre vendas e atualize o estoque automaticamente.
+            Registre compras e acompanhe cada saldo por viagem.
           </p>
         </div>
+        <button
+          type="button"
+          style={styles.newSaleButton}
+          onClick={() => setShowSaleForm((current) => !current)}
+          aria-expanded={showSaleForm}
+          aria-controls="new-sale-form"
+        >
+          {showSaleForm ? "Fechar formulário" : "+ Nova venda"}
+        </button>
       </header>
 
       <section style={styles.summaryGrid}>
@@ -1227,11 +1504,13 @@ export default function SalesPage() {
         </div>
       </section>
 
-      <section style={styles.grid}>
-        <form
-          onSubmit={handleSubmit}
-          style={styles.card}
-        >
+      <section style={styles.salesAreas}>
+        {showSaleForm && (
+          <section
+            id="new-sale-form"
+            style={{ ...styles.card, order: 2 }}
+          >
+            <form onSubmit={handleSubmit}>
           <div style={styles.formTitleRow}>
             <h2 style={styles.cardTitle}>
               {editingSaleId ? "Editar venda" : "Nova venda"}
@@ -1271,6 +1550,77 @@ export default function SalesPage() {
               ))}
             </select>
           </label>
+
+          <div style={styles.itemGrid}>
+            <label style={styles.label}>
+              Data da compra
+              <input
+                type="date"
+                value={sale.saleDate}
+                onChange={(event) =>
+                  setSale((current) => ({
+                    ...current,
+                    saleDate: event.target.value,
+                  }))
+                }
+                required
+                disabled={saving}
+                style={styles.input}
+              />
+            </label>
+
+            <label style={styles.label}>
+              Vencimento
+              <input
+                type="date"
+                value={sale.dueDate}
+                onChange={(event) =>
+                  setSale((current) => ({
+                    ...current,
+                    dueDate: event.target.value,
+                  }))
+                }
+                disabled={saving || sale.paymentMethod === "avista"}
+                style={styles.input}
+              />
+            </label>
+          </div>
+
+          <div style={styles.itemGrid}>
+            <label style={styles.label}>
+              Viagem (opcional)
+              <input
+                type="text"
+                value={sale.tripName}
+                onChange={(event) =>
+                  setSale((current) => ({
+                    ...current,
+                    tripName: event.target.value,
+                  }))
+                }
+                placeholder="Ex.: Viagem de outubro"
+                disabled={saving}
+                style={styles.input}
+              />
+            </label>
+
+            <label style={styles.label}>
+              Cidade da viagem (opcional)
+              <input
+                type="text"
+                value={sale.tripCity}
+                onChange={(event) =>
+                  setSale((current) => ({
+                    ...current,
+                    tripCity: event.target.value,
+                  }))
+                }
+                placeholder="Ex.: Campinas"
+                disabled={saving}
+                style={styles.input}
+              />
+            </label>
+          </div>
 
           <div style={styles.itemsHeader}>
             <h3 style={styles.sectionTitle}>
@@ -1452,7 +1802,7 @@ export default function SalesPage() {
               onChange={
                 handlePaymentMethodChange
               }
-              disabled={saving}
+              disabled={saving || Boolean(editingSaleId)}
               style={styles.input}
             >
               <option value="prazo">
@@ -1466,7 +1816,7 @@ export default function SalesPage() {
           </label>
 
           <label style={styles.label}>
-            Valor recebido agora
+            {editingSaleId ? "Total recebido até agora" : "Valor recebido agora"}
             <input
               type="number"
               min="0"
@@ -1478,6 +1828,7 @@ export default function SalesPage() {
               }
               disabled={
                 saving ||
+                Boolean(editingSaleId) ||
                 sale.paymentMethod ===
                   "avista"
               }
@@ -1531,12 +1882,75 @@ export default function SalesPage() {
                 ? "Salvar alterações"
                 : "Finalizar venda"}
           </button>
-        </form>
+            </form>
+          </section>
+        )}
 
-        <section style={styles.card}>
-          <h2 style={styles.cardTitle}>
-            Vendas registradas
-          </h2>
+        <section style={{ ...styles.card, order: 1 }}>
+          <div style={styles.salesHeading}>
+            <div>
+              <h2 style={{ ...styles.cardTitle, margin: 0 }}>
+                Vendas registradas
+              </h2>
+              <p style={styles.salesHint}>
+                Proposta baseada na data da venda; quando ausente, usa a data
+                de criação do registro. Nada será alterado até sua aprovação.
+                {!loading && !salesLoadError
+                  ? ` Exibindo ${displayedSales.length} de ${sales.length} venda(s).`
+                  : ""}
+              </p>
+            </div>
+            <label style={styles.filterLabel}>
+              Filtrar por viagem
+              <select
+                value={tripFilter}
+                onChange={(event) => setTripFilter(event.target.value)}
+                style={styles.filterSelect}
+              >
+                <option value="all">Todas as vendas</option>
+                <option value="third">Candidatas à 3ª viagem</option>
+                <option value="fourth">Candidatas à 4ª viagem</option>
+                <option value="review">Separadas para revisão</option>
+              </select>
+            </label>
+            <label style={styles.filterLabel}>
+              Buscar cliente
+              <input
+                type="search"
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+                placeholder="Nome do cliente"
+                style={styles.filterSelect}
+              />
+            </label>
+            <label style={styles.filterLabel}>
+              Ordenar por data
+              <select
+                value={sortOrder}
+                onChange={(event) => setSortOrder(event.target.value)}
+                style={styles.filterSelect}
+              >
+                <option value="newest">Mais recente primeiro</option>
+                <option value="oldest">Mais antiga primeiro</option>
+              </select>
+            </label>
+          </div>
+
+          {loading ? (
+            <div style={styles.tripSummaryLoading}>
+              Calculando os totais por viagem...
+            </div>
+          ) : salesLoadError ? (
+            <div style={styles.tripSummaryError} role="alert">
+              {salesLoadError}
+            </div>
+          ) : (
+            <div style={styles.tripSummaryGrid}>
+              <TripSummaryCard title="3ª viagem · jul-set/2026" summary={tripOrganization.thirdTrip} />
+              <TripSummaryCard title="4ª viagem · out-dez/2026" summary={tripOrganization.fourthTrip} />
+              <TripSummaryCard title="Revisão necessária" summary={tripOrganization.review} review />
+            </div>
+          )}
 
           {loading ? (
             <div style={styles.empty}>
@@ -1547,6 +1961,11 @@ export default function SalesPage() {
               <strong>
                 Carregando vendas...
               </strong>
+            </div>
+          ) : salesLoadError ? (
+            <div style={styles.empty} role="alert">
+              <strong>Erro ao carregar vendas</strong>
+              <p>{salesLoadError}</p>
             </div>
           ) : sales.length === 0 ? (
             <div style={styles.empty}>
@@ -1562,9 +1981,15 @@ export default function SalesPage() {
                 As vendas aparecerão aqui.
               </p>
             </div>
+          ) : displayedSales.length === 0 ? (
+            <div style={styles.empty}>
+              <span style={styles.emptyIcon}>🔎</span>
+              <strong>Nenhuma venda neste filtro</strong>
+              <p>Escolha outra viagem para ver as vendas correspondentes.</p>
+            </div>
           ) : (
             <div style={styles.salesList}>
-              {sales.map((currentSale) => {
+              {displayedSales.map((currentSale) => {
                 const status =
                   formatStatus(
                     currentSale.status
@@ -1583,21 +2008,70 @@ export default function SalesPage() {
                         </h3>
 
                         <p style={styles.saleDate}>
-                          {formatDate(
-                            currentSale.createdAt
-                          )}
+                          Compra #{currentSale.id} •{" "}
+                          {currentSale.originalSaleDate
+                            ? currentSale.dateSource === "saleDate"
+                              ? `Data da venda: ${formatDate(currentSale.originalSaleDate)}`
+                              : `Data de criação do registro: ${formatDate(currentSale.originalSaleDate)}`
+                            : "Data original não confiável"}
                         </p>
+
+                        {currentSale.tripName && (
+                          <p style={styles.saleDate}>
+                            Viagem: {currentSale.tripName}
+                            {currentSale.tripCity
+                              ? ` • ${currentSale.tripCity}`
+                              : ""}
+                          </p>
+                        )}
+                        {!currentSale.tripName && currentSale.tripNumber && (
+                          <p style={styles.saleDate}>Viagem não informada</p>
+                        )}
+                        <p
+                          style={{
+                            ...styles.tripProposal,
+                            ...(currentSale.tripNumber
+                              ? styles.tripProposalCandidate
+                              : styles.tripProposalReview),
+                          }}
+                        >
+                          {currentSale.tripNumber
+                            ? `Candidata à ${currentSale.tripNumber}ª viagem`
+                            : `Revisar: ${currentSale.reviewReason || "A data original ou os valores da venda precisam ser conferidos."}`}
+                        </p>
+
+                        {currentSale.dueDate && (
+                          <p
+                            style={{
+                              ...styles.saleDate,
+                              color: isSaleOverdue(currentSale)
+                                ? "#dc2626"
+                                : "#64748b",
+                              fontWeight: isSaleOverdue(currentSale)
+                                ? "700"
+                                : "400",
+                            }}
+                          >
+                            {isSaleOverdue(currentSale) ? "Vencida em" : "Vencimento"}:{" "}
+                            {formatDateOnly(currentSale.dueDate)}
+                          </p>
+                        )}
                       </div>
 
                       <span
                         style={{
                           ...styles.statusBadge,
-                          color: status.color,
-                          background:
-                            status.background,
+                          color: isSaleOverdue(currentSale)
+                            ? "#dc2626"
+                            : status.color,
+                          background: isSaleOverdue(currentSale)
+                            ? "#fee2e2"
+                            : status.background,
                         }}
                       >
-                        {status.label}
+                        {isSaleOverdue(currentSale)
+                          ? "Vencida"
+                          : status.label}
                       </span>
                     </div>
 
@@ -1625,9 +2099,7 @@ export default function SalesPage() {
                         </span>
 
                         <strong>
-                          {formatCurrency(
-                            currentSale.total
-                          )}
+                          {formatSaleAmount(currentSale.total)}
                         </strong>
                       </div>
 
@@ -1637,9 +2109,7 @@ export default function SalesPage() {
                         </span>
 
                         <strong style={styles.receivedValue}>
-                          {formatCurrency(
-                            currentSale.amountPaid
-                          )}
+                          {formatSaleAmount(currentSale.amountPaid)}
                         </strong>
                       </div>
 
@@ -1649,9 +2119,7 @@ export default function SalesPage() {
                         </span>
 
                         <strong style={styles.pendingValue}>
-                          {formatCurrency(
-                            currentSale.pendingAmount
-                          )}
+                          {formatSaleAmount(currentSale.pendingAmount)}
                         </strong>
                       </div>
                     </div>
@@ -1668,17 +2136,20 @@ export default function SalesPage() {
                       <button
                         type="button"
                         onClick={() => handleReceiveSale(currentSale)}
-                        disabled={Number(currentSale.pendingAmount || 0) <= 0}
+                        disabled={
+                          Number(currentSale.pendingAmount || 0) <= 0 ||
+                          receivingSaleId === currentSale.id
+                        }
                         style={{
                           ...styles.receiveSaleButton,
-                          opacity:
-                            Number(currentSale.pendingAmount || 0) <= 0
-                              ? 0.5
-                              : 1,
-                          cursor:
-                            Number(currentSale.pendingAmount || 0) <= 0
-                              ? "not-allowed"
-                              : "pointer",
+                          opacity: Number(currentSale.pendingAmount || 0) <= 0 ||
+                            receivingSaleId === currentSale.id
+                            ? 0.5
+                            : 1,
+                          cursor: Number(currentSale.pendingAmount || 0) <= 0 ||
+                            receivingSaleId === currentSale.id
+                            ? "not-allowed"
+                            : "pointer",
                         }}
                       >
                         💵 Receber
@@ -1773,6 +2244,55 @@ export default function SalesPage() {
   );
 }
 
+function TripSummaryCard({ title, summary, review = false }) {
+  return (
+    <article
+      style={{
+        ...styles.tripSummaryCard,
+        ...(review ? styles.tripSummaryReview : {}),
+      }}
+    >
+      <h3 style={styles.tripSummaryTitle}>{title}</h3>
+      <strong style={styles.tripSummaryCount}>{summary.count} venda(s)</strong>
+      <div style={styles.tripSummaryRow}>
+        <span>Total vendido</span>
+        <strong>{formatBRL(summary.sold)}</strong>
+      </div>
+      <div style={styles.tripSummaryRow}>
+        <span>Recebido</span>
+        <strong style={styles.tripSummaryReceived}>
+          {formatBRL(summary.received)}
+        </strong>
+      </div>
+      <div style={styles.tripSummaryRow}>
+        <span>Pendente</span>
+        <strong style={styles.tripSummaryPending}>
+          {formatBRL(summary.pending)}
+        </strong>
+      </div>
+      {summary.incompleteValues > 0 && (
+        <p style={styles.tripSummaryWarning}>
+          {summary.incompleteValues} venda(s) com valores incompletos; totais
+          incluem somente os valores disponíveis.
+        </p>
+      )}
+    </article>
+  );
+}
+
+function formatSaleAmount(value) {
+  return value === null || value === undefined || value === ""
+    ? "Não informado"
+    : formatBRL(value);
+}
+
+function formatBRL(value) {
+  return Number(value || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+}
+
 const styles = {
   page: {
     color: "#0f172a",
@@ -1780,6 +2300,11 @@ const styles = {
   },
 
   header: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: "16px",
     marginBottom: "22px",
   },
 
@@ -1799,6 +2324,17 @@ const styles = {
   subtitle: {
     margin: 0,
     color: "#64748b",
+  },
+
+  newSaleButton: {
+    border: 0,
+    borderRadius: "10px",
+    padding: "12px 18px",
+    background: "#2563eb",
+    color: "#ffffff",
+    fontSize: "14px",
+    fontWeight: "700",
+    cursor: "pointer",
   },
 
   summaryGrid: {
@@ -1837,12 +2373,10 @@ const styles = {
     fontSize: "18px",
   },
 
-  grid: {
-    display: "grid",
-    gridTemplateColumns:
-      "repeat(auto-fit, minmax(340px, 1fr))",
-    alignItems: "start",
-    gap: "22px",
+  salesAreas: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "18px",
   },
 
   card: {
@@ -1856,6 +2390,136 @@ const styles = {
   cardTitle: {
     margin: "0 0 20px",
     fontSize: "21px",
+  },
+
+  salesHeading: {
+    display: "flex",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    flexWrap: "wrap",
+    gap: "16px",
+    marginBottom: "18px",
+  },
+
+  salesHint: {
+    margin: "7px 0 0",
+    maxWidth: "520px",
+    color: "#64748b",
+    fontSize: "13px",
+    lineHeight: 1.5,
+  },
+
+  filterLabel: {
+    display: "grid",
+    gap: "6px",
+    color: "#334155",
+    fontSize: "13px",
+    fontWeight: "700",
+  },
+
+  filterSelect: {
+    minWidth: "220px",
+    maxWidth: "100%",
+    padding: "10px 12px",
+    border: "1px solid #cbd5e1",
+    borderRadius: "9px",
+    background: "#fff",
+    color: "#0f172a",
+    fontSize: "14px",
+  },
+
+  tripSummaryGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+    gap: "10px",
+    marginBottom: "22px",
+  },
+
+  tripSummaryLoading: {
+    marginBottom: "22px",
+    padding: "18px",
+    borderRadius: "12px",
+    background: "#f8fafc",
+    color: "#64748b",
+    textAlign: "center",
+  },
+
+  tripSummaryError: {
+    marginBottom: "22px",
+    padding: "14px 16px",
+    border: "1px solid #fecaca",
+    borderRadius: "12px",
+    background: "#fef2f2",
+    color: "#991b1b",
+  },
+
+  tripSummaryCard: {
+    minWidth: 0,
+    padding: "14px",
+    border: "1px solid #dbeafe",
+    borderRadius: "12px",
+    background: "#f8fbff",
+  },
+
+  tripSummaryReview: {
+    borderColor: "#fed7aa",
+    background: "#fffaf5",
+  },
+
+  tripSummaryTitle: {
+    margin: "0 0 8px",
+    color: "#334155",
+    fontSize: "14px",
+  },
+
+  tripSummaryCount: {
+    display: "block",
+    marginBottom: "10px",
+    fontSize: "18px",
+  },
+
+  tripSummaryRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "8px",
+    padding: "5px 0",
+    borderTop: "1px solid #e2e8f0",
+    color: "#64748b",
+    fontSize: "12px",
+  },
+
+  tripSummaryReceived: {
+    color: "#16a34a",
+  },
+
+  tripSummaryPending: {
+    color: "#dc2626",
+  },
+
+  tripSummaryWarning: {
+    margin: "9px 0 0",
+    color: "#9a3412",
+    fontSize: "11px",
+    lineHeight: 1.4,
+  },
+
+  tripProposal: {
+    display: "inline-block",
+    margin: "7px 0 0",
+    padding: "4px 8px",
+    borderRadius: "999px",
+    fontSize: "11px",
+    fontWeight: "700",
+  },
+
+  tripProposalCandidate: {
+    background: "#dcfce7",
+    color: "#166534",
+  },
+
+  tripProposalReview: {
+    background: "#ffedd5",
+    color: "#9a3412",
   },
 
   formTitleRow: {
