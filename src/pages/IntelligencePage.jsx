@@ -1,9 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { LuBot } from "react-icons/lu";
+import PageHeader from "../components/PageHeader.jsx";
 import { onAuthStateChanged, signInWithEmailAndPassword } from "firebase/auth";
-import { collection, onSnapshot } from "firebase/firestore";
+import { collection, doc, onSnapshot, serverTimestamp } from "firebase/firestore";
 
 import { auth, db } from "../firebase/config";
+import { addDoc, runTransaction } from "../firebase/firestoreAccess";
+import { isFirestoreReadOnly } from "../firebase/writePolicy";
+import AdminOperationCard from "../components/AdminOperationCard.jsx";
+import {
+  cancelDraft,
+  chooseDraftProduct,
+  chooseDraftTrip,
+  continueAdminDraft,
+  finishDraft,
+  isDraftActive,
+  markDraftConfirming,
+  revalidateDraft,
+  startAdminCommand,
+} from "../domain/adminCommands";
+import { AdminOperationError, executeAdminOperation } from "../services/adminOperationsService";
 import { toDate } from "../utils/dates";
+import { askSecretaryAi } from "../services/secretaryAi";
+import { useSpeechRecognition, useSpeechSynthesis } from "../hooks/useSecretaryVoice";
 import {
   answerSecretaryQueryWithContext,
   createSecretarySnapshot,
@@ -18,6 +37,96 @@ const quickSuggestions = [
   { label: "Estoque", prompt: "Estoque", icon: "📦" },
 ];
 const legacyPanelsEnabled = false;
+
+const currencyFormat = (value) =>
+  Number(value || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+
+function CollectionsCards({ collections }) {
+  const { report, focusToday, tripLabel, provisional } = collections;
+  const sections = [
+    { key: "overdue", title: "Vencidas", tone: "overdue", group: report.overdue },
+    { key: "today", title: "Vencem hoje", tone: "today", group: report.today },
+    {
+      key: "upcoming",
+      title: focusToday ? "Próximas a vencer (não são para hoje)" : "Próximas a vencer",
+      tone: "upcoming",
+      group: report.upcoming,
+    },
+    {
+      key: "noDueDate",
+      title: "Vencimento não informado",
+      tone: "nodate",
+      group: report.noDueDate,
+    },
+  ];
+
+  return (
+    <div className="secretary-collections">
+      <p className="secretary-collections-scope">
+        <strong>Cobranças — {tripLabel}</strong>
+        {provisional && (
+          <span> A classificação por viagem ainda é provisória.</span>
+        )}
+      </p>
+      {sections.map(({ key, title, tone, group }) => {
+        if (key === "noDueDate" && !group.count) return null;
+        return (
+          <section
+            key={key}
+            className={`secretary-collections-group secretary-collections-${tone}`}
+          >
+            <header>
+              <h3>{title}</h3>
+              <span>
+                {group.count} cobrança(s) · {currencyFormat(group.total)}
+              </span>
+            </header>
+            {group.count === 0 ? (
+              <p className="secretary-collections-empty">Nenhuma cobrança neste grupo.</p>
+            ) : (
+              <ul>
+                {group.items.map((item, index) => (
+                  <li key={`${item.saleId || "legacy"}-${index}`}>
+                    <div className="secretary-collections-main">
+                      <strong>{item.clientName}</strong>
+                      <span>{item.city}</span>
+                    </div>
+                    <div className="secretary-collections-amount">
+                      {currencyFormat(item.pending)}
+                    </div>
+                    <div className="secretary-collections-due">
+                      <span>
+                        {item.dueDate
+                          ? `${item.dueNote ? "Vencimento previsto" : "Vencimento"}: ${item.dueLabel}`
+                          : item.dueLabel}
+                        {item.legacy ? " · saldo anterior" : ""}
+                      </span>
+                      {item.dueNote && (
+                        <i className="secretary-collections-estimate">
+                          {item.dueNote}
+                        </i>
+                      )}
+                      {item.daysLate > 0 && (
+                        <b>{item.daysLate} dia(s) de atraso</b>
+                      )}
+                      {key === "today" && <b>vence hoje</b>}
+                      {key === "upcoming" && (
+                        <em>em {item.daysUntil} dia(s)</em>
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function IntelligencePage() {
   const [clients, setClients] = useState([]);
@@ -44,10 +153,26 @@ export default function IntelligencePage() {
     },
   ]);
   const [draft, setDraft] = useState("");
+  const [isAsking, setIsAsking] = useState(false);
+  const [adminDrafts, setAdminDrafts] = useState({});
+  const activeDraftId = useRef(null);
   const messageId = useRef(0);
   const messagesEndRef = useRef(null);
   const tripContext = useRef(null);
   const monthlyGoal = 30000;
+  const recognition = useSpeechRecognition({ onTranscript: setDraft });
+  const synthesis = useSpeechSynthesis();
+  const voiceError = recognition.error || synthesis.error;
+
+  function toggleListening() {
+    if (recognition.status === "listening") {
+      recognition.stop();
+      return;
+    }
+    if (recognition.status === "processing") return;
+    synthesis.stop();
+    recognition.start();
+  }
 
   useEffect(() => {
     let unsubscribeClients = null;
@@ -459,29 +584,172 @@ export default function IntelligencePage() {
     });
   }, [messages]);
 
-  function sendMessage(text = draft) {
+  function updateAdminDraft(id, updater, replyText) {
+    setAdminDrafts((current) => {
+      const existing = current[id];
+      if (!existing) return current;
+      return { ...current, [id]: updater(existing) };
+    });
+    if (replyText) {
+      setMessages((current) => [
+        ...current,
+        { id: `message-${++messageId.current}`, role: "assistant", text: replyText, adminDraftId: id },
+      ]);
+    }
+  }
+
+  function handleChooseProduct(id, productId) {
+    const current = adminDrafts[id];
+    if (!current) return;
+    const step = chooseDraftProduct(current, productId, { products, now: new Date(), readOnly: isFirestoreReadOnly() });
+    updateAdminDraft(id, () => step.draft, step.reply);
+  }
+
+  function handleChooseTrip(id, trip) {
+    const current = adminDrafts[id];
+    if (!current) return;
+    const step = chooseDraftTrip(current, trip, { products, now: new Date(), readOnly: isFirestoreReadOnly() });
+    updateAdminDraft(id, () => step.draft, step.reply);
+  }
+
+  function handleCancelDraft(id) {
+    updateAdminDraft(id, cancelDraft, "Operação cancelada. Nada foi gravado.");
+  }
+
+  async function handleConfirmDraft(id, event) {
+    const current = adminDrafts[id];
+    if (!current) return;
+    const readOnly = isFirestoreReadOnly();
+    let confirming;
+    try {
+      const fresh = revalidateDraft(current, { products, now: new Date(), readOnly });
+      confirming = markDraftConfirming(fresh, { trusted: event?.isTrusted === true });
+    } catch (error) {
+      updateAdminDraft(id, (draftValue) => ({
+        ...draftValue,
+        result: { ok: false, message: error.message },
+      }));
+      return;
+    }
+    setAdminDrafts((all) => ({ ...all, [id]: confirming }));
+    let result;
+    try {
+      result = await executeAdminOperation(confirming, {
+        user: auth.currentUser,
+        readOnly,
+        products,
+        api: { db, collection, doc, serverTimestamp, addDoc, runTransaction },
+      });
+    } catch (error) {
+      result = {
+        ok: false,
+        message:
+          error instanceof AdminOperationError
+            ? error.message
+            : "Não foi possível concluir a operação. Nada foi gravado.",
+      };
+    }
+    const finished = finishDraft(confirming, result);
+    setAdminDrafts((all) => ({ ...all, [id]: finished }));
+    setMessages((all) => [
+      ...all,
+      { id: `message-${++messageId.current}`, role: "assistant", text: result.message },
+    ]);
+  }
+
+  async function sendMessage(text = draft) {
     const question = text.trim();
-    if (!question || !secretaryCanQuery) return;
+    if (!question || !secretaryCanQuery || isAsking) return;
+
+    if (recognition.status !== "idle") recognition.stop();
+    synthesis.stop();
+
+    const adminContext = () => ({ products, now: new Date(), readOnly: isFirestoreReadOnly() });
+    const previousDraft = activeDraftId.current ? adminDrafts[activeDraftId.current] : null;
+    let adminStep = startAdminCommand(question, adminContext());
+    if (adminStep && previousDraft && isDraftActive(previousDraft)) {
+      setAdminDrafts((current) => ({
+        ...current,
+        [previousDraft.id]: cancelDraft(current[previousDraft.id]),
+      }));
+    }
+    if (!adminStep && previousDraft && isDraftActive(previousDraft)) {
+      adminStep = continueAdminDraft(previousDraft, question, adminContext());
+    }
+    if (adminStep) {
+      activeDraftId.current = adminStep.draft.id;
+      setDraft("");
+      setAdminDrafts((current) => ({ ...current, [adminStep.draft.id]: adminStep.draft }));
+      setMessages((current) => [
+        ...current,
+        { id: `message-${++messageId.current}`, role: "user", text: question },
+        {
+          id: `message-${++messageId.current}`,
+          role: "assistant",
+          text: adminStep.reply,
+          adminDraftId: adminStep.draft.id,
+        },
+      ]);
+      return;
+    }
 
     const userMessageId = `message-${++messageId.current}`;
     const assistantMessageId = `message-${++messageId.current}`;
-    const response = answerSecretaryQueryWithContext(
-      question,
-      secretarySnapshot,
-      intelligence,
-      tripContext.current
-    );
-    tripContext.current = response.tripContext;
+    const history = messages
+      .filter((message) => message.id !== "welcome" && message.text && !message.pending)
+      .slice(-6)
+      .map((message) => ({ role: message.role, content: message.text }));
+
+    setDraft("");
+    setIsAsking(true);
     setMessages((current) => [
       ...current,
       { id: userMessageId, role: "user", text: question },
       {
         id: assistantMessageId,
         role: "assistant",
-        text: response.answer,
+        text: "Consultando seus dados...",
+        pending: true,
       },
     ]);
-    setDraft("");
+
+    let reply;
+    try {
+      const ai = await askSecretaryAi(question, history);
+      reply = {
+        text: ai.answer,
+        collections: ai.collections || null,
+        ai: true,
+      };
+    } catch (error) {
+      if (error?.fallback) {
+        const response = answerSecretaryQueryWithContext(
+          question,
+          secretarySnapshot,
+          intelligence,
+          tripContext.current
+        );
+        tripContext.current = response.tripContext;
+        reply = {
+          text: response.answer,
+          collections: response.collections || null,
+        };
+      } else {
+        reply = {
+          text: error?.message || "Não foi possível consultar a IA agora.",
+          collections: null,
+        };
+      }
+    }
+
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === assistantMessageId
+          ? { id: assistantMessageId, role: "assistant", ...reply }
+          : message
+      )
+    );
+    setIsAsking(false);
   }
 
   const intelligence = useMemo(() => {
@@ -833,15 +1101,11 @@ export default function IntelligencePage() {
 
   return (
     <div style={styles.page}>
-      <header style={styles.header}>
-        <div>
-          <p style={styles.eyebrow}>RC Confecções</p>
-          <h1 style={styles.title}>Secretária RC</h1>
-          <p style={styles.subtitle}>
-            Sua assistente de gestão para a rotina da RC Confecções.
-          </p>
-        </div>
-      </header>
+      <PageHeader
+        icon={LuBot}
+        title="Secretária RC"
+        description="Sua assistente de gestão para a rotina da RC Confecções."
+      />
 
       <section className="secretary-dashboard">
         <div className="secretary-morning-card">
@@ -886,6 +1150,25 @@ export default function IntelligencePage() {
                 <div>
                   <span>Total pendente</span>
                   <strong>{formatCurrency(secretarySnapshot.totalPending)}</strong>
+                </div>
+              </div>
+
+              <div className="secretary-trip-pending" aria-label="Saldo pendente por viagem">
+                <header>
+                  <h3>Pendente por viagem</h3>
+                  <span>classificação provisória</span>
+                </header>
+                <div className="secretary-trip-pending-grid">
+                  {[3, 4].map((tripNumber) => {
+                    const trip = secretarySnapshot.tripPending?.[tripNumber];
+                    return (
+                      <div key={tripNumber}>
+                        <span>{tripNumber}ª viagem</span>
+                        <strong>{formatCurrency(trip?.amount)}</strong>
+                        <small>{trip?.salesCount || 0} venda(s) em aberto</small>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
@@ -960,7 +1243,7 @@ export default function IntelligencePage() {
             aria-live="polite"
             aria-label="Histórico da conversa"
           >
-            {messages.map((message) => (
+            {messages.map((message, index) => (
               <div
                 key={message.id}
                 className={`secretary-message secretary-message-${message.role}`}
@@ -968,7 +1251,61 @@ export default function IntelligencePage() {
                 <span className="secretary-message-avatar" aria-hidden="true">
                   {message.role === "assistant" ? "👩‍💼" : "Você"}
                 </span>
-                <p>{message.text}</p>
+                {message.collections && !message.ai ? (
+                  <CollectionsCards collections={message.collections} />
+                ) : (
+                  <div className="secretary-message-body">
+                    <p>{message.text}</p>
+                    {message.collections && (
+                      <CollectionsCards collections={message.collections} />
+                    )}
+                    {message.adminDraftId &&
+                      adminDrafts[message.adminDraftId] &&
+                      !messages
+                        .slice(index + 1)
+                        .some((later) => later.adminDraftId === message.adminDraftId) && (
+                        <AdminOperationCard
+                          draft={adminDrafts[message.adminDraftId]}
+                          readOnly={isFirestoreReadOnly()}
+                          onConfirm={(event) => handleConfirmDraft(message.adminDraftId, event)}
+                          onCancel={() => handleCancelDraft(message.adminDraftId)}
+                          onChooseProduct={(productId) => handleChooseProduct(message.adminDraftId, productId)}
+                          onChooseTrip={(trip) => handleChooseTrip(message.adminDraftId, trip)}
+                        />
+                      )}
+                  </div>
+                )}
+                {message.role === "assistant" &&
+                  !message.pending &&
+                  message.id !== "welcome" &&
+                  message.text &&
+                  synthesis.supported && (
+                    <button
+                      type="button"
+                      className={`secretary-speak-button${
+                        synthesis.speakingId === message.id ? " is-speaking" : ""
+                      }`}
+                      onClick={() =>
+                        synthesis.speakingId === message.id
+                          ? synthesis.stop()
+                          : synthesis.speak(message.id, message.text)
+                      }
+                      aria-label={
+                        synthesis.speakingId === message.id
+                          ? "Parar a leitura da resposta"
+                          : "Ouvir a resposta em voz alta"
+                      }
+                      title={
+                        synthesis.speakingId === message.id
+                          ? "Parar a leitura"
+                          : "Ouvir a resposta"
+                      }
+                    >
+                      <span aria-hidden="true">
+                        {synthesis.speakingId === message.id ? "⏹" : "🔊"}
+                      </span>
+                    </button>
+                  )}
               </div>
             ))}
             <div ref={messagesEndRef} />
@@ -1049,29 +1386,57 @@ export default function IntelligencePage() {
               disabled={!secretaryCanQuery}
             />
             <button
+              className={`secretary-mic-button secretary-mic-${recognition.status}`}
+              type="button"
+              onClick={toggleListening}
+              disabled={!secretaryCanQuery || recognition.status === "processing"}
+              aria-pressed={recognition.status === "listening"}
+              aria-describedby="secretary-voice-help"
+              aria-label={
+                recognition.status === "listening"
+                  ? "Parar de ouvir"
+                  : "Falar a pergunta com o microfone"
+              }
+              title={
+                recognition.status === "listening" ? "Parar de ouvir" : "Falar a pergunta"
+              }
+            >
+              <span aria-hidden="true">
+                {recognition.status === "listening" ? "⏹" : "🎙️"}
+              </span>
+            </button>
+            <button
               className="secretary-send-button"
               type="submit"
-              disabled={!secretaryCanQuery || !draft.trim()}
+              disabled={!secretaryCanQuery || isAsking || !draft.trim()}
             >
               Enviar
             </button>
           </form>
 
           <div className="secretary-voice-area">
-            <button
-              className="secretary-voice-button"
-              type="button"
-              disabled
-              aria-describedby="secretary-voice-help"
+            <p
+              id="secretary-voice-help"
+              className={`secretary-voice-status secretary-voice-status-${recognition.status}`}
+              role="status"
+              aria-live="polite"
             >
-              🎙️ Comando de voz
-            </button>
-            <p id="secretary-voice-help">
-              Reconhecimento de voz ainda não ativado. Nenhum áudio é gravado ou enviado.
+              {recognition.status === "listening"
+                ? "Ouvindo… fale agora e toque no microfone para parar."
+                : recognition.status === "processing"
+                  ? "Processando sua fala…"
+                  : recognition.supported
+                    ? "Microfone desligado. Toque em 🎙️ para ditar; revise o texto antes de enviar."
+                    : "Comando de voz indisponível neste navegador. Digite ou use o ditado do teclado."}
             </p>
+            {voiceError && (
+              <p className="secretary-error secretary-voice-error" role="alert">
+                {voiceError}
+              </p>
+            )}
           </div>
           <p className="secretary-privacy-note">
-            Consultas executadas no aplicativo com dados do seu usuário. Nenhum dado é enviado a uma IA externa.
+            Consultas executadas no aplicativo com dados do seu usuário. Nenhum dado é enviado a uma IA externa. O áudio é tratado pelo navegador e nunca é gravado nem salvo pelo aplicativo.
           </p>
         </div>
       </section>

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import PageHeader from "../components/PageHeader.jsx";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   getDocs,
@@ -26,6 +27,13 @@ import {
   isValidCpf,
   isValidPhone,
 } from "../domain/clientFields";
+import {
+  CLIENT_CITIES,
+  getCanonicalClientCity,
+  getClientCityDisplay,
+  getClientCityKey,
+  normalizeSearchText,
+} from "../domain/clientCities";
 import { toDate } from "../utils/dates";
 import {
   LuBanknote,
@@ -258,9 +266,14 @@ export default function ClientsPage() {
   const cities = useMemo(
     () =>
       [
-        ...new Set(
-          clients.map((client) => String(client.city || "").trim()).filter(Boolean)
-        ),
+        ...new Map(
+          [
+            ...CLIENT_CITIES,
+            ...clients
+              .map((client) => String(client.city || "").trim())
+              .filter(Boolean),
+          ].map((city) => [getClientCityKey(city), getClientCityDisplay(city)])
+        ).values(),
       ].sort((first, second) => first.localeCompare(second, "pt-BR")),
     [clients]
   );
@@ -270,11 +283,14 @@ export default function ClientsPage() {
   ).length;
 
   const filteredRows = useMemo(() => {
-    const search = searchText.trim().toLowerCase();
+    const search = normalizeSearchText(searchText.trim());
     const searchDigits = search.replace(/\D/g, "");
 
     return clientRows.filter(({ client, status, trips }) => {
-      if (cityFilter !== "all" && String(client.city || "").trim() !== cityFilter) {
+      if (
+        cityFilter !== "all" &&
+        getClientCityKey(client.city) !== getClientCityKey(cityFilter)
+      ) {
         return false;
       }
       if (statusFilter !== "all" && status !== statusFilter) return false;
@@ -285,13 +301,15 @@ export default function ClientsPage() {
         client.name,
         client.nickname,
         client.cpf,
-        client.city,
+        getClientCityDisplay(client.city),
         client.phone,
         client.street,
         client.number,
         client.district,
         client.notes,
-      ].some((field) => String(field || "").toLowerCase().includes(search));
+      ].some((field) =>
+        normalizeSearchText(field).includes(search)
+      );
 
       const digitMatch =
         searchDigits.length >= 3 &&
@@ -544,8 +562,13 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
       return;
     }
 
-    // Dados antigos inalterados não são revalidados, para não bloquear a edição de outros campos.
     const original = clients.find((item) => item.id === editingId);
+    const canonicalCity = getCanonicalClientCity(form.city);
+
+    if (!canonicalCity) {
+      alert("Selecione uma das cinco cidades disponíveis.");
+      return;
+    }
 
     if (
       form.cpf.trim() &&
@@ -573,7 +596,11 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
         nickname: form.nickname.trim(),
         phone: form.phone.trim(),
         cpf: form.cpf.trim(),
-        city: form.city.trim(),
+        city:
+          original &&
+          getCanonicalClientCity(original.city) === canonicalCity
+            ? original.city
+            : canonicalCity,
         street: form.street.trim(),
         number: form.number.trim(),
         district: form.district.trim(),
@@ -628,7 +655,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
       nickname: client.nickname || "",
       phone: displayPhone(client.phone),
       cpf: displayCpf(client.cpf),
-      city: client.city || "",
+      city: getCanonicalClientCity(client.city),
       street: client.street || "",
       number: client.number || "",
       district: client.district || "",
@@ -802,14 +829,22 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
 
         <label>
           Cidade
-          <input
-            type="text"
+          <select
             name="city"
             value={form.city}
             onChange={handleChange}
-            placeholder="Digite a cidade"
+            required
             disabled={saving}
-          />
+          >
+            <option value="" disabled>
+              Selecione a cidade
+            </option>
+            {CLIENT_CITIES.map((city) => (
+              <option key={city} value={city}>
+                {city}
+              </option>
+            ))}
+          </select>
         </label>
 
         <label className="cl-wide">
@@ -900,15 +935,11 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
 
   return (
     <div className="cl">
-      <header className="cl-header">
-        <div>
-          <p className="cl-eyebrow">RC Confecções</p>
-          <h1>Clientes</h1>
-          <p className="cl-subtitle">
-            Cadastre, pesquise e acompanhe seus clientes e saldos.
-          </p>
-        </div>
-
+      <PageHeader
+        icon={LuUsers}
+        title="Clientes"
+        description="Cadastre, pesquise e acompanhe seus clientes e saldos."
+      >
         <button
           type="button"
           className="cl-btn cl-btn-primary cl-new"
@@ -916,7 +947,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
         >
           <LuPlus aria-hidden="true" /> Novo cliente
         </button>
-      </header>
+      </PageHeader>
 
       <div className="cl-kpis">
         <article className="cl-kpi cl-kpi-navy">
@@ -1039,7 +1070,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                     </div>
 
                     <div className="cl-contact">
-                      <span><LuMapPin aria-hidden="true" /> {client.city || "Cidade não informada"}</span>
+                      <span><LuMapPin aria-hidden="true" /> {getClientCityDisplay(client.city) || "Cidade não informada"}</span>
                       <span><LuPhone aria-hidden="true" /> {displayPhone(client.phone) || "Telefone não informado"}</span>
                     </div>
 

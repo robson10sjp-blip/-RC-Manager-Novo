@@ -18,4 +18,8 @@ export default defineConfig([
       parserOptions: { ecmaFeatures: { jsx: true } },
     },
   },
+  {
+    files: ['netlify/**/*.js', 'src/**/*.test.js'],
+    languageOptions: { globals: { ...globals.node } },
+  },
 ])

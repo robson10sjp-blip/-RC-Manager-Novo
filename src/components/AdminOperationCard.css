@@ -1,0 +1,161 @@
+.admin-card {
+  grid-column: 1 / -1;
+  margin-top: 10px;
+  padding: 14px;
+  border: 1px solid #d9b86a;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 4px 14px rgba(10, 31, 68, 0.08);
+  color: #0a1f44;
+  min-width: 0;
+}
+
+.admin-card-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.admin-card-status {
+  font-size: 0.75rem;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: #f3ead2;
+  color: #7a5c14;
+}
+
+.admin-card-banner {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: #fff7e0;
+  border: 1px dashed #c9a227;
+  font-size: 0.82rem;
+}
+
+.admin-card-rows {
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.admin-card-rows div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #eef0f4;
+}
+
+.admin-card-rows dt {
+  color: #5b6577;
+  font-size: 0.85rem;
+}
+
+.admin-card-rows dd {
+  margin: 0;
+  font-weight: 700;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.admin-card-warning,
+.admin-card-error,
+.admin-card-result {
+  margin: 10px 0 0;
+  font-size: 0.85rem;
+}
+
+.admin-card-warning {
+  color: #8a5a00;
+}
+
+.admin-card-error {
+  color: #a31d1d;
+}
+
+.admin-card-result {
+  color: #1d6b3a;
+}
+
+.admin-card-options {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.admin-card-options button,
+.admin-card-trips button {
+  width: 100%;
+  text-align: left;
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid #d9b86a;
+  border-radius: 10px;
+  background: #fffdf7;
+  color: #0a1f44;
+  cursor: pointer;
+  min-height: 44px;
+}
+
+.admin-card-options button:hover,
+.admin-card-trips button:hover {
+  background: #f8efd5;
+}
+
+.admin-card-trips {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-card-trips button {
+  width: auto;
+  text-align: center;
+}
+
+.admin-card-trip-primary {
+  background: #0a1f44 !important;
+  color: #f2d27a !important;
+}
+
+.admin-card-actions {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-card-confirm,
+.admin-card-cancel {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.admin-card-confirm {
+  flex: 1 1 200px;
+  border: 0;
+  background: #0a1f44;
+  color: #f2d27a;
+}
+
+.admin-card-confirm:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.admin-card-cancel {
+  border: 1px solid #c4cad6;
+  background: #fff;
+  color: #0a1f44;
+}

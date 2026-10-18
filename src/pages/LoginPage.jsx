@@ -2,12 +2,12 @@ import { useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   createUserWithEmailAndPassword,
-  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   updateProfile,
 } from "firebase/auth";
 
 import { auth } from "../firebase/config";
+import ForgotPasswordModal from "../components/ForgotPasswordModal.jsx";
 import "../styles/login-premium.css";
 
 export default function LoginPage() {
@@ -26,6 +26,7 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [showReset, setShowReset] = useState(false);
 
   const isRegister = mode === "register";
 
@@ -149,29 +150,6 @@ export default function LoginPage() {
       );
     } catch (authError) {
       console.error("Erro de autenticação:", authError);
-      setError(translateAuthError(authError));
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleForgotPassword() {
-    setError("");
-    setMessage("");
-
-    const email = form.email.trim();
-
-    if (!email) {
-      setError("Digite seu e-mail primeiro.");
-      return;
-    }
-
-    try {
-      setLoading(true);
-      await sendPasswordResetEmail(auth, email);
-      setMessage("Enviamos o link de recuperação para seu e-mail.");
-    } catch (authError) {
-      console.error("Erro ao recuperar senha:", authError);
       setError(translateAuthError(authError));
     } finally {
       setLoading(false);
@@ -316,10 +294,10 @@ export default function LoginPage() {
             <button
               type="button"
               className="rc-login-forgot"
-              onClick={handleForgotPassword}
+              onClick={() => setShowReset(true)}
               disabled={loading}
             >
-              Esqueci minha senha
+              Esqueci minha senha?
             </button>
           )}
 
@@ -346,6 +324,12 @@ export default function LoginPage() {
           <span>© RC Confecções • Todos os direitos reservados</span>
         </footer>
       </section>
+      {showReset && (
+        <ForgotPasswordModal
+          initialEmail={form.email}
+          onClose={() => setShowReset(false)}
+        />
+      )}
     </main>
   );
 }

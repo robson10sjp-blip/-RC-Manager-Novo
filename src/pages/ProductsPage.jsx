@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import PageHeader from "../components/PageHeader.jsx";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -422,15 +423,11 @@ export default function ProductsPage() {
 
   return (
     <div className="cl pr">
-      <header className="cl-header">
-        <div>
-          <p className="cl-eyebrow">RC Confecções</p>
-          <h1>Produtos</h1>
-          <p className="cl-subtitle">
-            Controle de mercadorias: cadastre e acompanhe todas as peças.
-          </p>
-        </div>
-
+      <PageHeader
+        icon={LuShirt}
+        title="Produtos"
+        description="Controle de mercadorias: cadastre e acompanhe todas as peças."
+      >
         <button
           type="button"
           className="cl-btn cl-btn-primary cl-new"
@@ -438,7 +435,7 @@ export default function ProductsPage() {
         >
           <LuPlus aria-hidden="true" /> Novo produto
         </button>
-      </header>
+      </PageHeader>
 
       <div className="pr-kpis">
         {kpis.map((kpi) => {

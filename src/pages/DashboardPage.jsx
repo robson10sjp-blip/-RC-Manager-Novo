@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
+import { LuLayoutDashboard } from "react-icons/lu";
+import PageHeader from "../components/PageHeader.jsx";
 import { onAuthStateChanged } from "firebase/auth";
 import { collection, onSnapshot } from "firebase/firestore";
 
@@ -447,18 +449,16 @@ export default function DashboardPage() {
 
   return (
     <div className="dash">
-      <header className="dash-header">
-        <div>
-          <p className="dash-eyebrow">Bem-vindo ao</p>
-          <h1>RC Manager</h1>
-          <p className="dash-subtitle">Gestão inteligente da RC Confecções</p>
-        </div>
-
+      <PageHeader
+        icon={LuLayoutDashboard}
+        title="Dashboard"
+        description="Gestão inteligente da RC Confecções"
+      >
         <div className="dash-date">
           <LuCalendarDays aria-hidden="true" />
           {todayText}
         </div>
-      </header>
+      </PageHeader>
 
       {loading ? (
         <div className="dash-loading">

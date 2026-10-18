@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { LuWallet } from "react-icons/lu";
+import PageHeader from "../components/PageHeader.jsx";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -25,6 +27,15 @@ import {
   reusePaymentOperation,
   selectSalesForTrip,
 } from "../domain/sales";
+import {
+  getSalePendingAmount,
+  groupReceivablesByCity,
+  summarizeReceivablesByDueDate,
+} from "../domain/financeReceivables";
+import {
+  getClientCityDisplay,
+  normalizeSearchText,
+} from "../domain/clientCities";
 import {
   applyPaymentToPayable,
   applyCheckStatusTransition,
@@ -101,6 +112,7 @@ export default function FinancePage() {
   const [editingExpenseId, setEditingExpenseId] = useState(null);
   const [searchText, setSearchText] = useState("");
   const [tripFilter, setTripFilter] = useState("all");
+  const [selectedReceivablesCity, setSelectedReceivablesCity] = useState("");
   const [loading, setLoading] = useState(true);
   const [savingExpense, setSavingExpense] = useState(false);
   const [savingPayable, setSavingPayable] = useState(false);
@@ -472,6 +484,25 @@ export default function FinancePage() {
     [selectedTripSales, selectedTripExpenses, products, selectedPayables]
   );
 
+  const dueDateSummary = useMemo(
+    () => summarizeReceivablesByDueDate(selectedTripSales),
+    [selectedTripSales]
+  );
+
+  const receivablesByCity = useMemo(
+    () =>
+      groupReceivablesByCity(
+        clients,
+        selectedTripSales,
+        tripFilter === "all"
+      ),
+    [clients, selectedTripSales, tripFilter]
+  );
+
+  const selectedReceivablesCityData = receivablesByCity.find(
+    (city) => city.city === selectedReceivablesCity
+  );
+
   const selectedReceivables = useMemo(() => {
     if (tripFilter === "all") return receivables;
 
@@ -490,7 +521,7 @@ export default function FinancePage() {
         return {
           ...balance,
           phone: client?.phone || "",
-          city: client?.city || "",
+          city: getClientCityDisplay(client?.city) || "",
         };
       });
 
@@ -506,16 +537,16 @@ export default function FinancePage() {
       });
     }
 
-    const search = searchText.trim().toLowerCase();
+    const search = normalizeSearchText(searchText.trim());
 
     return clientDebtors
       .filter((item) => {
         if (!search) return true;
 
         return (
-          String(item.clientName).toLowerCase().includes(search) ||
-          String(item.phone).toLowerCase().includes(search) ||
-          String(item.city).toLowerCase().includes(search)
+          normalizeSearchText(item.clientName).includes(search) ||
+          normalizeSearchText(item.phone).includes(search) ||
+          normalizeSearchText(item.city).includes(search)
         );
       })
       .sort((first, second) => second.totalPending - first.totalPending);
@@ -1490,15 +1521,11 @@ Qualquer dúvida estou à disposição. Obrigado!`;
 
   return (
     <div className="fin" style={styles.page}>
-      <header className="fin-header" style={styles.header}>
-        <div>
-          <p className="fin-eyebrow" style={styles.eyebrow}>RC Confecções</p>
-          <h1 style={styles.title}>Financeiro</h1>
-          <p className="fin-subtitle" style={styles.subtitle}>
-            Acompanhe vendas, recebimentos, despesas e obrigações de fornecedores.
-          </p>
-        </div>
-
+      <PageHeader
+        icon={LuWallet}
+        title="Financeiro"
+        description="Acompanhe vendas, recebimentos, despesas e obrigações de fornecedores."
+      >
         <label className="fin-filter" style={styles.filterLabel}>
           Viagem
           <select
@@ -1518,7 +1545,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
             <option value="unassigned">Sem viagem</option>
           </select>
         </label>
-      </header>
+      </PageHeader>
 
       <section className="fin-summary" style={styles.tripSummarySection}>
         <div style={styles.tripSummaryHeader}>
@@ -1594,6 +1621,11 @@ Qualquer dúvida estou à disposição. Obrigado!`;
             >
               <span style={styles.summaryLabel}>{label}</span>
               <strong style={styles.summaryValue}>{value}</strong>
+              {label === "Lucro estimado" && (
+                <small className="fin-profit-note">
+                  Estimativa contábil: não representa dinheiro disponível em caixa.
+                </small>
+              )}
             </div>
           ))}
         </div>
@@ -1609,8 +1641,164 @@ Qualquer dúvida estou à disposição. Obrigado!`;
           Despesas antigas sem viagem só entram no
           consolidado geral e podem ser classificadas individualmente. Quando
           não há custo unitário salvo na venda, usamos o custo atual do produto.
+          Lucro estimado não é dinheiro disponível em caixa: recebimentos,
+          despesas e pagamentos a fornecedores continuam sendo acompanhados
+          separadamente no fluxo de caixa e nas contas a pagar.
         </p>
         </details>
+      </section>
+
+      <section className="fin-collections-section">
+        <div className="fin-collections-heading">
+          <div>
+            <p className="payables-eyebrow">A receber</p>
+            <h2>Cobranças por vencimento</h2>
+            <p>
+              Valores calculados pelo saldo da venda após os recebimentos,
+              considerando apenas vendas da viagem selecionada.
+            </p>
+          </div>
+        </div>
+
+        <div className="fin-due-grid">
+          {[
+            { key: "overdue", label: "Vencidas", tone: "red" },
+            { key: "today", label: "Vencem hoje", tone: "gold" },
+            { key: "next7Days", label: "Próximos 7 dias", tone: "navy" },
+            { key: "next30Days", label: "Próximos 30 dias", tone: "green" },
+          ].map(({ key, label, tone }) => (
+            <article className={`fin-due-card fin-due-${tone}`} key={key}>
+              <span>{label}</span>
+              {key === "next30Days" && (
+                <small>Janela exclusiva: do 8º ao 30º dia</small>
+              )}
+              {loading ? (
+                <strong>Carregando...</strong>
+              ) : (
+                <>
+                  <strong>{dueDateSummary[key].count} venda(s)</strong>
+                  <b>{formatCurrency(dueDateSummary[key].amount)}</b>
+                </>
+              )}
+            </article>
+          ))}
+        </div>
+
+        <div className="fin-city-section">
+          <div className="fin-city-heading">
+            <div>
+              <h3>Recebimentos por cidade</h3>
+              <p>
+                A cidade vem do cadastro do cliente; a cidade da viagem não é
+                usada para agrupar cobranças.
+              </p>
+            </div>
+          </div>
+
+          {loading ? (
+            <p className="fin-city-empty">Carregando vendas e clientes...</p>
+          ) : receivablesByCity.length === 0 ? (
+            <p className="fin-city-empty">
+              Nenhum recebimento ou saldo pendente para esta viagem.
+            </p>
+          ) : (
+            <div className="fin-city-grid">
+              {receivablesByCity.map((city) => (
+                <button
+                  type="button"
+                  key={city.city}
+                  className={`fin-city-card${selectedReceivablesCity === city.city ? " is-selected" : ""}`}
+                  aria-expanded={selectedReceivablesCity === city.city}
+                  onClick={() =>
+                    setSelectedReceivablesCity((current) =>
+                      current === city.city ? "" : city.city
+                    )
+                  }
+                >
+                  <strong>{city.city}</strong>
+                  <span>
+                    {city.clientsWithPending} cliente(s) com saldo pendente
+                  </span>
+                  <span>
+                    A receber <b>{formatCurrency(city.totalToReceive)}</b>
+                  </span>
+                  <span>
+                    Já recebido <b>{formatCurrency(city.received)}</b>
+                  </span>
+                  <small>
+                    {selectedReceivablesCity === city.city
+                      ? "Ocultar clientes e cobranças"
+                      : "Consultar clientes e cobranças"}
+                  </small>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {selectedReceivablesCityData && (
+            <div className="fin-city-detail">
+              <h4>Clientes e cobranças · {selectedReceivablesCityData.city}</h4>
+              {selectedReceivablesCityData.clients.length === 0 ? (
+                <p className="fin-city-empty">
+                  Não há clientes com saldo pendente nesta cidade para o filtro
+                  atual.
+                </p>
+              ) : (
+                <div className="fin-city-client-list">
+                  {selectedReceivablesCityData.clients.map((client) => (
+                    <article
+                      className="fin-city-client"
+                      key={client.clientId}
+                    >
+                      <div className="fin-city-client-heading">
+                        <strong>{client.clientName}</strong>
+                        <span>
+                          Saldo total: {formatCurrency(client.totalPending)}
+                        </span>
+                      </div>
+                      {client.legacyBalance > 0 && (
+                        <p>
+                          Saldo histórico sem venda vinculada:{" "}
+                          {formatCurrency(client.legacyBalance)}
+                        </p>
+                      )}
+                      {client.sales.map((openSale) => {
+                        const dueDate = toDate(
+                          openSale.dueDate ||
+                            openSale.paymentDueDate ||
+                            openSale.collectionDate ||
+                            openSale.dataCobranca ||
+                            openSale.dataVencimento
+                        );
+
+                        return (
+                          <div className="fin-city-sale" key={openSale.id}>
+                            <span>Venda #{openSale.id}</span>
+                            <span>
+                              {dueDate
+                                ? `Vencimento ${formatDate(dueDate)}`
+                                : "Vencimento não informado"}
+                            </span>
+                            <span>
+                              Recebido {formatCurrency(
+                                openSale.amountPaid || openSale.received
+                              )}
+                            </span>
+                            <strong>
+                              Pendente {formatCurrency(
+                                getSalePendingAmount(openSale)
+                              )}
+                            </strong>
+                          </div>
+                        );
+                      })}
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </section>
 
       <section className="payables-section">

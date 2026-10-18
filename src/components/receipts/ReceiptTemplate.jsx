@@ -194,11 +194,12 @@ const savedNumber =
   receiptNumber ||
   sale.receiptNumber ||
   sale.number ||
-  sale.numeroRecibo;
+  sale.numeroRecibo ||
+  sale.id;
 
-const number = savedNumber
-  ? String(savedNumber).replace(/\D/g, "").slice(-6)
-  : String(Date.now()).slice(-6);
+const number = String(savedNumber || "")
+  .replace(/[^a-z\d]/gi, "")
+  .slice(-6);
 
   const rows = items.map((item, index) => {
     const quantity = Number(item.quantity || item.qty || item.quantidade || 1);
@@ -228,7 +229,9 @@ const number = savedNumber
   });
 
   const pages = paginateRows(rows);
-  const receiptCode = String(number).padStart(6, '0');
+  const receiptCode = /^\d+$/.test(number)
+    ? number.padStart(6, '0')
+    : number.toUpperCase() || 'Não informado';
   const tripLabel = [sale.tripName, sale.tripCity].filter(Boolean).join(' • ');
 
   return (

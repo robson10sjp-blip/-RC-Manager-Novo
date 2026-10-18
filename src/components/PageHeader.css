@@ -1,0 +1,86 @@
+@import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&display=swap");
+
+.app-main .rc-ph {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  margin: 0 0 26px;
+  text-align: center;
+}
+
+.app-main .rc-ph-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  max-width: 100%;
+}
+
+.app-main .rc-ph-icon {
+  flex: none;
+  width: 0.9em;
+  height: 0.9em;
+  font-size: clamp(30px, 4vw, 48px);
+  color: var(--rc-gold, #c9a24d);
+}
+
+.app-main .rc-ph .rc-ph-title {
+  margin: 0;
+  color: #0a1226 !important;
+  font-family: "Playfair Display", Georgia, "Times New Roman", serif !important;
+  font-size: 52px !important;
+  font-weight: 700 !important;
+  letter-spacing: -0.01em !important;
+  line-height: 1.1 !important;
+  text-align: center;
+}
+
+.app-main .rc-ph-rule {
+  display: block;
+  width: 72px;
+  height: 3px;
+  margin: 12px auto 0;
+  border-radius: 3px;
+  background: linear-gradient(90deg, transparent, #c9a24d, transparent);
+}
+
+.app-main .rc-ph .rc-ph-description {
+  max-width: 680px;
+  margin: 12px auto 0;
+  color: var(--rc-muted, #5b6478);
+  font-size: 16px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.app-main .rc-ph-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+@media (max-width: 760px) {
+  .app-main .rc-ph {
+    margin-bottom: 20px;
+  }
+
+  .app-main .rc-ph-title-row {
+    gap: 10px;
+  }
+
+  .app-main .rc-ph .rc-ph-title {
+    font-size: 34px !important;
+  }
+
+  .app-main .rc-ph-icon {
+    font-size: 30px;
+  }
+
+  .app-main .rc-ph .rc-ph-description {
+    font-size: 14px;
+  }
+}

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import PageHeader from "../components/PageHeader.jsx";
 import { onAuthStateChanged } from "firebase/auth";
 import { useLocation } from "react-router-dom";
 import {
@@ -1594,15 +1595,11 @@ export default function SalesPage() {
 
   return (
     <div className="cl sl">
-      <header className="cl-header">
-        <div>
-          <p className="cl-eyebrow">RC Confecções</p>
-          <h1>Vendas</h1>
-          <p className="cl-subtitle">
-            Registre compras e acompanhe cada saldo por viagem.
-          </p>
-        </div>
-
+      <PageHeader
+        icon={LuShoppingBag}
+        title="Vendas"
+        description="Registre compras e acompanhe cada saldo por viagem."
+      >
         <button
           type="button"
           className="cl-btn cl-btn-primary cl-new"
@@ -1616,7 +1613,7 @@ export default function SalesPage() {
             <><LuPlus aria-hidden="true" /> Nova venda</>
           )}
         </button>
-      </header>
+      </PageHeader>
 
       <p className="sl-scope">
         Indicadores de: <strong>{tripFilterLabels[tripFilter]}</strong>

@@ -141,6 +141,24 @@ test("prepares new and legacy receipts without changing stored records", () => {
   assert.equal(legacyReceipt.dueDate.getMonth(), 3);
 });
 
+test("uses the sale identifier when a receipt number is missing or zero", () => {
+  const sale = {
+    id: "sale-a1b2c3",
+    receiptNumber: "000000",
+  };
+
+  const receipt = prepareSaleReceipt(sale, new Date(2026, 9, 17));
+
+  assert.equal(receipt.receiptNumber, "a1b2c3");
+  assert.equal(sale.receiptNumber, "000000");
+
+  const alphanumericReceipt = prepareSaleReceipt(
+    { id: "sale-abcdef" },
+    new Date(2026, 9, 17)
+  );
+  assert.equal(alphanumericReceipt.receiptNumber, "abcdef");
+});
+
 test("escapes user-entered values inserted into printable receipt markup", () => {
   assert.equal(
     escapeReceiptText(`<img src=x onerror='alert("x")'>&`),

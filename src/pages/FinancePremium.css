@@ -103,6 +103,219 @@
   margin: 8px 0 0 !important;
 }
 
+.fin-profit-note {
+  color: var(--rc-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.fin-collections-section {
+  margin-bottom: 18px;
+  padding: 22px;
+  border: 1px solid var(--rc-line);
+  border-radius: 18px;
+  background: linear-gradient(145deg, #fff, #f8f9fc);
+  box-shadow: 0 10px 25px rgba(10, 18, 38, 0.06);
+}
+
+.fin-collections-heading,
+.fin-city-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.fin-collections-heading h2,
+.fin-city-heading h3 {
+  margin: 0 0 6px;
+  color: var(--rc-ink);
+}
+
+.fin-collections-heading p,
+.fin-city-heading p {
+  margin: 0;
+  color: var(--rc-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.fin-due-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.fin-due-card {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--rc-line);
+  border-top: 3px solid var(--rc-navy-800);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 5px 14px rgba(10, 18, 38, 0.04);
+}
+
+.fin-due-card > span {
+  color: var(--rc-muted);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.fin-due-card > small {
+  min-height: 14px;
+  color: var(--rc-muted);
+  font-size: 10px;
+}
+
+.fin-due-card > strong {
+  color: var(--rc-ink);
+  font-size: 16px;
+}
+
+.fin-due-card > b {
+  color: var(--rc-navy-800);
+  font-size: clamp(16px, 1.5vw, 21px);
+  overflow-wrap: anywhere;
+}
+
+.fin-due-red { border-top-color: var(--rc-red); }
+.fin-due-red > b { color: var(--rc-red); }
+.fin-due-gold { border-top-color: var(--rc-gold); }
+.fin-due-green { border-top-color: var(--rc-green); }
+.fin-due-green > b { color: var(--rc-green); }
+
+.fin-city-section {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--rc-line);
+}
+
+.fin-city-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.fin-city-card {
+  display: grid;
+  gap: 7px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid var(--rc-line);
+  border-radius: 13px;
+  background: #fff;
+  color: var(--rc-ink);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+  transition: border-color 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+.fin-city-card:hover,
+.fin-city-card.is-selected {
+  transform: translateY(-1px);
+  border-color: var(--rc-gold);
+  box-shadow: 0 7px 18px rgba(10, 18, 38, 0.08);
+}
+
+.fin-city-card > strong {
+  color: var(--rc-navy-800);
+  font-size: 16px;
+}
+
+.fin-city-card > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--rc-muted);
+  font-size: 12px;
+}
+
+.fin-city-card > span b {
+  color: var(--rc-ink);
+  text-align: right;
+}
+
+.fin-city-card > small {
+  margin-top: 2px;
+  color: #8a6a1f;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.fin-city-empty {
+  margin: 12px 0 0;
+  color: var(--rc-muted);
+  font-size: 13px;
+}
+
+.fin-city-detail {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid var(--rc-line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.fin-city-detail h4 {
+  margin: 0 0 12px;
+  color: var(--rc-navy-800);
+}
+
+.fin-city-client-list {
+  display: grid;
+  gap: 10px;
+}
+
+.fin-city-client {
+  padding: 12px;
+  border: 1px solid var(--rc-line);
+  border-radius: 11px;
+  background: #fbfcfe;
+}
+
+.fin-city-client-heading {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--rc-ink);
+}
+
+.fin-city-client-heading span {
+  color: var(--rc-red);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.fin-city-client > p {
+  margin: 7px 0 0;
+  color: var(--rc-muted);
+  font-size: 12px;
+}
+
+.fin-city-sale {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 12px;
+  margin-top: 9px;
+  padding-top: 9px;
+  border-top: 1px solid var(--rc-line);
+  color: var(--rc-muted);
+  font-size: 12px;
+}
+
+.fin-city-sale strong {
+  color: var(--rc-red);
+}
+
 /* Seções de fornecedores, cheques, despesas e devedores */
 
 .fin .payables-section,
@@ -129,6 +342,7 @@
 
 @media (max-width: 760px) {
   .app-main .fin .fin-cards { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .fin-due-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .fin-card,
   .fin-card-key { grid-column: span 1; padding: 13px !important; }
   .fin-card strong,
@@ -136,6 +350,11 @@
   .fin-filter { width: 100%; min-width: 0; }
   .fin .payables-section,
   .fin .checks-section,
-  .fin-summary { padding: 15px !important; }
+  .fin-summary,
+  .fin-collections-section { padding: 15px !important; }
 }
 
+@media (max-width: 420px) {
+  .fin-due-grid { grid-template-columns: 1fr; }
+  .fin-city-sale { display: grid; }
+}

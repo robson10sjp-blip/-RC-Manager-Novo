@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import PageHeader from "../components/PageHeader.jsx";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -8,90 +9,128 @@ import {
 } from "firebase/firestore";
 
 import { useLocation } from "react-router-dom";
+import {
+  LuBoxes,
+  LuChartNoAxesCombined,
+  LuCircleDollarSign,
+  LuHistory,
+  LuPackageCheck,
+  LuPackageMinus,
+  LuPackageSearch,
+  LuPlane,
+  LuTriangleAlert,
+} from "react-icons/lu";
 
 import { auth, db } from "../firebase/config";
-import { runTransaction } from "../firebase/firestoreAccess";
+import { runTransaction, updateDoc } from "../firebase/firestoreAccess";
+import { isFirestoreReadOnly } from "../firebase/writePolicy";
+import {
+  buildStockActivity,
+  getStockThresholds,
+  getSuggestedRestock,
+  summarizeStockSales,
+} from "../domain/stock";
+import { toDate } from "../utils/dates";
+import "./StockPremium.css";
 
 export default function StockPage() {
   const [products, setProducts] = useState([]);
+  const [sales, setSales] = useState([]);
+  const [movements, setMovements] = useState([]);
   const location = useLocation();
   const [searchText, setSearchText] = useState(
     () => String(location.state?.search || "")
   );
   const [loading, setLoading] = useState(true);
   const [adjustingId, setAdjustingId] = useState(null);
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [stockFilter, setStockFilter] = useState("all");
+  const [sizeFilter, setSizeFilter] = useState("all");
+  const [planningTrip, setPlanningTrip] = useState("");
+  const [planningProductId, setPlanningProductId] = useState("");
+  const [planningQuantity, setPlanningQuantity] = useState("1");
+  const [tripPlan, setTripPlan] = useState([]);
+  const [activeSection, setActiveSection] = useState("reposição");
+  const readOnly = isFirestoreReadOnly();
 
   useEffect(() => {
-    let unsubscribeProducts = null;
+    let unsubscribeCollections = [];
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      if (unsubscribeProducts) {
-        unsubscribeProducts();
-        unsubscribeProducts = null;
-      }
+      unsubscribeCollections.forEach((unsubscribe) => unsubscribe());
+      unsubscribeCollections = [];
 
       if (!user) {
         setProducts([]);
+        setSales([]);
+        setMovements([]);
         setLoading(false);
         return;
       }
 
-      const productsReference = collection(
-        db,
-        "users",
-        user.uid,
-        "products"
-      );
-
-      unsubscribeProducts = onSnapshot(
-        productsReference,
-        (snapshot) => {
-          const list = snapshot.docs.map((document) => ({
-            id: document.id,
-            ...document.data(),
-          }));
-
-          list.sort((first, second) =>
-            String(first.name || "").localeCompare(
-              String(second.name || ""),
-              "pt-BR"
-            )
-          );
-
-          setProducts(list);
-          setLoading(false);
-        },
-        (error) => {
-          console.error("Erro ao carregar estoque:", error);
-          alert(`Erro ao carregar estoque: ${error.message}`);
-          setLoading(false);
-        }
+      const sources = [
+        ["products", setProducts, "estoque"],
+        ["sales", setSales, "vendas"],
+        ["stockMovements", setMovements, "movimentações do estoque"],
+      ];
+      unsubscribeCollections = sources.map(([collectionName, setter, label]) =>
+        onSnapshot(
+          collection(db, "users", user.uid, collectionName),
+          (snapshot) => {
+            setter(
+              snapshot.docs.map((document) => ({
+                id: document.id,
+                ...document.data(),
+              }))
+            );
+            if (collectionName === "products") setLoading(false);
+          },
+          (error) => {
+            console.error(`Erro ao carregar ${label}:`, error);
+            alert(`Erro ao carregar ${label}: ${error.message}`);
+            if (collectionName === "products") setLoading(false);
+          }
+        )
       );
     });
 
     return () => {
       unsubscribeAuth();
-
-      if (unsubscribeProducts) {
-        unsubscribeProducts();
-      }
+      unsubscribeCollections.forEach((unsubscribe) => unsubscribe());
     };
   }, []);
+
+  const categories = useMemo(
+    () =>
+      [...new Set(products.map((product) => String(product.category || "").trim()).filter(Boolean))]
+        .sort((first, second) => first.localeCompare(second, "pt-BR")),
+    [products]
+  );
+
+  const sizes = useMemo(
+    () =>
+      [...new Set(products.map((product) => String(product.size || "").trim()).filter(Boolean))]
+        .sort((first, second) => first.localeCompare(second, "pt-BR")),
+    [products]
+  );
 
   const filteredProducts = useMemo(() => {
     const search = searchText.trim().toLowerCase();
 
-    if (!search) {
-      return products;
-    }
-
     return products.filter((product) => {
+      const quantity = Number(product.quantity || 0);
+      const { minimum } = getStockThresholds(product);
+      if (categoryFilter !== "all" && product.category !== categoryFilter) return false;
+      if (sizeFilter !== "all" && String(product.size || "") !== sizeFilter) return false;
+      if (stockFilter === "out" && quantity > 0) return false;
+      if (stockFilter === "low" && !(quantity > 0 && quantity <= minimum)) return false;
       const code = String(product.code || "").toLowerCase();
       const name = String(product.name || "").toLowerCase();
       const category = String(product.category || "").toLowerCase();
       const size = String(product.size || "").toLowerCase();
       const color = String(product.color || "").toLowerCase();
 
+      if (!search) return true;
       return (
         code.includes(search) ||
         name.includes(search) ||
@@ -100,7 +139,7 @@ export default function StockPage() {
         color.includes(search)
       );
     });
-  }, [products, searchText]);
+  }, [products, searchText, categoryFilter, stockFilter, sizeFilter]);
 
   const summary = useMemo(() => {
     return products.reduce(
@@ -114,7 +153,7 @@ export default function StockPage() {
         result.totalCost += quantity * costPrice;
         result.totalSale += quantity * salePrice;
 
-        if (quantity <= 3) {
+        if (quantity <= getStockThresholds(product).minimum) {
           result.lowStock += 1;
         }
 
@@ -135,6 +174,186 @@ export default function StockPage() {
     );
   }, [products]);
 
+  const salesReport = useMemo(
+    () => summarizeStockSales(products, sales),
+    [products, sales]
+  );
+
+  const stockActivity = useMemo(
+    () => buildStockActivity(sales, movements),
+    [sales, movements]
+  );
+
+  const restockProducts = useMemo(
+    () =>
+      products
+        .map((product) => ({
+          ...product,
+          suggestedQuantity: getSuggestedRestock(product),
+        }))
+        .filter((product) => product.suggestedQuantity > 0)
+        .sort((first, second) => second.suggestedQuantity - first.suggestedQuantity),
+    [products]
+  );
+
+  const plannedItems = useMemo(
+    () =>
+      tripPlan.map((item) => ({
+        ...item,
+        product: products.find((product) => product.id === item.productId),
+      })),
+    [tripPlan, products]
+  );
+
+  const stockHealth = useMemo(() => {
+    const low = Math.max(0, summary.lowStock - summary.outOfStock);
+    return {
+      available: Math.max(0, summary.totalProducts - summary.lowStock),
+      low,
+      out: summary.outOfStock,
+    };
+  }, [summary]);
+
+  const healthTotal = Math.max(
+    1,
+    stockHealth.available + stockHealth.low + stockHealth.out
+  );
+
+  const sections = [
+    { id: "reposição", label: "Reposição", icon: LuPackageSearch, count: restockProducts.length },
+    { id: "histórico", label: "Movimentações", icon: LuHistory, count: stockActivity.length },
+    { id: "análise", label: "Análise de vendas", icon: LuChartNoAxesCombined },
+    { id: "viagens", label: "Planejamento", icon: LuPlane, count: tripPlan.length },
+  ];
+
+  function addPlannedItem() {
+    const product = products.find((item) => item.id === planningProductId);
+    const quantity = Number(planningQuantity);
+    if (!planningTrip.trim() || !product || !Number.isInteger(quantity) || quantity <= 0) {
+      alert("Informe a viagem, selecione um produto e uma quantidade inteira maior que zero.");
+      return;
+    }
+    setTripPlan((current) => {
+      const existing = current.find(
+        (item) => item.productId === product.id && item.trip === planningTrip.trim()
+      );
+      if (existing) {
+        return current.map((item) =>
+          item === existing ? { ...item, quantity: item.quantity + quantity } : item
+        );
+      }
+      return [...current, { productId: product.id, quantity, trip: planningTrip.trim() }];
+    });
+    setPlanningQuantity("1");
+  }
+
+  async function handleConfirmPlannedItem(item) {
+    if (readOnly) return;
+    const user = auth.currentUser;
+    if (!user) {
+      alert("Você precisa entrar novamente no sistema.");
+      return;
+    }
+    const product = products.find((current) => current.id === item.productId);
+    if (!product) {
+      alert("O produto planejado não foi encontrado.");
+      return;
+    }
+    if (!window.confirm(
+      `Confirmar a baixa de ${item.quantity} unidade(s) de "${product.name}" para ${item.trip}?`
+    )) return;
+
+    const productReference = doc(db, "users", user.uid, "products", product.id);
+    const movementReference = doc(collection(db, "users", user.uid, "stockMovements"));
+    try {
+      setAdjustingId(product.id);
+      await runTransaction(db, async (transaction) => {
+        const productSnapshot = await transaction.get(productReference);
+        if (!productSnapshot.exists()) throw new Error("Produto não encontrado.");
+        const savedProduct = productSnapshot.data();
+        const currentQuantity = Number(savedProduct.quantity || 0);
+        if (item.quantity > currentQuantity) {
+          throw new Error(`Estoque insuficiente. Disponível: ${currentQuantity}.`);
+        }
+        const newQuantity = currentQuantity - item.quantity;
+        transaction.update(productReference, {
+          quantity: newQuantity,
+          updatedAt: serverTimestamp(),
+        });
+        transaction.set(movementReference, {
+          productId: product.id,
+          productName: savedProduct.name || "",
+          productCode: savedProduct.code || "",
+          type: "saida",
+          quantity: item.quantity,
+          previousQuantity: currentQuantity,
+          newQuantity,
+          reason: `Separação confirmada para ${item.trip}`,
+          createdAt: serverTimestamp(),
+        });
+      });
+      setTripPlan((current) =>
+        current.filter(
+          (planned) =>
+            !(planned.trip === item.trip && planned.productId === item.productId)
+        )
+      );
+      alert("Baixa confirmada e registrada no histórico.");
+    } catch (error) {
+      console.error("Erro ao confirmar item planejado:", error);
+      alert(`Erro ao confirmar a baixa: ${error.message}`);
+    } finally {
+      setAdjustingId(null);
+    }
+  }
+
+  async function handleConfigureRestock(product) {
+    if (readOnly) return;
+    const user = auth.currentUser;
+    if (!user) {
+      alert("Você precisa entrar novamente no sistema.");
+      return;
+    }
+    const { minimum, target } = getStockThresholds(product);
+    const minimumInput = window.prompt(
+      `Limite para considerar estoque baixo de "${product.name}":`,
+      String(minimum)
+    );
+    if (minimumInput === null) return;
+    const targetInput = window.prompt(
+      `Quantidade desejada após reposição de "${product.name}":`,
+      String(target)
+    );
+    if (targetInput === null) return;
+    const nextMinimum = Number(minimumInput);
+    const nextTarget = Number(targetInput);
+    if (
+      !Number.isInteger(nextMinimum) ||
+      !Number.isInteger(nextTarget) ||
+      nextMinimum < 0 ||
+      nextTarget < nextMinimum
+    ) {
+      alert("Informe limites inteiros válidos; a quantidade desejada deve ser igual ou maior que o mínimo.");
+      return;
+    }
+    try {
+      await updateDoc(
+        doc(db, "users", user.uid, "products", product.id),
+        { minimumStock: nextMinimum, targetStock: nextTarget, updatedAt: serverTimestamp() }
+      );
+    } catch (error) {
+      console.error("Erro ao configurar reposição:", error);
+      alert(`Erro ao configurar reposição: ${error.message}`);
+    }
+  }
+
+  function formatDate(value) {
+    const date = toDate(value);
+    return date
+      ? date.toLocaleDateString("pt-BR")
+      : "Data não informada";
+  }
+
   function formatCurrency(value) {
     return Number(value || 0).toLocaleString("pt-BR", {
       style: "currency",
@@ -147,13 +366,21 @@ export default function StockPage() {
       feminino: "Feminino",
       masculino: "Masculino",
       infantil: "Infantil",
+      outros: "Outros",
     };
 
     return categories[category] || category || "Não informada";
   }
 
   function getStockStatus(quantityValue) {
-    const quantity = Number(quantityValue || 0);
+    const quantity = Number(
+      typeof quantityValue === "object"
+        ? quantityValue.quantity || 0
+        : quantityValue || 0
+    );
+    const minimum = typeof quantityValue === "object"
+      ? getStockThresholds(quantityValue).minimum
+      : 3;
 
     if (quantity <= 0) {
       return {
@@ -163,7 +390,7 @@ export default function StockPage() {
       };
     }
 
-    if (quantity <= 3) {
+    if (quantity <= minimum) {
       return {
         label: "Estoque baixo",
         color: "#ca8a04",
@@ -179,6 +406,7 @@ export default function StockPage() {
   }
 
   async function handleStockAdjustment(product, type) {
+    if (readOnly) return;
     const user = auth.currentUser;
 
     if (!user) {
@@ -287,77 +515,97 @@ export default function StockPage() {
   }
 
   return (
-    <div style={styles.page}>
-      <header style={styles.header}>
-        <div>
-          <p style={styles.eyebrow}>RC Confecções</p>
-          <h1 style={styles.title}>Estoque</h1>
-          <p style={styles.subtitle}>
-            Acompanhe as peças disponíveis e faça movimentações manuais.
-          </p>
-        </div>
-      </header>
+    <div className="st-page" style={styles.page}>
+      <PageHeader
+        icon={LuBoxes}
+        title="Estoque"
+        description="Acompanhe disponibilidade, vendas reais e necessidade de reposição."
+      />
 
-      <section style={styles.summaryGrid}>
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>Produtos cadastrados</span>
-          <strong style={styles.summaryValue}>
-            {summary.totalProducts}
-          </strong>
-        </div>
+      <section className="st-summary-grid">
+        {[
+          { label: "Produtos cadastrados", value: summary.totalProducts, icon: LuBoxes, tone: "navy" },
+          { label: "Peças em estoque", value: summary.totalPieces, icon: LuPackageCheck, tone: "navy" },
+          { label: "Valor investido", value: formatCurrency(summary.totalCost), icon: LuCircleDollarSign, tone: "gold" },
+          { label: "Valor potencial de venda", value: formatCurrency(summary.totalSale), icon: LuPackageMinus, tone: "gold" },
+          { label: "Lucro potencial", value: formatCurrency(summary.totalSale - summary.totalCost), icon: LuChartNoAxesCombined, tone: "green" },
+          { label: "Estoque baixo", value: summary.lowStock, icon: LuTriangleAlert, tone: "warning", detail: "Inclui itens sem estoque" },
+          { label: "Sem estoque", value: summary.outOfStock, icon: LuPackageMinus, tone: "danger" },
+        ].map(({ label, value, icon: Icon, tone, detail }) => (
+          <article className={`st-kpi st-kpi-${tone}`} key={label}>
+            <span className="st-kpi-icon"><Icon aria-hidden="true" /></span>
+            <span className="st-kpi-label">{label}</span>
+            <strong>{value}</strong>
+            {detail && <small>{detail}</small>}
+            {label === "Lucro potencial" && <small>Não representa lucro realizado nem dinheiro em caixa.</small>}
+          </article>
+        ))}
+      </section>
 
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>Peças em estoque</span>
-          <strong style={styles.summaryValue}>
-            {summary.totalPieces}
-          </strong>
+      <section className="st-health" aria-label="Saúde do estoque">
+        <div className="st-health-head">
+          <div>
+            <span className="st-section-eyebrow">Visão geral</span>
+            <h2>Saúde do estoque</h2>
+          </div>
+          <span>{summary.totalProducts} produtos monitorados</span>
         </div>
-
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>Valor investido</span>
-          <strong style={styles.summaryValue}>
-            {formatCurrency(summary.totalCost)}
-          </strong>
+        <div className="st-health-bar" role="img" aria-label={`${stockHealth.available} disponíveis, ${stockHealth.low} com estoque baixo e ${stockHealth.out} sem estoque`}>
+          <span className="st-health-fill st-health-available" style={{ width: `${stockHealth.available / healthTotal * 100}%` }} />
+          <span className="st-health-fill st-health-low" style={{ width: `${stockHealth.low / healthTotal * 100}%` }} />
+          <span className="st-health-fill st-health-out" style={{ width: `${stockHealth.out / healthTotal * 100}%` }} />
         </div>
-
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>Valor de venda</span>
-          <strong style={styles.saleValue}>
-            {formatCurrency(summary.totalSale)}
-          </strong>
-        </div>
-
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>Lucro estimado</span>
-          <strong style={styles.profitValue}>
-            {formatCurrency(summary.totalSale - summary.totalCost)}
-          </strong>
-        </div>
-
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>Estoque baixo</span>
-          <strong style={styles.warningValue}>
-            {summary.lowStock}
-          </strong>
+        <div className="st-health-legend">
+          <div><i className="st-health-dot st-health-available" /><span>Disponíveis</span><strong>{stockHealth.available}</strong></div>
+          <div><i className="st-health-dot st-health-low" /><span>Estoque baixo</span><strong>{stockHealth.low}</strong></div>
+          <div><i className="st-health-dot st-health-out" /><span>Sem estoque</span><strong>{stockHealth.out}</strong></div>
         </div>
       </section>
 
-      <section style={styles.card}>
-        <div style={styles.toolbar}>
+      <section className="st-products-section">
+        <div className="st-toolbar" style={styles.toolbar}>
           <div>
+            <span className="st-section-eyebrow">Catálogo</span>
             <h2 style={styles.cardTitle}>Produtos em estoque</h2>
             <p style={styles.helperText}>
               {filteredProducts.length} produto(s) encontrado(s).
             </p>
           </div>
 
-          <input
-            type="search"
-            value={searchText}
-            onChange={(event) => setSearchText(event.target.value)}
-            placeholder="Pesquisar código, nome, categoria, tamanho ou cor"
-            style={styles.searchInput}
-          />
+          <div className="st-filters">
+            <label className="st-search">
+              <LuPackageSearch aria-hidden="true" />
+              <input
+                type="search"
+                value={searchText}
+                onChange={(event) => setSearchText(event.target.value)}
+                placeholder="Pesquisar produto ou código"
+                aria-label="Pesquisar produto ou código"
+              />
+            </label>
+            <label className="st-filter-select">
+              <span>Categoria</span>
+              <select value={categoryFilter} onChange={(event) => setCategoryFilter(event.target.value)} aria-label="Filtrar por categoria">
+                <option value="all">Todas</option>
+                {categories.map((category) => <option key={category} value={category}>{formatCategory(category)}</option>)}
+              </select>
+            </label>
+            <label className="st-filter-select">
+              <span>Tamanho</span>
+              <select value={sizeFilter} onChange={(event) => setSizeFilter(event.target.value)} aria-label="Filtrar por tamanho">
+                <option value="all">Todos</option>
+                {sizes.map((size) => <option key={size} value={size}>{size}</option>)}
+              </select>
+            </label>
+            <label className="st-filter-select">
+              <span>Situação</span>
+              <select value={stockFilter} onChange={(event) => setStockFilter(event.target.value)} aria-label="Filtrar por estoque">
+                <option value="all">Todas</option>
+                <option value="out">Sem estoque</option>
+                <option value="low">Estoque baixo</option>
+              </select>
+            </label>
+          </div>
         </div>
 
         {loading ? (
@@ -374,33 +622,24 @@ export default function StockPage() {
         ) : (
           <div style={styles.list}>
             {filteredProducts.map((product) => {
-              const stockStatus = getStockStatus(product.quantity);
+              const stockStatus = getStockStatus(product);
               const quantity = Number(product.quantity || 0);
 
               return (
-                <article key={product.id} style={styles.productItem}>
-                  <div style={styles.productContent}>
+                <article key={product.id} className={`st-product-card st-product-${stockStatus.label === "Em estoque" ? "available" : stockStatus.label === "Estoque baixo" ? "low" : "out"}`}>
+                  <div className="st-product-content">
                     <div style={styles.productTitleArea}>
-                      <h3 style={styles.productName}>
-                        {product.name || "Produto sem nome"}
-                      </h3>
+                      <div className="st-product-heading">
+                        <h3 style={styles.productName}>{product.name || "Produto sem nome"}</h3>
+                        <p style={styles.productCode}>Código {product.code || "Não informado"}</p>
+                      </div>
 
-                      <span
-                        style={{
-                          ...styles.statusBadge,
-                          color: stockStatus.color,
-                          background: stockStatus.background,
-                        }}
-                      >
+                      <span className={`st-status st-status-${stockStatus.label === "Em estoque" ? "available" : stockStatus.label === "Estoque baixo" ? "low" : "out"}`}>
                         {stockStatus.label}
                       </span>
                     </div>
 
-                    <p style={styles.productCode}>
-                      Código: {product.code || "Não informado"}
-                    </p>
-
-                    <div style={styles.tags}>
+                    <div className="st-tags">
                       <span style={styles.tag}>
                         {formatCategory(product.category)}
                       </span>
@@ -414,9 +653,9 @@ export default function StockPage() {
                       </span>
                     </div>
 
-                    <div style={styles.valuesGrid}>
+                    <div className="st-values-grid">
                       <div>
-                        <span style={styles.smallLabel}>Quantidade</span>
+                        <span style={styles.smallLabel}>Disponível</span>
                         <strong style={styles.quantityValue}>
                           {quantity}
                         </strong>
@@ -431,7 +670,7 @@ export default function StockPage() {
 
                       <div>
                         <span style={styles.smallLabel}>Venda unitária</span>
-                        <strong style={styles.saleValue}>
+                        <strong className="st-sale-value">
                           {formatCurrency(product.salePrice)}
                         </strong>
                       </div>
@@ -444,17 +683,31 @@ export default function StockPage() {
                           )}
                         </strong>
                       </div>
+                      <div>
+                        <span style={styles.smallLabel}>Reposição (mín./alvo)</span>
+                        <strong>
+                          {getStockThresholds(product).minimum} / {getStockThresholds(product).target}
+                        </strong>
+                      </div>
                     </div>
+                    <button
+                      type="button"
+                      className="st-link-button"
+                      onClick={() => handleConfigureRestock(product)}
+                      disabled={readOnly}
+                    >
+                      Configurar limite e alvo de reposição
+                    </button>
                   </div>
 
-                  <div style={styles.actions}>
+                  <div className="st-product-actions">
                     <button
                       type="button"
                       onClick={() =>
                         handleStockAdjustment(product, "entrada")
                       }
-                      disabled={adjustingId === product.id}
-                      style={styles.entryButton}
+                      disabled={readOnly || adjustingId === product.id}
+                      className="st-entry-button"
                     >
                       ➕ Entrada
                     </button>
@@ -465,16 +718,16 @@ export default function StockPage() {
                         handleStockAdjustment(product, "saida")
                       }
                       disabled={
-                        adjustingId === product.id || quantity <= 0
+                        readOnly || adjustingId === product.id || quantity <= 0
                       }
+                      className="st-exit-button"
                       style={{
-                        ...styles.exitButton,
                         opacity:
-                          adjustingId === product.id || quantity <= 0
+                          readOnly || adjustingId === product.id || quantity <= 0
                             ? 0.5
                             : 1,
                         cursor:
-                          adjustingId === product.id || quantity <= 0
+                          readOnly || adjustingId === product.id || quantity <= 0
                             ? "not-allowed"
                             : "pointer",
                       }}
@@ -487,6 +740,117 @@ export default function StockPage() {
             })}
           </div>
         )}
+      </section>
+
+      <section className="st-tools">
+        <div className="st-tools-heading">
+          <div><span className="st-section-eyebrow">Gestão</span><h2>Ferramentas de estoque</h2></div>
+          <p>Reposição, movimentações e planejamento operacional.</p>
+        </div>
+        <div className="st-tabs" role="tablist" aria-label="Ferramentas de estoque">
+          {sections.map(({ id, label, icon: Icon, count }) => (
+            <button
+              type="button"
+              role="tab"
+              id={`stock-tab-${id}`}
+              aria-selected={activeSection === id}
+              aria-controls={`stock-panel-${id}`}
+              className={activeSection === id ? "st-tab st-tab-active" : "st-tab"}
+              key={id}
+              onClick={() => setActiveSection(id)}
+            >
+              <Icon aria-hidden="true" /><span>{label}</span>
+              {Number.isFinite(count) && <small>{count}</small>}
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="st-panels">
+        {activeSection === "reposição" && <article className="st-panel" role="tabpanel" id="stock-panel-reposição" aria-labelledby="stock-tab-reposição">
+          <h2>Lista de reposição</h2>
+          <p className="st-muted">Sugestões calculadas pelos limites configurados em cada produto. O custo é estimado pelo custo unitário cadastrado.</p>
+          {restockProducts.length ? (
+            <div className="st-table-wrap">
+              <table className="st-table">
+                <thead><tr><th>Produto</th><th>Disponível</th><th>Sugerido</th><th>Custo estimado</th></tr></thead>
+                <tbody>
+                  {restockProducts.map((product) => (
+                    <tr key={product.id}>
+                      <td>{product.name || "Produto sem nome"}<small>{product.code || "Sem código"}</small></td>
+                      <td>{Number(product.quantity || 0)}</td>
+                      <td>{product.suggestedQuantity}</td>
+                      <td>{formatCurrency(product.suggestedQuantity * Number(product.costPrice || 0))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <p className="st-muted">Nenhum produto está abaixo do limite mínimo configurado.</p>}
+        </article>}
+
+        {activeSection === "viagens" && <article className="st-panel" role="tabpanel" id="stock-panel-viagens" aria-labelledby="stock-tab-viagens">
+          <h2>Planejamento de mercadorias para viagem</h2>
+          <p className="st-muted">Rascunho temporário desta sessão. Planejar não altera o estoque; confirme entradas ou baixas separadamente pelos controles de movimentação.</p>
+          <div className="st-plan-form">
+            <label>Viagem<input value={planningTrip} onChange={(event) => setPlanningTrip(event.target.value)} placeholder="Ex.: 4ª viagem" /></label>
+            <label>Produto<select value={planningProductId} onChange={(event) => setPlanningProductId(event.target.value)}><option value="">Selecione</option>{products.map((product) => <option key={product.id} value={product.id}>{product.name} · {product.code || "sem código"}</option>)}</select></label>
+            <label>Quantidade<input type="number" min="1" step="1" value={planningQuantity} onChange={(event) => setPlanningQuantity(event.target.value)} /></label>
+            <button type="button" className="st-action-button" onClick={addPlannedItem}>Adicionar à lista</button>
+          </div>
+          {plannedItems.length ? (
+            <div className="st-table-wrap">
+              <table className="st-table">
+                <thead><tr><th>Viagem</th><th>Produto</th><th>Quantidade planejada</th><th></th></tr></thead>
+                <tbody>
+                  {plannedItems.map((item) => (
+                    <tr key={`${item.trip}-${item.productId}`}>
+                      <td>{item.trip}</td><td>{item.product?.name || "Produto removido"}</td><td>{item.quantity}</td>
+                      <td className="st-plan-actions">
+                        <button type="button" className="st-link-button" disabled={readOnly || adjustingId === item.productId || !item.product} onClick={() => handleConfirmPlannedItem(item)}>Confirmar baixa</button>
+                        <button type="button" className="st-link-button" onClick={() => setTripPlan((current) => current.filter((planned) => !(planned.trip === item.trip && planned.productId === item.productId)))}>Remover</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <p className="st-muted">Nenhum item planejado nesta sessão.</p>}
+        </article>}
+
+        {activeSection === "análise" && <article className="st-panel" role="tabpanel" id="stock-panel-análise" aria-labelledby="stock-tab-análise">
+          <h2>Desempenho de vendas</h2>
+          <p className="st-muted">Agregado exclusivamente de itens em vendas reais registradas. Não inclui estimativas de demanda.</p>
+          <div className="st-report-grid">
+            <div><h3>Mais vendidos</h3>{salesReport.mostSold.length ? salesReport.mostSold.map((item) => <p key={item.productId}>{item.name}<strong>{item.quantitySold} un.</strong></p>) : <p className="st-muted">Sem vendas registradas.</p>}</div>
+            <div><h3>Menos vendidos</h3>{salesReport.leastSold.length ? salesReport.leastSold.map((item) => <p key={item.productId}>{item.name}<strong>{item.quantitySold} un.</strong></p>) : <p className="st-muted">Sem vendas registradas.</p>}</div>
+            <div><h3>Tamanhos mais procurados</h3>{salesReport.sizes.length ? salesReport.sizes.map((item) => <p key={item.size}>Tam. {item.size}<strong>{item.quantitySold} un.</strong></p>) : <p className="st-muted">Sem tamanhos em vendas registradas.</p>}</div>
+          </div>
+        </article>}
+
+        {activeSection === "histórico" && <article className="st-panel" role="tabpanel" id="stock-panel-histórico" aria-labelledby="stock-tab-histórico">
+          <h2>Histórico de estoque</h2>
+          <p className="st-muted">Mostra movimentos que já estavam registrados e vendas reais existentes. Não são criados movimentos retroativos; vendas antigas sem registro de movimentação aparecem somente como venda.</p>
+          {stockActivity.length ? (
+            <div className="st-table-wrap">
+              <table className="st-table">
+                <thead><tr><th>Data</th><th>Movimentação</th><th>Produto</th><th>Quantidade</th><th>Detalhe</th><th>Origem</th></tr></thead>
+                <tbody>
+                  {stockActivity.map((activity) => (
+                    <tr key={activity.id}>
+                      <td>{formatDate(activity.createdAt)}</td>
+                      <td>{activity.type}</td>
+                      <td>{activity.productName || "Produto"}<small>{activity.productCode || ""}</small></td>
+                      <td>{Number(activity.quantity || 0)}</td>
+                      <td>{activity.reason || activity.reference || "—"}</td>
+                      <td>{activity.source === "sale" ? "Venda real" : "Movimento registrado"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : <p className="st-muted">Ainda não há movimentações ou vendas registradas.</p>}
+        </article>}
       </section>
     </div>
   );

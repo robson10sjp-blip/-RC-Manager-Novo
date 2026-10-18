@@ -502,12 +502,18 @@ export function prepareSaleReceipt(sale, now = new Date()) {
     dueDate.setDate(dueDate.getDate() + 90);
   }
 
+  const savedReceiptNumber = String(sale.receiptNumber || "").trim();
+  const saleId = String(sale.id || "").trim();
+
   return {
     ...sale,
     saleDate,
     dueDate,
     receiptNumber:
-      sale.receiptNumber ||
-      String(sale.id || now.getTime()).slice(-6),
+      savedReceiptNumber && !/^0+$/.test(savedReceiptNumber)
+        ? savedReceiptNumber
+        : saleId
+          ? saleId.slice(-6)
+          : String(now.getTime()).slice(-6),
   };
 }

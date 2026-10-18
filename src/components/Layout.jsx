@@ -1,4 +1,6 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { Navigate, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { onAuthStateChanged } from "firebase/auth";
 import {
   LuLayoutDashboard,
   LuUsers,
@@ -9,7 +11,10 @@ import {
   LuSparkles,
   LuClipboardList,
 } from "react-icons/lu";
+import { auth } from "../firebase/config";
 import { isFirestoreReadOnly } from "../firebase/writePolicy";
+import { resolveAccess } from "../services/session";
+import LogoutButton from "./LogoutButton.jsx";
 
 const menuItems = [
   { path: "/dashboard", icon: LuLayoutDashboard, label: "Dashboard" },
@@ -24,6 +29,22 @@ const menuItems = [
 
 export default function Layout() {
   const readOnly = isFirestoreReadOnly();
+  const navigate = useNavigate();
+  const [session, setSession] = useState({ checking: true, user: null });
+
+  useEffect(
+    () =>
+      onAuthStateChanged(auth, (user) => setSession({ checking: false, user })),
+    []
+  );
+
+  const access = resolveAccess(session);
+  if (access === "wait") {
+    return <div className="auth-checking" role="status">Verificando acesso...</div>;
+  }
+  if (access === "login") {
+    return <Navigate to="/" replace />;
+  }
 
   return (
     <div className="app-layout">
@@ -57,6 +78,10 @@ export default function Layout() {
             </NavLink>
           ))}
         </nav>
+
+        <div className="sidebar-footer">
+          <LogoutButton onSignedOut={() => navigate("/", { replace: true })} />
+        </div>
       </aside>
 
       <main className="app-main">

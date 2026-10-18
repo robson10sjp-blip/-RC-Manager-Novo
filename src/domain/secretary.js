@@ -11,6 +11,8 @@ import {
   summarizePayables,
 } from "./payables.js";
 import { toDate } from "../utils/dates.js";
+import { buildCollectionsReport } from "./secretaryCollections.js";
+import { getSalePendingAmount } from "./financeReceivables.js";
 
 function startOfDay(date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -363,6 +365,22 @@ export function createSecretarySnapshot(
       ),
     ])
   );
+  const tripPending = Object.fromEntries(
+    [3, 4].map((tripNumber) => {
+      const tripSales = selectSalesForTrip(tripOrganization, String(tripNumber));
+      const open = tripSales.filter((sale) => getSalePendingAmount(sale) > 0);
+      return [
+        tripNumber,
+        {
+          amount:
+            Math.round(
+              open.reduce((sum, sale) => sum + getSalePendingAmount(sale), 0) * 100
+            ) / 100,
+          salesCount: open.length,
+        },
+      ];
+    })
+  );
   const tripDebtors = Object.fromEntries(
     [1, 2, 3, 4].map((tripNumber) => {
       const tripSales = selectSalesForTrip(
@@ -447,12 +465,74 @@ export function createSecretarySnapshot(
     lowStockProducts,
     tripsThisMonth,
     tripFinancials,
+    tripPending,
     tripDebtors,
     tripExpenseCategories,
     allTripFinancials,
     clientsCount: clients.length,
     productsCount: products.length,
+    collectionClients: clients,
+    collectionSales: sales,
   };
+}
+
+function asksCollectionsList(query) {
+  return (
+    /\b(quem|quais|lista|liste|listar|mostre|mostra|relacao|nomes)\b/.test(
+      query
+    ) &&
+    /\b(cobrar|cobranca|cobrancas|atraso|atrasados|atrasadas|vencid[oa]s?|vencem|vencimento|vencimentos)\b/.test(
+      query
+    )
+  );
+}
+
+function collectionsAnswer(query, snapshot, tripContext) {
+  if (!asksCollectionsList(query)) return null;
+
+  const explicitTrip = detectTripNumber(query);
+  const scope = explicitTrip
+    ? explicitTrip
+    : isAllTripsQuery(query)
+      ? "all"
+      : typeof tripContext === "number"
+        ? tripContext
+        : ["1", "2", "3", "4"].includes(String(tripContext))
+          ? Number(tripContext)
+          : tripContext === "all"
+            ? "all"
+            : null;
+  const focusToday = /\bhoje\b/.test(query);
+  const effectiveScope = scope ?? (focusToday ? "all" : null);
+  if (!effectiveScope) return null;
+
+  const report = buildCollectionsReport({
+    clients: snapshot.collectionClients || [],
+    sales: snapshot.collectionSales || [],
+    today: snapshot.today,
+    trip: effectiveScope,
+  });
+  const tripLabel =
+    effectiveScope === "all"
+      ? "Todas as viagens (total geral)"
+      : tripDescription(effectiveScope);
+  const provisional =
+    effectiveScope === "all" || effectiveScope === 3 || effectiveScope === 4;
+  const collections = { report, focusToday, tripLabel, provisional };
+
+  const line = (group, name) =>
+    `${name}: ${group.count} cobrança(s), ${currency(group.total)}`;
+  const answer = [
+    `Cobranças — ${tripLabel}${provisional ? ". A classificação por viagem ainda é provisória." : "."}`,
+    line(report.overdue, "Vencidas"),
+    line(report.today, "Vencem hoje"),
+    focusToday
+      ? `Próximas a vencer (apenas para planejamento, não são para hoje): ${report.upcoming.count} cobrança(s), ${currency(report.upcoming.total)}`
+      : line(report.upcoming, "Próximas a vencer"),
+    line(report.noDueDate, "Vencimento não informado"),
+  ].join("\n");
+
+  return { answer, collections };
 }
 
 function formatSales(sales) {
@@ -477,6 +557,11 @@ export function answerSecretaryQueryWithContext(
   const explicitTrip = detectTripNumber(query);
   const explicitAll = !explicitTrip && isAllTripsQuery(query);
   const tripContext = explicitTrip || (explicitAll ? "all" : previousTripContext);
+  const collectionsResponse = collectionsAnswer(query, snapshot, tripContext);
+
+  if (collectionsResponse) {
+    return { ...collectionsResponse, tripContext };
+  }
 
   return {
     answer: answerSecretaryQuery(

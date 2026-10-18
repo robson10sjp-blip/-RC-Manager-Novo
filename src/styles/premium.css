@@ -448,3 +448,174 @@ body {
     white-space: nowrap;
   }
 }
+
+/* ---------- Sair do sistema ---------- */
+
+.app-sidebar {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-footer {
+  margin-top: auto;
+  padding-top: 14px;
+  border-top: 1px solid rgba(201, 162, 77, 0.28);
+}
+
+.sidebar-logout {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 48px;
+  padding: 11px 14px;
+  border: 1px solid rgba(239, 68, 68, 0.28);
+  border-radius: 12px;
+  background: rgba(239, 68, 68, 0.06);
+  color: #f3b4b4;
+  font: inherit;
+  font-size: 15.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.sidebar-logout .sidebar-icon {
+  color: #ef6b6b;
+}
+
+.sidebar-logout:hover,
+.sidebar-logout:focus-visible {
+  background: rgba(239, 68, 68, 0.14);
+  border-color: rgba(239, 68, 68, 0.55);
+  color: #ffffff;
+  outline: none;
+}
+
+.auth-checking {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  background: var(--rc-navy-900);
+  color: var(--rc-gold);
+  font-weight: 700;
+}
+
+.logout-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(6, 11, 23, 0.72);
+  backdrop-filter: blur(3px);
+}
+
+.logout-dialog {
+  width: min(380px, 100%);
+  padding: 26px 22px 20px;
+  border: 1px solid rgba(201, 162, 77, 0.45);
+  border-radius: 18px;
+  background: linear-gradient(160deg, var(--rc-navy-700), var(--rc-navy-900));
+  color: #f5f1e6;
+  text-align: center;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.logout-dialog-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 12px;
+  border-radius: 50%;
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.4);
+  color: #ef6b6b;
+  font-size: 24px;
+}
+
+.logout-dialog h2 {
+  margin: 0 0 18px;
+  color: #ffffff !important;
+  font-size: 19px !important;
+  line-height: 1.35;
+}
+
+.logout-dialog-error {
+  margin: -6px 0 14px;
+  color: #fecaca;
+  font-size: 13px;
+}
+
+.logout-dialog-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.logout-dialog-actions button {
+  min-height: 46px;
+  border-radius: 12px;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.logout-cancel {
+  border: 1px solid rgba(201, 162, 77, 0.5);
+  background: transparent;
+  color: var(--rc-gold);
+}
+
+.logout-confirm {
+  border: 0;
+  background: #c93a3a;
+  color: #ffffff;
+}
+
+.logout-dialog-actions button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+@media (max-width: 760px) {
+  .app-sidebar {
+    flex-direction: row;
+    align-items: stretch;
+    gap: 6px;
+  }
+
+  .app-sidebar .sidebar-menu {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .sidebar-footer {
+    flex: 0 0 auto;
+    margin-top: 0;
+    padding-top: 0;
+    padding-left: 6px;
+    border-top: 0;
+    border-left: 1px solid rgba(201, 162, 77, 0.28);
+  }
+
+  .sidebar-logout {
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    width: 72px;
+    min-height: 56px;
+    padding: 7px 4px;
+    border-radius: 10px;
+    text-align: center;
+  }
+
+  .sidebar-logout .sidebar-label {
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+}

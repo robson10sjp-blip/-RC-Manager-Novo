@@ -30,7 +30,7 @@
 }
 
 .suppliers-eyebrow {
-  color: #2563eb !important;
+  color: #a9822f !important;
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -93,6 +93,11 @@
 
 .suppliers-form input,
 .suppliers-form textarea,
+.suppliers-form select,
+.supplier-purchase-form input,
+.supplier-purchase-form select,
+.supplier-payment-form input,
+.supplier-payment-form select,
 .suppliers-search {
   width: 100%;
   min-width: 0;
@@ -103,6 +108,14 @@
   background: #fff;
   color: #18263c;
   font: inherit;
+}
+
+.suppliers-form textarea,
+.supplier-purchase-form input,
+.supplier-purchase-form select,
+.supplier-payment-form input,
+.supplier-payment-form select {
+  min-height: 44px;
 }
 
 .suppliers-form textarea {
@@ -120,7 +133,8 @@
 }
 
 .suppliers-primary-button {
-  background: #2563eb;
+  border: 1px solid rgba(201, 162, 77, 0.65);
+  background: linear-gradient(180deg, #17335b, #0d1b32);
   color: white;
 }
 
@@ -248,9 +262,249 @@
   color: #991b1b;
 }
 
+.suppliers-notice {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid #b6dfc4;
+  border-radius: 11px;
+  background: #f0fff4;
+  color: #23613a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.suppliers-readonly {
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border: 1px solid rgba(201, 162, 77, 0.45);
+  border-radius: 11px;
+  background: #fffaf0;
+  color: #624b17;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.supplier-payables-metrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 20px;
+}
+
+.supplier-payables-metrics article {
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  min-width: 0;
+  padding: 15px;
+  border: 1px solid #dce4f0;
+  border-top: 3px solid #c9a24d;
+  border-radius: 13px;
+  background: linear-gradient(180deg, #fff, #f8f9fc);
+  box-shadow: 0 6px 18px rgba(10, 18, 38, 0.06);
+}
+
+.supplier-payables-metrics span {
+  color: #66758a;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.supplier-payables-metrics strong {
+  color: #10213b;
+  font-size: clamp(14px, 1.4vw, 19px);
+  overflow-wrap: anywhere;
+}
+
+.suppliers-purchases,
+.suppliers-payment-section {
+  margin-top: 20px;
+  padding: 22px;
+  border: 1px solid #dce4f0;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 10px 26px rgba(15, 34, 62, 0.06);
+}
+
+.suppliers-section-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.suppliers-section-heading h2 {
+  margin: 3px 0 6px;
+  color: #12233e;
+  font-size: 20px;
+}
+
+.suppliers-section-heading p {
+  margin: 0;
+  color: #65738a;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.supplier-purchase-form,
+.supplier-payment-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: end;
+  gap: 12px;
+}
+
+.supplier-purchase-form label,
+.supplier-payment-form label,
+.supplier-installment-editor-row label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: #34435a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.supplier-purchase-wide {
+  grid-column: 1 / -1;
+}
+
+.supplier-installment-editor {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid #e1e8f0;
+  border-radius: 13px;
+  background: #f9fbfd;
+}
+
+.supplier-section-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.supplier-section-heading h3 {
+  margin: 0 0 4px;
+  color: #142238;
+  font-size: 15px;
+}
+
+.supplier-section-heading p {
+  margin: 0;
+  color: #65738a;
+  font-size: 12px;
+}
+
+.supplier-installment-editor-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.supplier-installment-editor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid #e1e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.supplier-history {
+  flex: 1 0 100%;
+  min-width: 0;
+  margin-top: 10px;
+  padding: 14px;
+  border-top: 1px solid #dce4f0;
+}
+
+.supplier-history h4 {
+  margin: 0 0 12px;
+  color: #142238;
+}
+
+.supplier-purchase-list {
+  display: grid;
+  gap: 10px;
+}
+
+.supplier-purchase {
+  min-width: 0;
+  padding: 13px;
+  border: 1px solid #e1e8f0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.supplier-purchase-heading,
+.supplier-purchase-meta,
+.supplier-installment {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.supplier-purchase-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.supplier-purchase-heading span,
+.supplier-purchase-meta,
+.supplier-installment,
+.supplier-payment-history p {
+  color: #65738a;
+  font-size: 12px;
+}
+
+.supplier-balance-open { color: #a12626; }
+.supplier-balance-paid { color: #207044; }
+
+.supplier-purchase-meta {
+  margin-top: 10px;
+  padding: 8px 0;
+  border-top: 1px solid #e8edf3;
+  border-bottom: 1px solid #e8edf3;
+}
+
+.supplier-installment {
+  padding: 8px 0;
+  border-bottom: 1px solid #eef1f5;
+}
+
+.supplier-payment-history {
+  margin-top: 9px;
+}
+
+.supplier-payment-history summary {
+  color: #8a6a1f;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.supplier-payment-history p {
+  margin: 7px 0 0;
+}
+
+.supplier-actions button:disabled,
+.suppliers-secondary-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
 @media (max-width: 820px) {
   .suppliers-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .supplier-payables-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -270,6 +524,29 @@
 
   .suppliers-card {
     padding: 16px;
+  }
+
+  .suppliers-purchases,
+  .suppliers-payment-section {
+    padding: 16px;
+  }
+
+  .supplier-purchase-form,
+  .supplier-payment-form,
+  .supplier-installment-editor-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .supplier-installment-editor-row > button {
+    width: 100%;
+  }
+
+  .supplier-purchase-wide {
+    grid-column: auto;
+  }
+
+  .supplier-payables-metrics {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .supplier-row {

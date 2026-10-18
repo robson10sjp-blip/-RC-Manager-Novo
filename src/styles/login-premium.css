@@ -427,3 +427,115 @@
     flex-direction: column;
   }
 }
+
+/* Recuperação de acesso */
+.rc-reset-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(3, 8, 20, 0.78);
+  backdrop-filter: blur(4px);
+  overflow-y: auto;
+}
+
+.rc-reset-modal {
+  position: relative;
+  width: min(440px, 100%);
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 28px 24px 20px;
+  border: 1px solid rgba(222, 177, 70, 0.4);
+  border-radius: 20px;
+  background: linear-gradient(160deg, #0b1b3c, #060f26);
+  color: #f5f1e6;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.rc-reset-modal h2 {
+  margin: 0 0 8px;
+  color: #e6b94f;
+  font-family: Georgia, "Playfair Display", serif;
+  font-size: 26px;
+  text-align: center;
+}
+
+.rc-reset-lead {
+  margin: 0 0 18px;
+  color: #c9cfdc;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.rc-reset-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: #e6b94f;
+  font-size: 26px;
+  cursor: pointer;
+}
+
+.rc-reset-methods {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-bottom: 16px;
+  padding: 4px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.rc-reset-methods button {
+  min-height: 42px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: #c9cfdc;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.rc-reset-methods button.active {
+  background: #e6b94f;
+  color: #0b1b3c;
+}
+
+.rc-reset-form,
+.rc-reset-phone {
+  display: grid;
+  gap: 14px;
+}
+
+.rc-reset-phone p {
+  margin: 0;
+  color: #c9cfdc;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.rc-reset-neutral {
+  color: #f5e3b0;
+  border-color: rgba(222, 177, 70, 0.4);
+  background: rgba(222, 177, 70, 0.1);
+}
+
+.rc-reset-back {
+  margin-top: 10px;
+  width: 100%;
+  min-height: 40px;
+  border: 0;
+  background: transparent;
+  color: #e6b94f;
+  font-weight: 700;
+  cursor: pointer;
+}

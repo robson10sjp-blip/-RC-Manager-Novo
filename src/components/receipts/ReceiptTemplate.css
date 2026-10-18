@@ -293,8 +293,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: auto;
-  padding-top: 18px;
+  margin-top: 4px;
+  padding-top: 8px;
 }
 
 .rcp-signature {
