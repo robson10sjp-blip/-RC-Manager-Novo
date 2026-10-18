@@ -39,6 +39,7 @@ import {
 } from "../domain/payables";
 import { toDate } from "../utils/dates";
 import "./FinancePayables.css";
+import "./FinancePremium.css";
 
 const todayInput = () => new Date().toISOString().slice(0, 10);
 const emptyExpense = {
@@ -1488,17 +1489,17 @@ Qualquer dúvida estou à disposição. Obrigado!`;
   }
 
   return (
-    <div style={styles.page}>
-      <header style={styles.header}>
+    <div className="fin" style={styles.page}>
+      <header className="fin-header" style={styles.header}>
         <div>
-          <p style={styles.eyebrow}>RC Confecções</p>
+          <p className="fin-eyebrow" style={styles.eyebrow}>RC Confecções</p>
           <h1 style={styles.title}>Financeiro</h1>
-          <p style={styles.subtitle}>
+          <p className="fin-subtitle" style={styles.subtitle}>
             Acompanhe vendas, recebimentos, despesas e obrigações de fornecedores.
           </p>
         </div>
 
-        <label style={styles.filterLabel}>
+        <label className="fin-filter" style={styles.filterLabel}>
           Viagem
           <select
             value={tripFilter}
@@ -1519,7 +1520,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
         </label>
       </header>
 
-      <section style={styles.tripSummarySection}>
+      <section className="fin-summary" style={styles.tripSummarySection}>
         <div style={styles.tripSummaryHeader}>
           <div>
             <h2 style={styles.cardTitle}>
@@ -1538,7 +1539,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
             Classificação das vendas proposta
           </span>
         </div>
-        <div style={styles.tripSummaryGrid}>
+        <div className="fin-cards" style={styles.tripSummaryGrid}>
           {[
             {
               label: "Total vendido",
@@ -1586,13 +1587,19 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                 : formatCurrency(tripSummary.cashFlow),
             },
           ].map(({ label, value }) => (
-            <div key={label} style={styles.tripSummaryCard}>
+            <div
+              key={label}
+              className={`fin-card ${FINANCE_HIGHLIGHTS[label] ? `fin-card-key fin-card-${FINANCE_HIGHLIGHTS[label]}` : ""}`}
+              style={styles.tripSummaryCard}
+            >
               <span style={styles.summaryLabel}>{label}</span>
               <strong style={styles.summaryValue}>{value}</strong>
             </div>
           ))}
         </div>
-        <p style={styles.tripNotice}>
+        <details className="fin-notice">
+          <summary>Como estes valores são calculados</summary>
+          <p style={styles.tripNotice}>
           Compras classificadas como estoque não viram despesa nem alteram o
           estoque automaticamente; o custo entra no lucro quando a mercadoria é
           vendida. Compras marcadas como operacionais entram uma vez no lucro
@@ -1603,6 +1610,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
           consolidado geral e podem ser classificadas individualmente. Quando
           não há custo unitário salvo na venda, usamos o custo atual do produto.
         </p>
+        </details>
       </section>
 
       <section className="payables-section">
@@ -2414,6 +2422,14 @@ Qualquer dúvida estou à disposição. Obrigado!`;
     </div>
   );
 }
+
+const FINANCE_HIGHLIGHTS = {
+  "Total vendido": "navy",
+  "Total recebido": "green",
+  "Total pendente": "gold",
+  "Total de despesas": "red",
+  "Lucro estimado": "result",
+};
 
 const styles = {
   page: {

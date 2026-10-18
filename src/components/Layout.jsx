@@ -1,15 +1,25 @@
 import { NavLink, Outlet } from "react-router-dom";
+import {
+  LuLayoutDashboard,
+  LuUsers,
+  LuPackage,
+  LuShoppingBag,
+  LuWallet,
+  LuBuilding2,
+  LuSparkles,
+  LuClipboardList,
+} from "react-icons/lu";
 import { isFirestoreReadOnly } from "../firebase/writePolicy";
 
 const menuItems = [
-  { path: "/dashboard", icon: "📊", label: "Dashboard" },
-  { path: "/clientes", icon: "👥", label: "Clientes" },
-  { path: "/produtos", icon: "📦", label: "Produtos" },
-  { path: "/vendas", icon: "💰", label: "Vendas" },
-  { path: "/financeiro", icon: "💵", label: "Financeiro" },
-  { path: "/fornecedores", icon: "🏢", label: "Fornecedores" },
-  { path: "/inteligencia", icon: "👩‍💼", label: "Secretária RC" },
-  { path: "/estoque", icon: "📋", label: "Estoque" },
+  { path: "/dashboard", icon: LuLayoutDashboard, label: "Dashboard" },
+  { path: "/clientes", icon: LuUsers, label: "Clientes" },
+  { path: "/produtos", icon: LuPackage, label: "Produtos" },
+  { path: "/vendas", icon: LuShoppingBag, label: "Vendas" },
+  { path: "/financeiro", icon: LuWallet, label: "Financeiro" },
+  { path: "/fornecedores", icon: LuBuilding2, label: "Fornecedores" },
+  { path: "/inteligencia", icon: LuSparkles, label: "Secretária RC" },
+  { path: "/estoque", icon: LuClipboardList, label: "Estoque" },
 ];
 
 export default function Layout() {
@@ -26,8 +36,8 @@ export default function Layout() {
           />
 
           <div className="sidebar-brand-text">
-            <strong>RC Manager</strong>
-            <span>RC Confecções</span>
+            <strong>RC Confecções</strong>
+            <span>Premium</span>
           </div>
         </div>
 
@@ -40,7 +50,9 @@ export default function Layout() {
                 `sidebar-link ${isActive ? "sidebar-link-active" : ""}`
               }
             >
-              <span className="sidebar-icon">{item.icon}</span>
+              <span className="sidebar-icon">
+                <item.icon aria-hidden="true" />
+              </span>
               <span className="sidebar-label">{item.label}</span>
             </NavLink>
           ))}
@@ -49,17 +61,7 @@ export default function Layout() {
 
       <main className="app-main">
         {readOnly && (
-          <div
-            role="status"
-            style={{
-              margin: "1rem 1.5rem 0",
-              padding: "0.75rem 1rem",
-              border: "1px solid #93c5fd",
-              borderRadius: 8,
-              background: "#eff6ff",
-              color: "#1e3a8a",
-            }}
-          >
+          <div role="status" className="readonly-banner">
             Prévia somente leitura: operações de gravação no Firestore estão
             bloqueadas neste modo.
           </div>

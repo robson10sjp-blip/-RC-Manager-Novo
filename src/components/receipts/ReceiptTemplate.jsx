@@ -1,6 +1,28 @@
 import { forwardRef } from 'react';
 import './ReceiptTemplate.css';
 
+const SINGLE_PAGE_ROWS = 9;
+const FIRST_PAGE_ROWS = 15;
+const NEXT_PAGE_ROWS = 22;
+const LAST_PAGE_ROWS = 11;
+
+// Divide os produtos em páginas A5; o fechamento (totais e assinatura) vai sempre na última.
+function paginateRows(rows) {
+  if (rows.length <= SINGLE_PAGE_ROWS) {
+    return [{ rows, closing: true }];
+  }
+
+  const rest = [...rows];
+  const pages = [{ rows: rest.splice(0, FIRST_PAGE_ROWS), closing: false }];
+
+  while (rest.length > LAST_PAGE_ROWS) {
+    pages.push({ rows: rest.splice(0, NEXT_PAGE_ROWS), closing: false });
+  }
+
+  pages.push({ rows: rest, closing: true });
+  return pages;
+}
+
 const formatCurrency = (value) => {
   const number = Number(value || 0);
 
@@ -95,7 +117,6 @@ const ReceiptTemplate = forwardRef(function ReceiptTemplate(
     sale = {},
     receiptNumber,
     companyName = 'RC Confecções',
-    sellerName = 'Robson Henrique',
   },
   ref
 ) {
@@ -114,13 +135,6 @@ const ReceiptTemplate = forwardRef(function ReceiptTemplate(
     sale.customer?.name ||
     sale.cliente?.nome ||
     'Cliente não informado';
-
-  const saleDate =
-    sale.saleDate ||
-    sale.createdAt ||
-    sale.date ||
-    sale.dataVenda ||
-    new Date();
 
   const dueDate =
     sale.dueDate ||
@@ -186,272 +200,184 @@ const number = savedNumber
   ? String(savedNumber).replace(/\D/g, "").slice(-6)
   : String(Date.now()).slice(-6);
 
+  const rows = items.map((item, index) => {
+    const quantity = Number(item.quantity || item.qty || item.quantidade || 1);
+
+    const unitPrice = Number(
+      item.price ||
+        item.unitPrice ||
+        item.salePrice ||
+        item.preco ||
+        item.valor ||
+        0
+    );
+
+    const subtotal = Number(
+      item.subtotal || item.total || item.valorTotal || quantity * unitPrice
+    );
+
+    const name =
+      item.name ||
+      item.productName ||
+      item.description ||
+      item.nome ||
+      item.produto ||
+      'Produto';
+
+    return { key: item.id || `${name}-${index}`, quantity, unitPrice, subtotal, name };
+  });
+
+  const pages = paginateRows(rows);
+  const receiptCode = String(number).padStart(6, '0');
+  const tripLabel = [sale.tripName, sale.tripCity].filter(Boolean).join(' • ');
+
   return (
-    <div className="rc-receipt-wrapper">
-      <article
-        ref={ref}
-        id="rc-receipt-template"
-        className="rc-receipt"
-      >
-        <div className="rc-receipt-watermark" aria-hidden="true">
-          <span className="rc-watermark-r">R</span>
-          <span className="rc-watermark-c">C</span>
-        </div>
-
-        <header className="rc-receipt-header">
-          <section className="rc-brand-area">
-            <div className="rc-logo-box" aria-label="RC Confecções">
-              <span className="rc-logo-r">R</span>
-              <span className="rc-logo-c">C</span>
-            </div>
-
-            <div className="rc-brand-divider" />
-
-            <div className="rc-brand-text">
-              <h1>
-                <span>RC</span> <strong>CONFECÇÕES</strong>
-              </h1>
-
-              <p>
-                <i />
-                QUALIDADE VOCÊ ENCONTRA AQUI
-                <i />
-              </p>
-            </div>
-          </section>
-
-          <section className="rc-receipt-title">
-            <h2>RECIBO DE VENDA</h2>
-            <div className="rc-title-line" />
-
-            <p>
-              Nº <strong>{String(number).padStart(6, '0')}</strong>
-            </p>
-            {sale.id && (
-              <p>
-                COMPRA <strong>{String(sale.id).slice(0, 8)}</strong>
-              </p>
-            )}
-          </section>
-        </header>
-
-        <section className="rc-receipt-information">
-          <div className="rc-customer-information">
-            <div className="rc-information-row">
-              <div className="rc-information-icon">●</div>
-
-              <div className="rc-information-content">
-                <strong>CLIENTE:</strong>
-                <span>{clientName}</span>
-              </div>
-            </div>
-
-            <div className="rc-information-row">
-              <div className="rc-information-icon">▣</div>
-
-              <div className="rc-information-content">
-                <strong>DATA DA VENDA:</strong>
-                <span>{formatDate(saleDate, true)}</span>
-              </div>
-            </div>
-
-            <div className="rc-information-row">
-              <div className="rc-information-icon">▣</div>
-
-              <div className="rc-information-content">
-                <strong>DATA PREVISTA PARA COBRANÇA:</strong>
-
-                <span>
-                  {dueDate ? formatDate(dueDate) : 'Não informada'}
-                </span>
-              </div>
-            </div>
-
-            {(sale.tripName || sale.tripCity) && (
-              <div className="rc-information-row">
-                <div className="rc-information-icon">⌖</div>
-
-                <div className="rc-information-content">
-                  <strong>VIAGEM / CIDADE:</strong>
-                  <span>
-                    {[sale.tripName, sale.tripCity]
-                      .filter(Boolean)
-                      .join(' • ')}
-                  </span>
-                </div>
-              </div>
-            )}
-
-            <div className="rc-information-row">
-              <div className="rc-information-icon">▰</div>
-
-              <div className="rc-information-content">
-                <strong>FORMA DE PAGAMENTO:</strong>
-                <span>{getPaymentMethod(paymentMethod)}</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="rc-sale-information">
-            <div className="rc-sale-information-row">
-              <div className="rc-black-icon">$</div>
-
-              <strong>SITUAÇÃO:</strong>
-
-              <span
-                className={`rc-status rc-status-${status.toLowerCase()}`}
-              >
-                {status}
-              </span>
-            </div>
-
-            <div className="rc-sale-information-row">
-              <div className="rc-black-icon">▣</div>
-
-              <strong>VENDEDOR:</strong>
-              <span>{sellerName}</span>
-            </div>
-
-            <div className="rc-sale-information-row">
-              <div className="rc-black-icon">▤</div>
-
-              <strong>EMPRESA:</strong>
-              <span>{companyName}</span>
-            </div>
-          </div>
-        </section>
-
-        <section className="rc-products-section">
-          <table className="rc-products-table">
-            <thead>
-              <tr>
-                <th>QTD.</th>
-                <th>PRODUTO</th>
-                <th>VALOR UNITÁRIO</th>
-                <th>SUBTOTAL</th>
-              </tr>
-            </thead>
-
-            <tbody>
-              {items.length > 0 ? (
-                items.map((item, index) => {
-                  const quantity = Number(
-                    item.quantity || item.qty || item.quantidade || 1
-                  );
-
-                  const unitPrice = Number(
-                    item.price ||
-                      item.unitPrice ||
-                      item.salePrice ||
-                      item.preco ||
-                      item.valor ||
-                      0
-                  );
-
-                  const subtotal = Number(
-                    item.subtotal ||
-                      item.total ||
-                      item.valorTotal ||
-                      quantity * unitPrice
-                  );
-
-                  const productName =
-                    item.name ||
-                    item.productName ||
-                    item.description ||
-                    item.nome ||
-                    item.produto ||
-                    'Produto';
-
-                  return (
-                    <tr key={item.id || `${productName}-${index}`}>
-                      <td>{quantity}x</td>
-                      <td>{productName}</td>
-                      <td>{formatCurrency(unitPrice)}</td>
-                      <td>{formatCurrency(subtotal)}</td>
-                    </tr>
-                  );
-                })
-              ) : (
-                <tr>
-                  <td>—</td>
-                  <td>Nenhum produto informado</td>
-                  <td>{formatCurrency(0)}</td>
-                  <td>{formatCurrency(0)}</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </section>
-
-        <section className="rc-summary-section">
-          <div className="rc-observations">
-            <div className="rc-observations-title">
-              <div className="rc-observations-icon">☰</div>
-              <strong>OBSERVAÇÕES</strong>
-            </div>
-
-            <p>
-              Agradecemos pela preferência
-              <br />e que Deus te abençoe!
-            </p>
-          </div>
-
-          <div className="rc-payment-summary">
-            <div className="rc-summary-line">
-              <strong>TOTAL DOS PRODUTOS:</strong>
-              <span>{formatCurrency(total)}</span>
-            </div>
-
-            <div className="rc-summary-line">
-              <strong>VALOR RECEBIDO:</strong>
-              <span>{formatCurrency(received)}</span>
-            </div>
-
-            <div className="rc-pending-balance">
-              <strong>SALDO PENDENTE:</strong>
-              <span>{formatCurrency(pending)}</span>
-            </div>
-          </div>
-        </section>
-
-        <footer className="rc-receipt-footer">
-          <div className="rc-signature-area">
-            <div className="rc-signature-watermark" aria-hidden="true">
+    <div className="rcp-wrapper">
+      <div ref={ref} id="rc-receipt-template" className="rcp-doc">
+        {pages.map((page, pageIndex) => (
+          <div className="rcp-page" key={pageIndex} data-rcp-page={pageIndex}>
+            <div className="rcp-watermark" aria-hidden="true">
               <span>R</span>
-              <strong>C</strong>
+              <span>C</span>
             </div>
 
-            <div className="rc-signature">Robson Henrique</div>
+            <div className="rcp-content">
+              {pageIndex === 0 ? (
+                <>
+                  <header className="rcp-header">
+                    <div className="rcp-brand">
+                      <div className="rcp-logo" aria-label="RC Confecções">
+                        <span>R</span>
+                        <span>C</span>
+                      </div>
 
-            <div className="rc-signature-line" />
+                      <div className="rcp-brand-text">
+                        <strong>{companyName}</strong>
+                        <em>PREMIUM</em>
+                      </div>
+                    </div>
 
-            <strong className="rc-full-name">
-              Robson Henrique Pereira Fernandes
-            </strong>
+                    <div className="rcp-receipt-id">
+                      <span>RECIBO</span>
+                      <strong>Nº {receiptCode}</strong>
+                    </div>
 
-            <span className="rc-company-name">{companyName}</span>
-          </div>
+                    <p className="rcp-slogan">Qualidade você encontra aqui</p>
+                  </header>
 
-          <div className="rc-footer-message">
-            <i />
-            <span>♡</span>
+                  <div className="rcp-info">
+                    <div className="rcp-info-cell rcp-info-wide">
+                      <span>Cliente</span>
+                      <strong>{clientName}</strong>
+                    </div>
 
-            <div>
-              <p>OBRIGADO PELA PREFERÊNCIA!</p>
-              <strong>QUE DEUS TE ABENÇOE!</strong>
+                    <div className="rcp-info-cell">
+                      <span>Cobrança prevista</span>
+                      <strong>{dueDate ? formatDate(dueDate) : 'Não informada'}</strong>
+                    </div>
+
+                    <div className="rcp-info-cell">
+                      <span>Pagamento</span>
+                      <strong>{getPaymentMethod(paymentMethod)}</strong>
+                    </div>
+
+                    {tripLabel && (
+                      <div className="rcp-info-cell">
+                        <span>Viagem / cidade</span>
+                        <strong>{tripLabel}</strong>
+                      </div>
+                    )}
+
+                    <div className="rcp-info-cell">
+                      <span>Situação</span>
+                      <strong className={`rcp-status rcp-status-${status.toLowerCase()}`}>
+                        {status}
+                      </strong>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <header className="rcp-header rcp-header-small">
+                  <strong>{companyName} <em>PREMIUM</em></strong>
+                  <span>Recibo Nº {receiptCode}</span>
+                </header>
+              )}
+
+              {(page.rows.length > 0 || (pageIndex === 0 && rows.length === 0)) && (
+                <table className="rcp-table">
+                  <thead>
+                    <tr>
+                      <th>Descrição</th>
+                      <th>Qtd.</th>
+                      <th>Preço</th>
+                      <th>Subtotal</th>
+                    </tr>
+                  </thead>
+
+                  <tbody>
+                    {page.rows.length > 0 ? (
+                      page.rows.map((row) => (
+                        <tr key={row.key}>
+                          <td>{row.name}</td>
+                          <td>{row.quantity}</td>
+                          <td>{formatCurrency(row.unitPrice)}</td>
+                          <td>{formatCurrency(row.subtotal)}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td>Nenhum produto informado</td>
+                        <td>—</td>
+                        <td>{formatCurrency(0)}</td>
+                        <td>{formatCurrency(0)}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              )}
+
+              {page.closing && (
+                <>
+                  <div className="rcp-totals">
+                    <div className="rcp-total-box">
+                      <span>Total da compra</span>
+                      <strong>{formatCurrency(total)}</strong>
+                    </div>
+
+                    <div className="rcp-total-box">
+                      <span>Valor recebido</span>
+                      <strong>{formatCurrency(received)}</strong>
+                    </div>
+
+                    <div className="rcp-total-box rcp-total-pending">
+                      <span>Saldo pendente</span>
+                      <strong>{formatCurrency(pending)}</strong>
+                    </div>
+                  </div>
+
+                  <p className="rcp-thanks">
+                    Agradecemos pela preferência e que Deus te abençoe.
+                  </p>
+
+                  <div className="rcp-signature-area">
+                    <div className="rcp-signature">Robson Henrique</div>
+                    <div className="rcp-signature-line" />
+                    <span>Robson Henrique Pereira Fernandes · {companyName}</span>
+                  </div>
+                </>
+              )}
             </div>
 
-            <span>♡</span>
-            <i />
-          </div>
-        </footer>
+            <div className="rcp-footer-bar" aria-hidden="true" />
 
-        <div className="rc-bottom-decoration">
-          <div className="rc-bottom-gold-line" />
-          <div className="rc-bottom-black-shape" />
-        </div>
-      </article>
+            {pages.length > 1 && (
+              <div className="rcp-page-number">
+                Página {pageIndex + 1} de {pages.length}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 });

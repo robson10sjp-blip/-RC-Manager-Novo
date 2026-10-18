@@ -11,7 +11,30 @@ import {
 } from "../domain/sales";
 import { filterPayablesByTrip, summarizePayables } from "../domain/payables";
 import { toDate } from "../utils/dates";
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
+  LuBanknote,
+  LuCalendarDays,
+  LuClock3,
+  LuPackage,
+  LuReceipt,
+  LuTrendingUp,
+  LuUsers,
+  LuWallet,
+} from "react-icons/lu";
 import "./DashboardPayables.css";
+import "./DashboardPremium.css";
 
 export default function DashboardPage() {
   const [clients, setClients] = useState([]);
@@ -373,46 +396,92 @@ export default function DashboardPage() {
 
   const todayText = formatDate(new Date());
 
+  const kpis = [
+    { label: "Vendido", value: formatCurrency(dashboard.sold), Icon: LuBanknote, tone: "navy" },
+    { label: "Recebido", value: formatCurrency(dashboard.received), Icon: LuWallet, tone: "green" },
+    { label: "Pendente", value: formatCurrency(dashboard.totalPending), Icon: LuClock3, tone: "gold" },
+    { label: "Vendas", value: dashboard.salesCount, Icon: LuReceipt, tone: "slate" },
+    { label: "Despesas vinculadas", value: formatCurrency(dashboard.tripExpenses), Icon: LuTrendingUp, tone: "red" },
+  ];
+
+  const secondaryMetrics = [
+    {
+      label: "Lucro estimado",
+      value: dashboard.tripCostDataComplete
+        ? formatCurrency(dashboard.tripEstimatedProfit)
+        : "Dados de custo incompletos",
+    },
+    { label: "Fluxo de caixa", value: formatCurrency(dashboard.tripCashFlow) },
+    { label: "Pagamentos a fornecedores", value: formatCurrency(dashboard.supplierPayments) },
+    {
+      label: "Compras operacionais de fornecedores",
+      value: formatCurrency(dashboard.supplierOperationalPurchases),
+    },
+  ];
+
+  const compositionData = [
+    { name: "Recebido", value: Math.max(dashboard.received, 0), color: "#15803d" },
+    { name: "Pendente", value: Math.max(dashboard.totalPending, 0), color: "#b8892f" },
+  ];
+
+  const tripComparison = [
+    { key: "third", name: "3ª viagem" },
+    { key: "fourth", name: "4ª viagem" },
+  ].map(({ key, name }) => {
+    const tripSales = selectSalesForTrip(tripOrganization, key);
+    const sold = tripSales.reduce((sum, sale) => sum + Number(sale.total || 0), 0);
+    const received = tripSales.reduce((sum, sale) => sum + Number(sale.amountPaid || 0), 0);
+    return {
+      name,
+      Vendido: sold,
+      Recebido: received,
+      Pendente: Math.max(sold - received, 0),
+    };
+  });
+
+  const compactCurrency = (value) =>
+    Number(value || 0).toLocaleString("pt-BR", {
+      notation: "compact",
+      maximumFractionDigits: 1,
+    });
+
   return (
-    <div style={styles.page}>
-      <header style={styles.header}>
+    <div className="dash">
+      <header className="dash-header">
         <div>
-          <p style={styles.welcome}>Bem-vindo ao</p>
-          <h1 style={styles.title}>RC Manager</h1>
-          <p style={styles.subtitle}>
-            Gestão inteligente da RC Confecções
-          </p>
+          <p className="dash-eyebrow">Bem-vindo ao</p>
+          <h1>RC Manager</h1>
+          <p className="dash-subtitle">Gestão inteligente da RC Confecções</p>
         </div>
 
-        <div style={styles.dateCard}>
-          📅 {todayText}
+        <div className="dash-date">
+          <LuCalendarDays aria-hidden="true" />
+          {todayText}
         </div>
       </header>
 
       {loading ? (
-        <div style={styles.loadingBox}>
-          <span style={styles.loadingIcon}>⏳</span>
+        <div className="dash-loading">
           <strong>Carregando informações...</strong>
         </div>
       ) : (
         <>
-          <section style={styles.tripSection}>
-            <div style={styles.tripHeader}>
+          <section className="dash-panel">
+            <div className="dash-panel-head">
               <div>
-                <h2 style={styles.cardTitle}>Resultado das vendas por viagem</h2>
-                <p style={styles.cardSubtitle}>
+                <h2>Resultado das vendas por viagem</h2>
+                <p>
                   Classificação proposta pela data da venda ou, se ausente,
                   pela criação do registro. Nenhum dado foi alterado.
                   {" "}Despesas vinculadas acompanham a viagem selecionada.
                 </p>
               </div>
 
-              <label style={styles.tripFilterLabel}>
+              <label className="dash-filter">
                 Viagem
                 <select
                   value={tripFilter}
                   onChange={(event) => setTripFilter(event.target.value)}
-                  style={styles.tripSelect}
                 >
                   <option value="all">Geral</option>
                   <option value="third">3ª viagem</option>
@@ -422,73 +491,109 @@ export default function DashboardPage() {
               </label>
             </div>
 
-            <div style={styles.tripSummaryGrid}>
-              {[
-                { label: "Vendido", value: formatCurrency(dashboard.sold) },
-                { label: "Recebido", value: formatCurrency(dashboard.received) },
-                {
-                  label: "Pendente",
-                  value: formatCurrency(dashboard.totalPending),
-                },
-                { label: "Vendas", value: dashboard.salesCount },
-                {
-                  label: "Despesas vinculadas",
-                  value: formatCurrency(dashboard.tripExpenses),
-                },
-                {
-                  label: "Lucro estimado",
-                  value: dashboard.tripCostDataComplete
-                    ? formatCurrency(dashboard.tripEstimatedProfit)
-                    : "Dados de custo incompletos",
-                },
-                {
-                  label: "Fluxo de caixa",
-                  value: formatCurrency(dashboard.tripCashFlow),
-                },
-                {
-                  label: "Pagamentos a fornecedores",
-                  value: formatCurrency(dashboard.supplierPayments),
-                },
-                {
-                  label: "Compras operacionais de fornecedores",
-                  value: formatCurrency(dashboard.supplierOperationalPurchases),
-                },
-              ].map(({ label, value }) => (
-                <div key={label} style={styles.tripSummaryCard}>
-                  <span style={styles.summaryLabel}>{label}</span>
-                  <strong style={styles.summaryValue}>{value}</strong>
+            <div className="dash-kpis">
+              {kpis.map(({ label, value, Icon, tone }) => (
+                <article key={label} className={`dash-kpi dash-kpi-${tone}`}>
+                  <span className="dash-kpi-icon"><Icon aria-hidden="true" /></span>
+                  <span className="dash-kpi-label">{label}</span>
+                  <strong>{value}</strong>
+                </article>
+              ))}
+            </div>
+
+            <div className="dash-secondary">
+              {secondaryMetrics.map(({ label, value }) => (
+                <div key={label}>
+                  <span>{label}</span>
+                  <strong>{value}</strong>
                 </div>
               ))}
             </div>
+
             {tripFilter !== "all" && (
-              <p style={styles.tripNotice}>
+              <p className="dash-notice">
                 Esta visão usa a classificação proposta e ainda não confirmada.
                 Apenas despesas explicitamente vinculadas são incluídas.
               </p>
             )}
           </section>
 
-          <section style={styles.summaryGrid}>
-            <div style={styles.summaryCardPurple}>
-              <div style={styles.iconBox}>👥</div>
-              <div>
-                <span style={styles.summaryLabel}>Total de clientes</span>
-                <strong style={styles.summaryValue}>
-                  {dashboard.totalClients}
-                </strong>
+          <div className="dash-grid">
+            <section className="dash-panel dash-chart-wide">
+              <h2>Comparativo entre viagens</h2>
+              <div className="dash-chart">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={tripComparison} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7ee" />
+                    <XAxis dataKey="name" tickLine={false} axisLine={false} />
+                    <YAxis tickFormatter={compactCurrency} tickLine={false} axisLine={false} width={64} />
+                    <Tooltip formatter={(value) => formatCurrency(value)} />
+                    <Bar dataKey="Vendido" fill="#0f1b33" isAnimationActive={false} radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="Recebido" fill="#15803d" isAnimationActive={false} radius={[6, 6, 0, 0]} />
+                    <Bar dataKey="Pendente" fill="#b8892f" isAnimationActive={false} radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
               </div>
-            </div>
+              <div className="dash-legend">
+                <span><i style={{ background: "#0f1b33" }} />Vendido</span>
+                <span><i style={{ background: "#15803d" }} />Recebido</span>
+                <span><i style={{ background: "#b8892f" }} />Pendente</span>
+              </div>
+            </section>
 
-            <div style={styles.summaryCardRed}>
-              <div style={styles.iconBox}>📦</div>
-              <div>
-                <span style={styles.summaryLabel}>Peças em estoque</span>
-                <strong style={styles.summaryValue}>
-                  {dashboard.totalPieces}
-                </strong>
+            <section className="dash-panel">
+              <h2>Recebido x pendente</h2>
+              <div className="dash-chart dash-chart-donut">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={compositionData}
+                      dataKey="value"
+                      innerRadius="62%"
+                      outerRadius="90%"
+                      paddingAngle={2}
+                      stroke="none"
+                      isAnimationActive={false}
+                    >
+                      {compositionData.map((entry) => (
+                        <Cell key={entry.name} fill={entry.color} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(value) => formatCurrency(value)} />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="dash-donut-center">
+                  <span>Recebido</span>
+                  <strong>
+                    {dashboard.sold > 0
+                      ? `${Math.round((dashboard.received / dashboard.sold) * 100)}%`
+                      : "—"}
+                  </strong>
+                </div>
               </div>
-            </div>
-          </section>
+              <div className="dash-legend">
+                <span><i style={{ background: "#15803d" }} />Recebido</span>
+                <span><i style={{ background: "#b8892f" }} />Pendente</span>
+              </div>
+            </section>
+
+            <section className="dash-panel dash-mini-column">
+              <article className="dash-mini">
+                <span className="dash-kpi-icon"><LuUsers aria-hidden="true" /></span>
+                <div>
+                  <span>Total de clientes</span>
+                  <strong>{dashboard.totalClients}</strong>
+                </div>
+              </article>
+              <article className="dash-mini">
+                <span className="dash-kpi-icon"><LuPackage aria-hidden="true" /></span>
+                <div>
+                  <span>Peças em estoque</span>
+                  <strong>{dashboard.totalPieces}</strong>
+                </div>
+              </article>
+            </section>
+          </div>
 
           <section className="dashboard-payables">
             <div className="dashboard-payables-heading">
@@ -523,198 +628,3 @@ export default function DashboardPage() {
     </div>
   );
 }
-
-const styles = {
-  page: {
-    color: "#0f172a",
-    fontFamily: "Arial, sans-serif",
-  },
-
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: "20px",
-    marginBottom: "24px",
-  },
-
-  welcome: {
-    margin: 0,
-    color: "#64748b",
-    fontSize: "14px",
-  },
-
-  title: {
-    margin: "4px 0",
-    fontSize: "34px",
-  },
-
-  subtitle: {
-    margin: 0,
-    color: "#64748b",
-    fontSize: "17px",
-  },
-
-  dateCard: {
-    padding: "14px 18px",
-    borderRadius: "14px",
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    fontWeight: "700",
-  },
-
-  loadingBox: {
-    minHeight: "350px",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    color: "#64748b",
-  },
-
-  loadingIcon: {
-    marginBottom: "12px",
-    fontSize: "42px",
-  },
-
-  summaryGrid: {
-    display: "grid",
-    gridTemplateColumns:
-      "repeat(auto-fit, minmax(210px, 1fr))",
-    gap: "14px",
-    marginBottom: "22px",
-  },
-
-  tripSection: {
-    marginBottom: "22px",
-    padding: "22px",
-    borderRadius: "18px",
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    boxShadow: "0 10px 25px rgba(15, 23, 42, 0.06)",
-  },
-
-  tripHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: "16px",
-    flexWrap: "wrap",
-    marginBottom: "18px",
-  },
-
-  tripFilterLabel: {
-    display: "grid",
-    gap: "6px",
-    color: "#475569",
-    fontSize: "13px",
-    fontWeight: "700",
-  },
-
-  tripSelect: {
-    minWidth: "190px",
-    padding: "10px 12px",
-    border: "1px solid #cbd5e1",
-    borderRadius: "10px",
-    background: "#ffffff",
-    color: "#0f172a",
-    font: "inherit",
-  },
-
-  tripSummaryGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-    gap: "12px",
-  },
-
-  tripSummaryCard: {
-    padding: "15px",
-    borderRadius: "13px",
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
-  },
-
-  tripNotice: {
-    margin: "14px 0 0",
-    color: "#64748b",
-    fontSize: "13px",
-    lineHeight: 1.5,
-  },
-
-  summaryCardBlue: {
-    display: "flex",
-    alignItems: "center",
-    gap: "14px",
-    padding: "20px",
-    borderRadius: "18px",
-    background: "#ffffff",
-    borderTop: "4px solid #2563eb",
-    boxShadow: "0 10px 25px rgba(15, 23, 42, 0.08)",
-  },
-
-  summaryCardGreen: {
-    display: "flex",
-    alignItems: "center",
-    gap: "14px",
-    padding: "20px",
-    borderRadius: "18px",
-    background: "#ffffff",
-    borderTop: "4px solid #16a34a",
-    boxShadow: "0 10px 25px rgba(15, 23, 42, 0.08)",
-  },
-
-  summaryCardPurple: {
-    display: "flex",
-    alignItems: "center",
-    gap: "14px",
-    padding: "20px",
-    borderRadius: "18px",
-    background: "#ffffff",
-    borderTop: "4px solid #7c3aed",
-    boxShadow: "0 10px 25px rgba(15, 23, 42, 0.08)",
-  },
-
-  summaryCardRed: {
-    display: "flex",
-    alignItems: "center",
-    gap: "14px",
-    padding: "20px",
-    borderRadius: "18px",
-    background: "#ffffff",
-    borderTop: "4px solid #dc2626",
-    boxShadow: "0 10px 25px rgba(15, 23, 42, 0.08)",
-  },
-
-  iconBox: {
-    width: "46px",
-    height: "46px",
-    display: "grid",
-    placeItems: "center",
-    borderRadius: "13px",
-    background: "#f8fafc",
-    fontSize: "24px",
-  },
-
-  summaryLabel: {
-    display: "block",
-    marginBottom: "6px",
-    color: "#64748b",
-    fontSize: "13px",
-  },
-
-  summaryValue: {
-    fontSize: "22px",
-  },
-
-  cardTitle: {
-    margin: "0 0 7px",
-    fontSize: "21px",
-  },
-
-  cardSubtitle: {
-    margin: 0,
-    color: "#64748b",
-    fontSize: "14px",
-  },
-};

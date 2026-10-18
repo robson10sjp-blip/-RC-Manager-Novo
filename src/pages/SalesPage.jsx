@@ -1,7 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
+import { useLocation } from "react-router-dom";
+import {
+  LuBanknote,
+  LuCircleCheck,
+  LuClock,
+  LuFileText,
+  LuPencil,
+  LuPlus,
+  LuReceipt,
+  LuSearch,
+  LuShoppingBag,
+  LuTrash2,
+  LuX,
+} from "react-icons/lu";
 import ReceiptTemplate from "../components/receipts/ReceiptTemplate";
-import { generateReceiptPdf } from "../components/receipts/generateReceiptPdf";
+import {
+  buildReceiptPdfFile,
+  canShareReceiptFile,
+  downloadReceiptFile,
+  generateReceiptPdf,
+  printReceipt,
+  shareReceiptFile,
+} from "../components/receipts/generateReceiptPdf";
 import {
   adjustLegacyClientDebt,
   applyPaymentToSale,
@@ -23,6 +44,8 @@ import {
 
 import { auth, db } from "../firebase/config";
 import { runTransaction } from "../firebase/firestoreAccess";
+import "./ClientsPremium.css";
+import "./SalesPremium.css";
 
 const emptyItem = {
   productId: "",
@@ -54,13 +77,21 @@ export default function SalesPage() {
   const [clients, setClients] = useState([]);
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
-  const [tripFilter, setTripFilter] = useState("all");
+  const location = useLocation();
+  const requestedClientId = location.state?.newSaleClientId || "";
+  const [tripFilter, setTripFilter] = useState("fourth");
   const [searchText, setSearchText] = useState("");
+  const [clientSearch, setClientSearch] = useState("");
+  const [receiptPdf, setReceiptPdf] = useState({ key: null, status: "idle", file: null });
+  const [receiptNotice, setReceiptNotice] = useState("");
   const [sortOrder, setSortOrder] = useState("newest");
   const [salesLoadError, setSalesLoadError] = useState("");
 
-  const [sale, setSale] = useState(createEmptySale);
-  const [showSaleForm, setShowSaleForm] = useState(false);
+  const [sale, setSale] = useState(() => ({
+    ...createEmptySale(),
+    clientId: requestedClientId,
+  }));
+  const [showSaleForm, setShowSaleForm] = useState(Boolean(requestedClientId));
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editingSaleId, setEditingSaleId] = useState(null);
@@ -483,6 +514,7 @@ export default function SalesPage() {
 
   function clearSale() {
     setSale(createEmptySale());
+    setClientSearch("");
 
     setEditingSaleId(null);
     setShowSaleForm(false);
@@ -716,12 +748,18 @@ export default function SalesPage() {
   function handleCloseReceipt() {
     setShowReceipt(false);
     setSelectedReceiptSale(null);
+    setReceiptNotice("");
   }
 
   async function handleDownloadReceipt() {
     if (!receiptRef.current || !selectedReceiptSale) return;
 
     try {
+      if (receiptStatus === "ready" && receiptPdf.file) {
+        downloadReceiptFile(receiptPdf.file);
+        return;
+      }
+
       await generateReceiptPdf(
         receiptRef.current,
         selectedReceiptSale.receiptNumber
@@ -732,9 +770,76 @@ export default function SalesPage() {
     }
   }
 
-  function handlePrintReceipt() {
-    if (!selectedReceiptSale) return;
-    window.print();
+  const receiptKey = showReceipt && selectedReceiptSale ? String(selectedReceiptSale.receiptNumber) : null;
+  const receiptStatus = receiptKey && receiptPdf.key === receiptKey ? receiptPdf.status : "preparing";
+
+  // Gera o PDF assim que o recibo abre, para o clique em Compartilhar ser imediato
+  // (o navegador exige que o compartilhamento ocorra logo após o toque).
+  useEffect(() => {
+    if (!receiptKey) return undefined;
+
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const file = await buildReceiptPdfFile(receiptRef.current, receiptKey);
+        if (!cancelled) setReceiptPdf({ key: receiptKey, status: "ready", file });
+      } catch (error) {
+        console.error("Erro ao gerar PDF do recibo:", error);
+        if (!cancelled) setReceiptPdf({ key: receiptKey, status: "error", file: null });
+      }
+    }, 400);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [receiptKey]);
+
+  function handleRetryReceipt() {
+    setReceiptNotice("");
+    const key = receiptKey;
+    setReceiptPdf({ key: null, status: "idle", file: null });
+    buildReceiptPdfFile(receiptRef.current, key)
+      .then((file) => setReceiptPdf({ key, status: "ready", file }))
+      .catch((error) => {
+        console.error("Erro ao gerar PDF do recibo:", error);
+        setReceiptPdf({ key, status: "error", file: null });
+      });
+  }
+
+  async function handleShareReceipt() {
+    const file = receiptPdf.file;
+    if (!file || receiptStatus !== "ready") return;
+
+    setReceiptNotice("");
+
+    if (!canShareReceiptFile(file)) {
+      setReceiptNotice(
+        "Este navegador ou dispositivo não permite compartilhar o PDF diretamente. Use “Baixar PDF” e envie o arquivo pelo WhatsApp."
+      );
+      return;
+    }
+
+    try {
+      await shareReceiptFile(file);
+    } catch (error) {
+      console.error("Erro ao compartilhar recibo:", error);
+      setReceiptNotice(
+        "Não foi possível abrir o compartilhamento. O PDF foi baixado para você enviar manualmente."
+      );
+      downloadReceiptFile(file);
+    }
+  }
+
+  async function handlePrintReceipt() {
+    if (!selectedReceiptSale || !receiptRef.current) return;
+
+    try {
+      await printReceipt(receiptRef.current);
+    } catch (error) {
+      console.error("Erro ao imprimir recibo:", error);
+      alert("Não foi possível abrir a impressão do recibo.");
+    }
   }
 
   async function handleDeleteSale(currentSale) {
@@ -1431,85 +1536,109 @@ export default function SalesPage() {
     });
   }
 
+  const tripFilterLabels = {
+    all: "Todas as vendas",
+    third: "3ª viagem (proposta)",
+    fourth: "4ª viagem (proposta)",
+    review: "Em revisão",
+  };
+
+  const displayedTotals = displayedSales.reduce(
+    (summary, currentSale) => ({
+      sold: summary.sold + Number(currentSale.total || 0),
+      received: summary.received + Number(currentSale.amountPaid || 0),
+      pending: summary.pending + Number(currentSale.pendingAmount || 0),
+    }),
+    { sold: 0, received: 0, pending: 0 }
+  );
+
+  const clientSearchTerm = clientSearch.trim().toLocaleLowerCase("pt-BR");
+  const clientOptions = clients.filter((client) => {
+    if (client.id === sale.clientId) return true;
+    if (!clientSearchTerm) return true;
+    return [client.name, client.nickname, client.city, client.phone].some(
+      (field) =>
+        String(field || "").toLocaleLowerCase("pt-BR").includes(clientSearchTerm)
+    );
+  });
+
+  const tripScopeSummary =
+    tripFilter === "third"
+      ? tripOrganization.thirdTrip
+      : tripFilter === "fourth"
+        ? tripOrganization.fourthTrip
+        : tripFilter === "review"
+          ? tripOrganization.review
+          : null;
+
+  const scopeTotals = tripScopeSummary
+    ? {
+        sold: tripScopeSummary.sold,
+        received: tripScopeSummary.received,
+        pending: tripScopeSummary.pending,
+        count: tripScopeSummary.count,
+      }
+    : {
+        sold: dashboardTotals.totalSales,
+        received: dashboardTotals.totalReceived,
+        pending: dashboardTotals.totalPending,
+        count: sales.length,
+      };
+
+  const kpis = [
+    { label: "Total vendido", value: formatCurrency(scopeTotals.sold), icon: LuShoppingBag, tone: "navy" },
+    { label: "Total recebido", value: formatCurrency(scopeTotals.received), icon: LuCircleCheck, tone: "green" },
+    { label: "Total pendente", value: formatCurrency(scopeTotals.pending), icon: LuClock, tone: "red" },
+    { label: "Quantidade de vendas", value: scopeTotals.count, icon: LuReceipt, tone: "gold" },
+  ];
+
   return (
-    <div style={styles.page}>
-      <header style={styles.header}>
+    <div className="cl sl">
+      <header className="cl-header">
         <div>
-          <p style={styles.eyebrow}>
-            RC Confecções
-          </p>
-
-          <h1 style={styles.title}>Vendas</h1>
-
-          <p style={styles.subtitle}>
+          <p className="cl-eyebrow">RC Confecções</p>
+          <h1>Vendas</h1>
+          <p className="cl-subtitle">
             Registre compras e acompanhe cada saldo por viagem.
           </p>
         </div>
+
         <button
           type="button"
-          style={styles.newSaleButton}
+          className="cl-btn cl-btn-primary cl-new"
           onClick={() => setShowSaleForm((current) => !current)}
           aria-expanded={showSaleForm}
           aria-controls="new-sale-form"
         >
-          {showSaleForm ? "Fechar formulário" : "+ Nova venda"}
+          {showSaleForm ? (
+            <><LuX aria-hidden="true" /> Fechar formulário</>
+          ) : (
+            <><LuPlus aria-hidden="true" /> Nova venda</>
+          )}
         </button>
       </header>
 
-      <section style={styles.summaryGrid}>
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>
-            Total vendido
-          </span>
+      <p className="sl-scope">
+        Indicadores de: <strong>{tripFilterLabels[tripFilter]}</strong>
+        {" "}— altere no filtro de viagem.
+      </p>
 
-          <strong style={styles.summaryValue}>
-            {formatCurrency(
-              dashboardTotals.totalSales
-            )}
-          </strong>
-        </div>
+      <div className="sl-kpis">
+        {kpis.map((kpi) => {
+          const Icon = kpi.icon;
 
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>
-            Total recebido
-          </span>
+          return (
+            <article key={kpi.label} className={`cl-kpi cl-kpi-${kpi.tone} sl-kpi`}>
+              <span className="cl-kpi-icon"><Icon aria-hidden="true" /></span>
+              <span className="cl-kpi-label">{kpi.label}</span>
+              <strong>{kpi.value}</strong>
+            </article>
+          );
+        })}
+      </div>
 
-          <strong style={styles.receivedValue}>
-            {formatCurrency(
-              dashboardTotals.totalReceived
-            )}
-          </strong>
-        </div>
-
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>
-            Total pendente
-          </span>
-
-          <strong style={styles.pendingValue}>
-            {formatCurrency(
-              dashboardTotals.totalPending
-            )}
-          </strong>
-        </div>
-
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>
-            Quantidade de vendas
-          </span>
-
-          <strong style={styles.summaryValue}>
-            {sales.length}
-          </strong>
-        </div>
-      </section>
-
-      <section style={styles.salesAreas}>
-        {showSaleForm && (
-          <section
-            id="new-sale-form"
-            style={{ ...styles.card, order: 2 }}
-          >
+      {showSaleForm && (
+        <section id="new-sale-form" className="cl-panel sl-form">
             <form onSubmit={handleSubmit}>
           <div style={styles.formTitleRow}>
             <h2 style={styles.cardTitle}>
@@ -1527,9 +1656,23 @@ export default function SalesPage() {
             )}
           </div>
 
-          <label style={styles.label}>
-            Cliente
+          <div className="sl-client">
+            <label className="sl-client-search">
+              Cliente
+              <span className="cl-search">
+                <LuSearch aria-hidden="true" />
+                <input
+                  type="search"
+                  value={clientSearch}
+                  onChange={(event) => setClientSearch(event.target.value)}
+                  placeholder="Buscar cliente: nome, apelido, cidade"
+                  disabled={saving}
+                />
+              </span>
+            </label>
+
             <select
+              aria-label="Cliente da venda"
               value={sale.clientId}
               onChange={handleClientChange}
               required
@@ -1537,19 +1680,23 @@ export default function SalesPage() {
               style={styles.input}
             >
               <option value="">
-                Selecione um cliente
+                {clientOptions.length === 0
+                  ? "Nenhum cliente encontrado"
+                  : "Selecione um cliente"}
               </option>
 
-              {clients.map((client) => (
+              {clientOptions.map((client) => (
                 <option
                   key={client.id}
                   value={client.id}
                 >
                   {client.name}
+                  {client.nickname ? ` (${client.nickname})` : ""}
+                  {client.city ? ` — ${client.city}` : ""}
                 </option>
               ))}
             </select>
-          </label>
+          </div>
 
           <div style={styles.itemGrid}>
             <label style={styles.label}>
@@ -1883,300 +2030,186 @@ export default function SalesPage() {
                 : "Finalizar venda"}
           </button>
             </form>
-          </section>
+        </section>
+      )}
+
+      <section className="cl-panel">
+        <div className="sl-heading">
+          <h2>Vendas registradas</h2>
+          <p>
+            Classificação por viagem é apenas uma proposta, baseada na data da
+            venda (ou na data de criação do registro). Nada será alterado até
+            sua aprovação.
+          </p>
+        </div>
+
+        {loading ? (
+          <div className="cl-empty"><strong>Calculando os totais por viagem...</strong></div>
+        ) : salesLoadError ? (
+          <div className="cl-empty" role="alert"><strong>{salesLoadError}</strong></div>
+        ) : (
+          <div className="sl-trips">
+            <TripSummaryCard title="3ª viagem" period="jul-set/2026" summary={tripOrganization.thirdTrip} />
+            <TripSummaryCard title="4ª viagem" period="out-dez/2026" summary={tripOrganization.fourthTrip} />
+            <TripSummaryCard title="Revisão necessária" period="data ou valores a conferir" summary={tripOrganization.review} review />
+          </div>
         )}
 
-        <section style={{ ...styles.card, order: 1 }}>
-          <div style={styles.salesHeading}>
-            <div>
-              <h2 style={{ ...styles.cardTitle, margin: 0 }}>
-                Vendas registradas
-              </h2>
-              <p style={styles.salesHint}>
-                Proposta baseada na data da venda; quando ausente, usa a data
-                de criação do registro. Nada será alterado até sua aprovação.
-                {!loading && !salesLoadError
-                  ? ` Exibindo ${displayedSales.length} de ${sales.length} venda(s).`
-                  : ""}
-              </p>
-            </div>
-            <label style={styles.filterLabel}>
-              Filtrar por viagem
-              <select
-                value={tripFilter}
-                onChange={(event) => setTripFilter(event.target.value)}
-                style={styles.filterSelect}
-              >
-                <option value="all">Todas as vendas</option>
-                <option value="third">Candidatas à 3ª viagem</option>
-                <option value="fourth">Candidatas à 4ª viagem</option>
-                <option value="review">Separadas para revisão</option>
-              </select>
-            </label>
-            <label style={styles.filterLabel}>
-              Buscar cliente
+        <div className="sl-filters">
+          <label>
+            Viagem
+            <select value={tripFilter} onChange={(event) => setTripFilter(event.target.value)}>
+              <option value="all">Todas as vendas</option>
+              <option value="third">Candidatas à 3ª viagem</option>
+              <option value="fourth">Candidatas à 4ª viagem</option>
+              <option value="review">Separadas para revisão</option>
+            </select>
+          </label>
+          <label className="sl-filter-search">
+            Cliente
+            <span className="cl-search">
+              <LuSearch aria-hidden="true" />
               <input
                 type="search"
                 value={searchText}
                 onChange={(event) => setSearchText(event.target.value)}
-                placeholder="Nome do cliente"
-                style={styles.filterSelect}
+                placeholder="Buscar por nome do cliente"
               />
-            </label>
-            <label style={styles.filterLabel}>
-              Ordenar por data
-              <select
-                value={sortOrder}
-                onChange={(event) => setSortOrder(event.target.value)}
-                style={styles.filterSelect}
-              >
-                <option value="newest">Mais recente primeiro</option>
-                <option value="oldest">Mais antiga primeiro</option>
-              </select>
-            </label>
+            </span>
+          </label>
+          <label>
+            Ordenar por data
+            <select value={sortOrder} onChange={(event) => setSortOrder(event.target.value)}>
+              <option value="newest">Mais recente primeiro</option>
+              <option value="oldest">Mais antiga primeiro</option>
+            </select>
+          </label>
+        </div>
+
+        {!loading && !salesLoadError && (
+          <p className="cl-count">
+            {displayedSales.length} de {sales.length} venda(s)
+            {tripFilter !== "all" || searchText.trim() ? (
+              <>
+                {" "}· {tripFilter !== "all" ? tripFilterLabels[tripFilter] : "Busca"}:{" "}
+                vendido <strong>{formatBRL(displayedTotals.sold)}</strong> · recebido{" "}
+                <strong>{formatBRL(displayedTotals.received)}</strong> · pendente{" "}
+                <strong>{formatBRL(displayedTotals.pending)}</strong>
+              </>
+            ) : null}
+          </p>
+        )}
+
+        {loading ? (
+          <div className="cl-empty"><strong>Carregando vendas...</strong></div>
+        ) : salesLoadError ? (
+          <div className="cl-empty" role="alert">
+            <strong>Erro ao carregar vendas</strong>
+            <span>{salesLoadError}</span>
           </div>
+        ) : sales.length === 0 ? (
+          <div className="cl-empty">
+            <strong>Nenhuma venda registrada</strong>
+            <span>As vendas aparecerão aqui.</span>
+          </div>
+        ) : displayedSales.length === 0 ? (
+          <div className="cl-empty">
+            <strong>Nenhuma venda neste filtro</strong>
+            <span>Altere a viagem ou a busca para ver outras vendas.</span>
+          </div>
+        ) : (
+          <div className="sl-list">
+            {displayedSales.map((currentSale) => {
+              const status = formatStatus(currentSale.status);
+              const overdue = isSaleOverdue(currentSale);
+              const statusKey = overdue ? "overdue" : currentSale.status || "pending";
+              const receiving =
+                Number(currentSale.pendingAmount || 0) <= 0 ||
+                receivingSaleId === currentSale.id;
 
-          {loading ? (
-            <div style={styles.tripSummaryLoading}>
-              Calculando os totais por viagem...
-            </div>
-          ) : salesLoadError ? (
-            <div style={styles.tripSummaryError} role="alert">
-              {salesLoadError}
-            </div>
-          ) : (
-            <div style={styles.tripSummaryGrid}>
-              <TripSummaryCard title="3ª viagem · jul-set/2026" summary={tripOrganization.thirdTrip} />
-              <TripSummaryCard title="4ª viagem · out-dez/2026" summary={tripOrganization.fourthTrip} />
-              <TripSummaryCard title="Revisão necessária" summary={tripOrganization.review} review />
-            </div>
-          )}
+              return (
+                <article key={currentSale.id} className={`sl-card sl-${statusKey}`}>
+                  <div className="sl-top">
+                    <div className="sl-who">
+                      <h3>{currentSale.clientName || "Cliente não informado"}</h3>
+                      <p>
+                        {currentSale.originalSaleDate
+                          ? currentSale.dateSource === "saleDate"
+                            ? `Venda em ${formatDate(currentSale.originalSaleDate)}`
+                            : `Registro criado em ${formatDate(currentSale.originalSaleDate)}`
+                          : "Data original não confiável"}
+                      </p>
+                    </div>
+                    <span className={`cl-status sl-badge-${statusKey}`}>
+                      {overdue ? "Vencida" : status.label}
+                    </span>
+                  </div>
 
-          {loading ? (
-            <div style={styles.empty}>
-              <span style={styles.emptyIcon}>
-                ⏳
-              </span>
-
-              <strong>
-                Carregando vendas...
-              </strong>
-            </div>
-          ) : salesLoadError ? (
-            <div style={styles.empty} role="alert">
-              <strong>Erro ao carregar vendas</strong>
-              <p>{salesLoadError}</p>
-            </div>
-          ) : sales.length === 0 ? (
-            <div style={styles.empty}>
-              <span style={styles.emptyIcon}>
-                🛒
-              </span>
-
-              <strong>
-                Nenhuma venda registrada
-              </strong>
-
-              <p>
-                As vendas aparecerão aqui.
-              </p>
-            </div>
-          ) : displayedSales.length === 0 ? (
-            <div style={styles.empty}>
-              <span style={styles.emptyIcon}>🔎</span>
-              <strong>Nenhuma venda neste filtro</strong>
-              <p>Escolha outra viagem para ver as vendas correspondentes.</p>
-            </div>
-          ) : (
-            <div style={styles.salesList}>
-              {displayedSales.map((currentSale) => {
-                const status =
-                  formatStatus(
-                    currentSale.status
-                  );
-
-                return (
-                  <article
-                    key={currentSale.id}
-                    style={styles.saleItem}
-                  >
-                    <div style={styles.saleTop}>
-                      <div>
-                        <h3 style={styles.clientName}>
-                          {currentSale.clientName ||
-                            "Cliente não informado"}
-                        </h3>
-
-                        <p style={styles.saleDate}>
-                          Compra #{currentSale.id} •{" "}
-                          {currentSale.originalSaleDate
-                            ? currentSale.dateSource === "saleDate"
-                              ? `Data da venda: ${formatDate(currentSale.originalSaleDate)}`
-                              : `Data de criação do registro: ${formatDate(currentSale.originalSaleDate)}`
-                            : "Data original não confiável"}
-                        </p>
-
-                        {currentSale.tripName && (
-                          <p style={styles.saleDate}>
-                            Viagem: {currentSale.tripName}
-                            {currentSale.tripCity
-                              ? ` • ${currentSale.tripCity}`
-                              : ""}
-                          </p>
-                        )}
-                        {!currentSale.tripName && currentSale.tripNumber && (
-                          <p style={styles.saleDate}>Viagem não informada</p>
-                        )}
-                        <p
-                          style={{
-                            ...styles.tripProposal,
-                            ...(currentSale.tripNumber
-                              ? styles.tripProposalCandidate
-                              : styles.tripProposalReview),
-                          }}
-                        >
-                          {currentSale.tripNumber
-                            ? `Candidata à ${currentSale.tripNumber}ª viagem`
-                            : `Revisar: ${currentSale.reviewReason || "A data original ou os valores da venda precisam ser conferidos."}`}
-                        </p>
-
-                        {currentSale.dueDate && (
-                          <p
-                            style={{
-                              ...styles.saleDate,
-                              color: isSaleOverdue(currentSale)
-                                ? "#dc2626"
-                                : "#64748b",
-                              fontWeight: isSaleOverdue(currentSale)
-                                ? "700"
-                                : "400",
-                            }}
-                          >
-                            {isSaleOverdue(currentSale) ? "Vencida em" : "Vencimento"}:{" "}
-                            {formatDateOnly(currentSale.dueDate)}
-                          </p>
-                        )}
-                      </div>
-
-                      <span
-                        style={{
-                          ...styles.statusBadge,
-                          color: isSaleOverdue(currentSale)
-                            ? "#dc2626"
-                            : status.color,
-                          background: isSaleOverdue(currentSale)
-                            ? "#fee2e2"
-                            : status.background,
-                        }}
-                      >
-                        {isSaleOverdue(currentSale)
-                          ? "Vencida"
-                          : status.label}
+                  <div className="sl-tags">
+                    <span className={currentSale.tripNumber ? "sl-tag-trip" : "sl-tag-review"}>
+                      {currentSale.tripNumber
+                        ? `${currentSale.tripNumber}ª viagem (proposta)`
+                        : "Revisar"}
+                    </span>
+                    {currentSale.tripName && (
+                      <span>
+                        {currentSale.tripName}
+                        {currentSale.tripCity ? ` • ${currentSale.tripCity}` : ""}
                       </span>
-                    </div>
+                    )}
+                    {currentSale.dueDate && (
+                      <span className={overdue ? "sl-tag-overdue" : ""}>
+                        {overdue ? "Vencida em" : "Vence em"} {formatDateOnly(currentSale.dueDate)}
+                      </span>
+                    )}
+                    <span title={currentSale.id}>Compra #{String(currentSale.id).slice(-6)}</span>
+                  </div>
 
-                    <div style={styles.saleProducts}>
-                      {(currentSale.items || []).map(
-                        (item, index) => (
-                          <p
-                            key={`${currentSale.id}-${index}`}
-                            style={styles.saleProduct}
-                          >
-                            {item.quantity}x{" "}
-                            {item.name} —{" "}
-                            {formatCurrency(
-                              item.subtotal
-                            )}
-                          </p>
-                        )
-                      )}
-                    </div>
+                  {!currentSale.tripNumber && (
+                    <p className="sl-review-note">
+                      Revisar: {currentSale.reviewReason || "A data original ou os valores da venda precisam ser conferidos."}
+                    </p>
+                  )}
 
-                    <div style={styles.saleValues}>
-                      <div>
-                        <span style={styles.smallLabel}>
-                          Total
-                        </span>
+                  <ul className="sl-products">
+                    {(currentSale.items || []).map((item, index) => (
+                      <li key={`${currentSale.id}-${index}`}>
+                        <span>{item.quantity}x {item.name}</span>
+                        <strong>{formatCurrency(item.subtotal)}</strong>
+                      </li>
+                    ))}
+                  </ul>
 
-                        <strong>
-                          {formatSaleAmount(currentSale.total)}
-                        </strong>
-                      </div>
+                  <dl className="sl-values">
+                    <div><dt>Total</dt><dd>{formatSaleAmount(currentSale.total)}</dd></div>
+                    <div><dt>Recebido</dt><dd className="sl-green">{formatSaleAmount(currentSale.amountPaid)}</dd></div>
+                    <div><dt>Pendente</dt><dd className="sl-red">{formatSaleAmount(currentSale.pendingAmount)}</dd></div>
+                  </dl>
 
-                      <div>
-                        <span style={styles.smallLabel}>
-                          Recebido
-                        </span>
-
-                        <strong style={styles.receivedValue}>
-                          {formatSaleAmount(currentSale.amountPaid)}
-                        </strong>
-                      </div>
-
-                      <div>
-                        <span style={styles.smallLabel}>
-                          Pendente
-                        </span>
-
-                        <strong style={styles.pendingValue}>
-                          {formatSaleAmount(currentSale.pendingAmount)}
-                        </strong>
-                      </div>
-                    </div>
-
-                    <div style={styles.saleActions}>
-                      <button
-                        type="button"
-                        onClick={() => handleEditSale(currentSale)}
-                        style={styles.editSaleButton}
-                      >
-                        ✏️ Editar
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleReceiveSale(currentSale)}
-                        disabled={
-                          Number(currentSale.pendingAmount || 0) <= 0 ||
-                          receivingSaleId === currentSale.id
-                        }
-                        style={{
-                          ...styles.receiveSaleButton,
-                          opacity: Number(currentSale.pendingAmount || 0) <= 0 ||
-                            receivingSaleId === currentSale.id
-                            ? 0.5
-                            : 1,
-                          cursor: Number(currentSale.pendingAmount || 0) <= 0 ||
-                            receivingSaleId === currentSale.id
-                            ? "not-allowed"
-                            : "pointer",
-                        }}
-                      >
-                        💵 Receber
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleOpenReceipt(currentSale)}
-                        style={styles.receiptButton}
-                      >
-                        📄 Recibo
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteSale(currentSale)}
-                        style={styles.deleteSaleButton}
-                      >
-                        🗑️ Excluir
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </section>
+                  <div className="sl-actions">
+                    <button type="button" className="cl-btn cl-btn-soft" onClick={() => handleEditSale(currentSale)}>
+                      <LuPencil aria-hidden="true" /> Editar
+                    </button>
+                    <button
+                      type="button"
+                      className="cl-btn cl-btn-gold"
+                      onClick={() => handleReceiveSale(currentSale)}
+                      disabled={receiving}
+                    >
+                      <LuBanknote aria-hidden="true" /> Receber
+                    </button>
+                    <button type="button" className="cl-btn cl-btn-soft" onClick={() => handleOpenReceipt(currentSale)}>
+                      <LuFileText aria-hidden="true" /> Recibo
+                    </button>
+                    <button type="button" className="cl-btn cl-btn-danger" onClick={() => handleDeleteSale(currentSale)}>
+                      <LuTrash2 aria-hidden="true" /> Excluir
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       {showReceipt && selectedReceiptSale && (
@@ -2231,12 +2264,34 @@ export default function SalesPage() {
 
               <button
                 type="button"
+                onClick={receiptStatus === "error" ? handleRetryReceipt : handleShareReceipt}
+                disabled={receiptStatus === "preparing"}
+                style={{
+                  ...styles.receiptDownloadButton,
+                  opacity: receiptStatus === "preparing" ? 0.65 : 1,
+                }}
+              >
+                {receiptStatus === "preparing"
+                  ? "Preparando PDF..."
+                  : receiptStatus === "error"
+                    ? "Tentar novamente"
+                    : "📤 Compartilhar recibo"}
+              </button>
+
+              <button
+                type="button"
                 onClick={handleDownloadReceipt}
                 style={styles.receiptDownloadButton}
               >
                 ⬇️ Baixar PDF
               </button>
             </div>
+
+            {(receiptNotice || receiptStatus === "error") && (
+              <p role="status" style={{ margin: "10px 0 0", color: "#92400e", fontSize: 14 }}>
+                {receiptNotice || "Não foi possível preparar o PDF. Toque em “Tentar novamente” ou em “Baixar PDF”."}
+              </p>
+            )}
           </div>
         </div>
       )}
@@ -2244,34 +2299,23 @@ export default function SalesPage() {
   );
 }
 
-function TripSummaryCard({ title, summary, review = false }) {
+function TripSummaryCard({ title, period, summary, review = false }) {
   return (
-    <article
-      style={{
-        ...styles.tripSummaryCard,
-        ...(review ? styles.tripSummaryReview : {}),
-      }}
-    >
-      <h3 style={styles.tripSummaryTitle}>{title}</h3>
-      <strong style={styles.tripSummaryCount}>{summary.count} venda(s)</strong>
-      <div style={styles.tripSummaryRow}>
-        <span>Total vendido</span>
-        <strong>{formatBRL(summary.sold)}</strong>
+    <article className={`sl-trip${review ? " sl-trip-review" : ""}`}>
+      <div className="sl-trip-head">
+        <div>
+          <h3>{title}</h3>
+          <p>{period}</p>
+        </div>
+        <span className="sl-trip-count">{summary.count} venda(s)</span>
       </div>
-      <div style={styles.tripSummaryRow}>
-        <span>Recebido</span>
-        <strong style={styles.tripSummaryReceived}>
-          {formatBRL(summary.received)}
-        </strong>
-      </div>
-      <div style={styles.tripSummaryRow}>
-        <span>Pendente</span>
-        <strong style={styles.tripSummaryPending}>
-          {formatBRL(summary.pending)}
-        </strong>
-      </div>
+      <dl className="sl-trip-values">
+        <div><dt>Vendido</dt><dd>{formatBRL(summary.sold)}</dd></div>
+        <div><dt>Recebido</dt><dd className="sl-green">{formatBRL(summary.received)}</dd></div>
+        <div><dt>Pendente</dt><dd className="sl-red">{formatBRL(summary.pending)}</dd></div>
+      </dl>
       {summary.incompleteValues > 0 && (
-        <p style={styles.tripSummaryWarning}>
+        <p className="sl-review-note">
           {summary.incompleteValues} venda(s) com valores incompletos; totais
           incluem somente os valores disponíveis.
         </p>
@@ -2792,7 +2836,7 @@ const styles = {
   },
 
   receiptModal: {
-    width: "min(1180px, 100%)",
+    width: "min(720px, 100%)",
     maxHeight: "96vh",
     display: "flex",
     flexDirection: "column",

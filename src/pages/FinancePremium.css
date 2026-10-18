@@ -1,0 +1,141 @@
+.fin {
+  color: var(--rc-ink);
+}
+
+.fin-header {
+  margin-bottom: 18px !important;
+}
+
+.fin-header h1 {
+  margin: 2px 0 !important;
+}
+
+.fin-eyebrow {
+  color: var(--rc-gold) !important;
+  letter-spacing: 0.18em;
+}
+
+.fin-subtitle {
+  color: var(--rc-muted) !important;
+  font-size: 16px;
+}
+
+.fin-filter {
+  display: grid;
+  min-width: 260px;
+  gap: 6px;
+  color: var(--rc-muted) !important;
+  font-size: 13px !important;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.fin-summary {
+  margin-bottom: 18px !important;
+  padding: 22px !important;
+}
+
+/* Indicadores: os cinco principais em destaque, os demais compactos */
+
+.app-main .fin .fin-cards {
+  grid-template-columns: repeat(10, minmax(0, 1fr)) !important;
+  gap: 12px !important;
+}
+
+.fin-card {
+  display: grid;
+  align-content: start;
+  gap: 4px;
+  padding: 14px !important;
+  border: 1px solid var(--rc-line) !important;
+  border-radius: 14px !important;
+  background: #f7f8fb !important;
+  grid-column: span 2;
+}
+
+.fin-card span {
+  color: var(--rc-muted) !important;
+  font-size: 13px !important;
+  font-weight: 650;
+}
+
+.fin-card strong {
+  font-size: 18px !important;
+  overflow-wrap: anywhere;
+}
+
+.fin-card-key {
+  order: -1;
+  padding: 18px !important;
+  border-top: 3px solid var(--rc-line) !important;
+  background: linear-gradient(180deg, #ffffff, #f8f9fc) !important;
+  box-shadow: 0 6px 18px rgba(10, 18, 38, 0.06);
+}
+
+.fin-card-key strong {
+  font-size: clamp(18px, 1.5vw, 23px) !important;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.fin-card-navy { border-top-color: var(--rc-navy-800) !important; }
+.fin-card-green { border-top-color: var(--rc-green) !important; }
+.fin-card-green strong { color: var(--rc-green); }
+.fin-card-gold { border-top-color: var(--rc-gold) !important; }
+.fin-card-red { border-top-color: var(--rc-red) !important; }
+.fin-card-red strong { color: var(--rc-red); }
+.fin-card-result { border-top-color: var(--rc-gold) !important; }
+
+.fin-notice {
+  margin-top: 14px;
+  color: var(--rc-muted);
+  font-size: 13.5px;
+}
+
+.fin-notice summary {
+  width: fit-content;
+  cursor: pointer;
+  color: #8a6a1f;
+  font-weight: 700;
+}
+
+.fin-notice p {
+  margin: 8px 0 0 !important;
+}
+
+/* Seções de fornecedores, cheques, despesas e devedores */
+
+.fin .payables-section,
+.fin .checks-section {
+  margin-bottom: 18px;
+  padding: 22px;
+}
+
+.fin .payables-heading {
+  margin-bottom: 14px;
+}
+
+.fin > section[style] {
+  padding: 22px !important;
+}
+
+.fin .payables-eyebrow {
+  color: var(--rc-gold) !important;
+}
+
+@media (max-width: 1180px) {
+  .app-main .fin .fin-cards { grid-template-columns: repeat(6, minmax(0, 1fr)) !important; }
+}
+
+@media (max-width: 760px) {
+  .app-main .fin .fin-cards { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+  .fin-card,
+  .fin-card-key { grid-column: span 1; padding: 13px !important; }
+  .fin-card strong,
+  .fin-card-key strong { font-size: 18px !important; }
+  .fin-filter { width: 100%; min-width: 0; }
+  .fin .payables-section,
+  .fin .checks-section,
+  .fin-summary { padding: 15px !important; }
+}
+

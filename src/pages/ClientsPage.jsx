@@ -17,7 +17,38 @@ import {
   runTransaction,
   updateDoc,
 } from "../firebase/firestoreAccess";
-import { analyzeLegacyBalances } from "../domain/sales";
+import { useNavigate } from "react-router-dom";
+import {
+  displayCpf,
+  displayPhone,
+  formatCpf,
+  formatPhone,
+  isValidCpf,
+  isValidPhone,
+} from "../domain/clientFields";
+import { toDate } from "../utils/dates";
+import {
+  LuBanknote,
+  LuChevronDown,
+  LuHistory,
+  LuMapPin,
+  LuMessageCircle,
+  LuPencil,
+  LuPhone,
+  LuPlus,
+  LuSearch,
+  LuShoppingBag,
+  LuTriangleAlert,
+  LuUsers,
+  LuWallet,
+} from "react-icons/lu";
+import {
+  analyzeLegacyBalances,
+  calculateConsolidatedReceivables,
+  isSaleOverdue,
+  organizeSalesByTrip2026,
+} from "../domain/sales";
+import "./ClientsPremium.css";
 
 const emptyForm = {
   name: "",
@@ -38,6 +69,12 @@ export default function ClientsPage() {
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
   const [searchText, setSearchText] = useState("");
+  const [cityFilter, setCityFilter] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [tripFilter, setTripFilter] = useState("all");
+  const [showForm, setShowForm] = useState(false);
+  const [expandedId, setExpandedId] = useState(null);
+  const navigate = useNavigate();
   const [loadingClients, setLoadingClients] = useState(true);
   const [saving, setSaving] = useState(false);
   const [receivingClientId, setReceivingClientId] = useState(null);
@@ -128,39 +165,6 @@ export default function ClientsPage() {
     };
   }, []);
 
-  const filteredClients = useMemo(() => {
-    const search = searchText.trim().toLowerCase();
-
-    if (!search) {
-      return clients;
-    }
-
-    return clients.filter((client) => {
-      const fields = [
-        client.name,
-        client.nickname,
-        client.phone,
-        client.cpf,
-        client.city,
-        client.street,
-        client.number,
-        client.district,
-        client.notes,
-      ];
-
-      return fields.some((field) =>
-        String(field || "").toLowerCase().includes(search)
-      );
-    });
-  }, [clients, searchText]);
-
-  const totalToReceive = useMemo(() => {
-    return clients.reduce(
-      (total, client) => total + Number(client.totalDebt || 0),
-      0
-    );
-  }, [clients]);
-
   const salesByClient = useMemo(() => {
     const byClient = new Map();
 
@@ -180,15 +184,6 @@ export default function ClientsPage() {
     return byClient;
   }, [sales]);
 
-  const totalOpenPurchases = useMemo(
-    () =>
-      sales.reduce(
-        (total, sale) => total + Number(sale.pendingAmount || 0),
-        0
-      ),
-    [sales]
-  );
-
   const reconciliation = useMemo(
     () => analyzeLegacyBalances(clients, sales),
     [clients, sales]
@@ -205,18 +200,158 @@ export default function ClientsPage() {
     (entry) => entry.hasPurchasesOnly
   ).length;
 
+  const receivables = useMemo(
+    () => calculateConsolidatedReceivables(clients, sales),
+    [clients, sales]
+  );
+
+  const tripOrganization = useMemo(
+    () => organizeSalesByTrip2026(sales),
+    [sales]
+  );
+
+  const clientRows = useMemo(() => {
+    const tripsByClient = new Map();
+    const addTrips = (list, key) => {
+      for (const sale of list) {
+        if (!sale.clientId) continue;
+        const set = tripsByClient.get(sale.clientId) || new Set();
+        set.add(key);
+        tripsByClient.set(sale.clientId, set);
+      }
+    };
+    addTrips(tripOrganization.thirdTrip.sales, "third");
+    addTrips(tripOrganization.fourthTrip.sales, "fourth");
+    addTrips(tripOrganization.review.sales, "review");
+
+    const balances = new Map(
+      receivables.clients.map((entry) => [entry.clientId, entry])
+    );
+
+    return clients.map((client) => {
+      const balance = balances.get(client.id);
+      const openSales = balance?.sales || [];
+      const overdueSales = openSales.filter((sale) =>
+        isSaleOverdue(sale.dueDate, sale.pendingAmount)
+      );
+      const totalPending = balance?.totalPending || 0;
+      const status =
+        totalPending <= 0
+          ? "paid"
+          : overdueSales.length > 0
+            ? "overdue"
+            : "open";
+
+      return {
+        client,
+        totalPending,
+        legacyBalance: balance?.legacyBalance || 0,
+        salesPending: balance?.salesPending || 0,
+        overdueCount: overdueSales.length,
+        undatedCount: openSales.filter((sale) => !toDate(sale.dueDate)).length,
+        status,
+        trips: tripsByClient.get(client.id) || new Set(),
+      };
+    });
+  }, [clients, receivables, tripOrganization]);
+
+  const cities = useMemo(
+    () =>
+      [
+        ...new Set(
+          clients.map((client) => String(client.city || "").trim()).filter(Boolean)
+        ),
+      ].sort((first, second) => first.localeCompare(second, "pt-BR")),
+    [clients]
+  );
+
+  const overdueClientsCount = clientRows.filter(
+    (row) => row.status === "overdue"
+  ).length;
+
+  const filteredRows = useMemo(() => {
+    const search = searchText.trim().toLowerCase();
+    const searchDigits = search.replace(/\D/g, "");
+
+    return clientRows.filter(({ client, status, trips }) => {
+      if (cityFilter !== "all" && String(client.city || "").trim() !== cityFilter) {
+        return false;
+      }
+      if (statusFilter !== "all" && status !== statusFilter) return false;
+      if (tripFilter !== "all" && !trips.has(tripFilter)) return false;
+      if (!search) return true;
+
+      const textMatch = [
+        client.name,
+        client.nickname,
+        client.cpf,
+        client.city,
+        client.phone,
+        client.street,
+        client.number,
+        client.district,
+        client.notes,
+      ].some((field) => String(field || "").toLowerCase().includes(search));
+
+      const digitMatch =
+        searchDigits.length >= 3 &&
+        [client.cpf, client.phone].some((field) =>
+          String(field || "").replace(/\D/g, "").includes(searchDigits)
+        );
+
+      return textMatch || digitMatch;
+    });
+  }, [clientRows, searchText, cityFilter, statusFilter, tripFilter]);
+
+  const hasActiveFilters =
+    searchText.trim() !== "" ||
+    cityFilter !== "all" ||
+    statusFilter !== "all" ||
+    tripFilter !== "all";
+
+  function clearFilters() {
+    setSearchText("");
+    setCityFilter("all");
+    setStatusFilter("all");
+    setTripFilter("all");
+  }
+
+  function openNewClientForm() {
+    setEditingId(null);
+    setForm(emptyForm);
+    setShowForm(true);
+  }
+
+  function handleQuickReceive(row) {
+    if (salesByClient.has(row.client.id)) {
+      navigate("/financeiro");
+      return;
+    }
+    handleReceivePayment(row.client);
+  }
+
+  function handleNewSale(client) {
+    navigate("/vendas", { state: { newSaleClientId: client.id } });
+  }
+
   function handleChange(event) {
     const { name, value } = event.target;
 
+    const masked =
+      name === "cpf" ? formatCpf(value)
+      : name === "phone" ? formatPhone(value)
+      : value;
+
     setForm((current) => ({
       ...current,
-      [name]: value,
+      [name]: masked,
     }));
   }
 
   function clearForm() {
     setForm(emptyForm);
     setEditingId(null);
+    setShowForm(false);
   }
 async function handleReceivePayment(client) {
   if (receivingClientLock.current) return;
@@ -343,33 +478,6 @@ async function handleReceivePayment(client) {
     setReceivingClientId(null);
   }
 }
-function getClientStatus(client) {
-  const balance = Number(client.totalDebt || 0);
-  const received = Number(client.totalReceived || 0);
-
-  if (balance <= 0) {
-    return {
-      label: "Em dia",
-      color: "#16a34a",
-      background: "#dcfce7",
-    };
-  }
-
-  if (received > 0) {
-    return {
-      label: "Parcial",
-      color: "#ca8a04",
-      background: "#fef9c3",
-    };
-  }
-
-  return {
-    label: "Pendente",
-    color: "#dc2626",
-    background: "#fee2e2",
-  };
-}
-
 async function handleShowHistory(client) {
   const user = auth.currentUser;
 
@@ -436,6 +544,27 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
       return;
     }
 
+    // Dados antigos inalterados não são revalidados, para não bloquear a edição de outros campos.
+    const original = clients.find((item) => item.id === editingId);
+
+    if (
+      form.cpf.trim() &&
+      form.cpf !== displayCpf(original?.cpf) &&
+      !isValidCpf(form.cpf)
+    ) {
+      alert("CPF inválido. Confira os 11 números ou deixe o campo em branco.");
+      return;
+    }
+
+    if (
+      form.phone.trim() &&
+      form.phone !== displayPhone(original?.phone) &&
+      !isValidPhone(form.phone)
+    ) {
+      alert("Telefone incompleto. Use (00) 00000-0000 ou (00) 0000-0000.");
+      return;
+    }
+
     try {
       setSaving(true);
 
@@ -492,12 +621,13 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
 
   function handleEdit(client) {
     setEditingId(client.id);
+    setShowForm(true);
 
     setForm({
       name: client.name || "",
       nickname: client.nickname || "",
-      phone: client.phone || "",
-      cpf: client.cpf || "",
+      phone: displayPhone(client.phone),
+      cpf: displayCpf(client.cpf),
       city: client.city || "",
       street: client.street || "",
       number: client.number || "",
@@ -591,66 +721,460 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
     });
   }
 
+  const statusLabels = {
+    paid: "Em dia",
+    open: "A receber",
+    overdue: "Atrasado",
+  };
+
+  function initials(name) {
+    return String(name || "?")
+      .split(" ")
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0].toUpperCase())
+      .join("");
+  }
+
+  const formFields = (
+    <form onSubmit={handleSubmit} className="cl-form">
+      <div className="cl-form-head">
+        <h2>{editingId ? "Editar cliente" : "Novo cliente"}</h2>
+        <button type="button" onClick={clearForm} className="cl-btn cl-btn-ghost">
+          Cancelar
+        </button>
+      </div>
+
+      <div className="cl-form-grid">
+        <label className="cl-wide">
+          Nome completo
+          <input
+            type="text"
+            name="name"
+            value={form.name}
+            onChange={handleChange}
+            placeholder="Digite o nome do cliente"
+            required
+            disabled={saving}
+          />
+        </label>
+
+        <label>
+          Conhecido como
+          <input
+            type="text"
+            name="nickname"
+            value={form.nickname}
+            onChange={handleChange}
+            placeholder="Apelido ou nome conhecido"
+            disabled={saving}
+          />
+        </label>
+
+        <label>
+          Telefone
+          <input
+            type="tel"
+            inputMode="numeric"
+            maxLength={15}
+            name="phone"
+            value={form.phone}
+            onChange={handleChange}
+            placeholder="(00) 00000-0000"
+            disabled={saving}
+          />
+        </label>
+
+        <label>
+          CPF
+          <input
+            type="text"
+            inputMode="numeric"
+            autoComplete="off"
+            maxLength={14}
+            name="cpf"
+            value={form.cpf}
+            onChange={handleChange}
+            placeholder="000.000.000-00"
+            disabled={saving}
+          />
+        </label>
+
+        <label>
+          Cidade
+          <input
+            type="text"
+            name="city"
+            value={form.city}
+            onChange={handleChange}
+            placeholder="Digite a cidade"
+            disabled={saving}
+          />
+        </label>
+
+        <label className="cl-wide">
+          Rua
+          <input
+            type="text"
+            name="street"
+            value={form.street}
+            onChange={handleChange}
+            placeholder="Digite a rua"
+            disabled={saving}
+          />
+        </label>
+
+        <label>
+          Número
+          <input
+            type="text"
+            name="number"
+            value={form.number}
+            onChange={handleChange}
+            placeholder="Número"
+            disabled={saving}
+          />
+        </label>
+
+        <label>
+          Bairro
+          <input
+            type="text"
+            name="district"
+            value={form.district}
+            onChange={handleChange}
+            placeholder="Bairro"
+            disabled={saving}
+          />
+        </label>
+
+        <label className="cl-wide">
+          Saldo legado/agregado (não conciliado)
+          <input
+            type="number"
+            name="totalDebt"
+            value={form.totalDebt}
+            onChange={handleChange}
+            placeholder="0,00"
+            min="0"
+            step="0.01"
+            disabled={
+              saving || Boolean(editingId && salesByClient.has(editingId))
+            }
+          />
+          <small>
+            Saldo histórico preservado. Compras novas e seus recebimentos são
+            controlados individualmente.
+            {editingId && salesByClient.has(editingId)
+              ? " Não alterável enquanto houver compras registradas."
+              : ""}
+          </small>
+        </label>
+
+        <label className="cl-wide">
+          Observações
+          <textarea
+            name="notes"
+            value={form.notes}
+            onChange={handleChange}
+            placeholder="Ex.: prefere receber no fim do mês..."
+            rows={3}
+            disabled={saving}
+          />
+        </label>
+      </div>
+
+      <button
+        type="submit"
+        disabled={saving}
+        className="cl-btn cl-btn-primary cl-submit"
+      >
+        {saving
+          ? "Salvando..."
+          : editingId
+            ? "Salvar alterações"
+            : "Cadastrar cliente"}
+      </button>
+    </form>
+  );
+
   return (
-    <div style={styles.page}>
-      <header style={styles.header}>
+    <div className="cl">
+      <header className="cl-header">
         <div>
-          <p style={styles.eyebrow}>RC Confecções</p>
-          <h1 style={styles.title}>Clientes</h1>
-          <p style={styles.subtitle}>
-            Cadastre, pesquise e acompanhe seus clientes.
+          <p className="cl-eyebrow">RC Confecções</p>
+          <h1>Clientes</h1>
+          <p className="cl-subtitle">
+            Cadastre, pesquise e acompanhe seus clientes e saldos.
           </p>
         </div>
 
-        <div style={styles.headerCards}>
-          <div style={styles.counter}>
-            <span style={styles.counterLabel}>Total de clientes</span>
-            <strong style={styles.counterValue}>{clients.length}</strong>
-          </div>
-
-          <div style={styles.counter}>
-            <span style={styles.counterLabel}>Saldo histórico agregado</span>
-            <strong style={styles.moneyValue}>
-              {formatCurrency(totalToReceive)}
-            </strong>
-          </div>
-
-          <div style={styles.counter}>
-            <span style={styles.counterLabel}>Compras abertas</span>
-            <strong style={styles.moneyValue}>
-              {formatCurrency(totalOpenPurchases)}
-            </strong>
-          </div>
-        </div>
+        <button
+          type="button"
+          className="cl-btn cl-btn-primary cl-new"
+          onClick={openNewClientForm}
+        >
+          <LuPlus aria-hidden="true" /> Novo cliente
+        </button>
       </header>
 
-      <section style={{ ...styles.card, marginBottom: "22px" }}>
-        <h2 style={styles.cardTitle}>Conciliação de saldos históricos</h2>
-        <p style={styles.helperText}>
-          Comparação somente para revisão. Não altera clientes, compras ou pagamentos.
-          O saldo legado pode já incluir compras antigas; não some nem migre os valores
-          sem confirmar os registros e recibos de origem.
+      <div className="cl-kpis">
+        <article className="cl-kpi cl-kpi-navy">
+          <span className="cl-kpi-icon"><LuUsers aria-hidden="true" /></span>
+          <span className="cl-kpi-label">Total de clientes</span>
+          <strong>{clients.length}</strong>
+        </article>
+
+        <article className="cl-kpi cl-kpi-gold">
+          <span className="cl-kpi-icon"><LuWallet aria-hidden="true" /></span>
+          <span className="cl-kpi-label">Total a receber</span>
+          <strong>{formatCurrency(receivables.totalPending)}</strong>
+          <small>Mesmo cálculo do Dashboard, sem somar a mesma dívida duas vezes.</small>
+        </article>
+
+        <article className="cl-kpi cl-kpi-red">
+          <span className="cl-kpi-icon"><LuTriangleAlert aria-hidden="true" /></span>
+          <span className="cl-kpi-label">Clientes atrasados</span>
+          <strong>{overdueClientsCount}</strong>
+          <small>Somente compras com vencimento informado e já vencido.</small>
+        </article>
+      </div>
+
+      {showForm && <section className="cl-panel">{formFields}</section>}
+
+      <section className="cl-panel">
+        <div className="cl-search">
+          <LuSearch aria-hidden="true" />
+          <input
+            type="search"
+            value={searchText}
+            onChange={(event) => setSearchText(event.target.value)}
+            placeholder="Nome, apelido, CPF, cidade ou telefone"
+            aria-label="Pesquisar clientes"
+          />
+        </div>
+
+        <div className="cl-filters">
+          <label>
+            Cidade
+            <select
+              value={cityFilter}
+              onChange={(event) => setCityFilter(event.target.value)}
+            >
+              <option value="all">Todas as cidades</option>
+              {cities.map((city) => (
+                <option key={city} value={city}>
+                  {city}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Situação financeira
+            <select
+              value={statusFilter}
+              onChange={(event) => setStatusFilter(event.target.value)}
+            >
+              <option value="all">Todas</option>
+              <option value="open">A receber</option>
+              <option value="overdue">Atrasado</option>
+              <option value="paid">Em dia</option>
+            </select>
+          </label>
+
+          <label>
+            Viagem
+            <select
+              value={tripFilter}
+              onChange={(event) => setTripFilter(event.target.value)}
+            >
+              <option value="all">Todas as viagens</option>
+              <option value="third">3ª viagem</option>
+              <option value="fourth">4ª viagem</option>
+              <option value="review">Revisão necessária</option>
+            </select>
+          </label>
+
+          {hasActiveFilters && (
+            <button type="button" className="cl-btn cl-btn-ghost" onClick={clearFilters}>
+              Limpar filtros
+            </button>
+          )}
+        </div>
+
+        <p className="cl-count">
+          {filteredRows.length} de {clients.length} cliente(s)
+          {tripFilter !== "all" &&
+            " — viagem conforme classificação proposta das vendas"}
         </p>
-        <div style={styles.reconciliationSummary}>
+
+        {loadingClients ? (
+          <div className="cl-empty"><strong>Carregando clientes...</strong></div>
+        ) : filteredRows.length === 0 ? (
+          <div className="cl-empty">
+            <strong>Nenhum cliente encontrado</strong>
+            <p>Cadastre um cliente ou altere a pesquisa e os filtros.</p>
+          </div>
+        ) : (
+          <div className="cl-list">
+            {filteredRows.map((row) => {
+              const { client } = row;
+              const purchases = salesByClient.get(client.id);
+              const expanded = expandedId === client.id;
+              const address = [client.street, client.number, client.district]
+                .filter(Boolean)
+                .join(", ");
+
+              return (
+                <article key={client.id} className={`cl-row cl-row-${row.status}`}>
+                  <div className="cl-row-main">
+                    <span className="cl-avatar" aria-hidden="true">
+                      {initials(client.name)}
+                    </span>
+
+                    <div className="cl-identity">
+                      <h3>{client.name}</h3>
+                      {client.nickname && <p>“{client.nickname}”</p>}
+                    </div>
+
+                    <div className="cl-contact">
+                      <span><LuMapPin aria-hidden="true" /> {client.city || "Cidade não informada"}</span>
+                      <span><LuPhone aria-hidden="true" /> {displayPhone(client.phone) || "Telefone não informado"}</span>
+                    </div>
+
+                    <div className="cl-balance">
+                      <span>Saldo</span>
+                      <strong>{formatCurrency(row.totalPending)}</strong>
+                    </div>
+
+                    <span className={`cl-status cl-status-${row.status}`}>
+                      {statusLabels[row.status]}
+                    </span>
+                  </div>
+
+                  <div className="cl-actions">
+                    <button
+                      type="button"
+                      className="cl-btn cl-btn-soft"
+                      onClick={() => setExpandedId(expanded ? null : client.id)}
+                      aria-expanded={expanded}
+                    >
+                      <LuChevronDown aria-hidden="true" className={expanded ? "cl-flip" : ""} />
+                      {expanded ? "Ocultar detalhes" : "Ver detalhes"}
+                    </button>
+                    <button type="button" className="cl-btn cl-btn-soft" onClick={() => handleEdit(client)}>
+                      <LuPencil aria-hidden="true" /> Editar
+                    </button>
+                    <button type="button" className="cl-btn cl-btn-soft" onClick={() => handleNewSale(client)}>
+                      <LuShoppingBag aria-hidden="true" /> Nova venda
+                    </button>
+                    <button
+                      type="button"
+                      className="cl-btn cl-btn-gold"
+                      onClick={() => handleQuickReceive(row)}
+                      disabled={receivingClientId === client.id}
+                      title={
+                        purchases
+                          ? "Abre o Financeiro para receber por compra"
+                          : "Registrar recebimento do saldo legado"
+                      }
+                    >
+                      <LuBanknote aria-hidden="true" />
+                      {receivingClientId === client.id ? "Registrando..." : "Receber"}
+                    </button>
+                  </div>
+
+                  {expanded && (
+                    <div className="cl-details">
+                      <dl>
+                        <div><dt>CPF</dt><dd>{displayCpf(client.cpf) || "Não informado"}</dd></div>
+                        <div><dt>Endereço</dt><dd>{address || "Não informado"}</dd></div>
+                        <div>
+                          <dt>Saldo histórico agregado</dt>
+                          <dd>{formatCurrency(client.totalDebt)}</dd>
+                        </div>
+                        <div>
+                          <dt>Compras{purchases ? ` (${purchases.count})` : ""}</dt>
+                          <dd>{formatCurrency(purchases?.pending || 0)} em aberto</dd>
+                        </div>
+                        {row.overdueCount > 0 && (
+                          <div><dt>Vencidas</dt><dd>{row.overdueCount} compra(s)</dd></div>
+                        )}
+                        {row.undatedCount > 0 && (
+                          <div>
+                            <dt>Sem vencimento</dt>
+                            <dd>{row.undatedCount} compra(s) — não classificadas como atrasadas</dd>
+                          </div>
+                        )}
+                        {client.notes && (
+                          <div className="cl-wide"><dt>Observações</dt><dd>{client.notes}</dd></div>
+                        )}
+                      </dl>
+
+                      {purchases && (
+                        <p className="cl-warning">
+                          Para não misturar saldos, receba cada compra pela tela
+                          Financeiro. O saldo histórico e as compras abertas podem
+                          representar a mesma dívida e não são somados aqui.
+                        </p>
+                      )}
+
+                      <div className="cl-actions">
+                        <button type="button" className="cl-btn cl-btn-soft" onClick={() => handleShowHistory(client)}>
+                          <LuHistory aria-hidden="true" /> Histórico
+                        </button>
+                        <button type="button" className="cl-btn cl-btn-soft" onClick={() => openWhatsApp(client)}>
+                          <LuMessageCircle aria-hidden="true" /> WhatsApp
+                        </button>
+                        <button type="button" className="cl-btn cl-btn-danger" onClick={() => handleDelete(client)}>
+                          Excluir
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      <details className="cl-panel cl-check">
+        <summary>
+          <span>
+            <strong>Conferência de saldos</strong>
+            <small>
+              {reconciliationCandidates.length} com possível sobreposição ·{" "}
+              {legacyOnlyCount} somente saldo legado · {purchasesOnlyCount} somente compras
+            </small>
+          </span>
+          <LuChevronDown aria-hidden="true" />
+        </summary>
+
+        <p className="cl-warning">
+          Comparação somente para revisão. Não altera clientes, compras ou
+          pagamentos. O saldo legado pode já incluir compras antigas; não some nem
+          migre os valores sem confirmar os registros e recibos de origem.
+        </p>
+
+        <div className="cl-check-summary">
           <span>{reconciliationCandidates.length} cliente(s) com possível sobreposição</span>
           <span>{legacyOnlyCount} somente com saldo legado</span>
           <span>{purchasesOnlyCount} somente com compras</span>
         </div>
 
         {loadingClients ? (
-          <p style={styles.clientInfo}>Carregando saldos para comparação...</p>
+          <p>Carregando saldos para comparação...</p>
         ) : reconciliationCandidates.length === 0 ? (
-          <p style={styles.clientInfo}>
-            Nenhum cliente tem simultaneamente saldo legado e saldo pendente em compras
-            nesta leitura.
+          <p>
+            Nenhum cliente tem simultaneamente saldo legado e saldo pendente em
+            compras nesta leitura.
           </p>
         ) : (
-          <div style={styles.reconciliationList}>
+          <div className="cl-check-list">
             {reconciliationCandidates.map((entry) => (
-              <article
-                key={entry.clientId}
-                style={styles.reconciliationItem}
-              >
+              <div key={entry.clientId} className="cl-check-item">
                 <strong>{entry.clientName}</strong>
                 <span>Saldo legado: {formatCurrency(entry.legacyBalance)}</span>
                 <span>Compras abertas: {formatCurrency(entry.purchaseBalance)}</span>
@@ -662,698 +1186,11 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                   Conferir histórico de compras e recebimentos antes de qualquer
                   ajuste. Valores podem representar a mesma dívida.
                 </small>
-              </article>
+              </div>
             ))}
           </div>
         )}
-      </section>
-
-      <section style={styles.grid}>
-        <form onSubmit={handleSubmit} style={styles.card}>
-          <div style={styles.formHeader}>
-            <h2 style={styles.cardTitle}>
-              {editingId ? "Editar cliente" : "Novo cliente"}
-            </h2>
-
-            {editingId && (
-              <button
-                type="button"
-                onClick={clearForm}
-                style={styles.cancelButton}
-              >
-                Cancelar
-              </button>
-            )}
-          </div>
-
-          <label style={styles.label}>
-            Nome completo
-            <input
-              type="text"
-              name="name"
-              value={form.name}
-              onChange={handleChange}
-              placeholder="Digite o nome do cliente"
-              required
-              disabled={saving}
-              style={styles.input}
-            />
-          </label>
-
-          <label style={styles.label}>
-            Conhecido como
-            <input
-              type="text"
-              name="nickname"
-              value={form.nickname}
-              onChange={handleChange}
-              placeholder="Apelido ou nome conhecido"
-              disabled={saving}
-              style={styles.input}
-            />
-          </label>
-
-          <label style={styles.label}>
-            Telefone
-            <input
-              type="tel"
-              name="phone"
-              value={form.phone}
-              onChange={handleChange}
-              placeholder="(00) 00000-0000"
-              disabled={saving}
-              style={styles.input}
-            />
-          </label>
-
-          <label style={styles.label}>
-            CPF
-            <input
-              type="text"
-              name="cpf"
-              value={form.cpf}
-              onChange={handleChange}
-              placeholder="000.000.000-00"
-              disabled={saving}
-              style={styles.input}
-            />
-          </label>
-
-          <label style={styles.label}>
-            Cidade
-            <input
-              type="text"
-              name="city"
-              value={form.city}
-              onChange={handleChange}
-              placeholder="Digite a cidade"
-              disabled={saving}
-              style={styles.input}
-            />
-          </label>
-
-          <label style={styles.label}>
-            Rua
-            <input
-              type="text"
-              name="street"
-              value={form.street}
-              onChange={handleChange}
-              placeholder="Digite a rua"
-              disabled={saving}
-              style={styles.input}
-            />
-          </label>
-
-          <div style={styles.twoColumns}>
-            <label style={styles.label}>
-              Número
-              <input
-                type="text"
-                name="number"
-                value={form.number}
-                onChange={handleChange}
-                placeholder="Número"
-                disabled={saving}
-                style={styles.input}
-              />
-            </label>
-
-            <label style={styles.label}>
-              Bairro
-              <input
-                type="text"
-                name="district"
-                value={form.district}
-                onChange={handleChange}
-                placeholder="Bairro"
-                disabled={saving}
-                style={styles.input}
-              />
-            </label>
-          </div>
-
-          <label style={styles.label}>
-            Saldo legado/agregado (não conciliado)
-            <input
-              type="number"
-              name="totalDebt"
-              value={form.totalDebt}
-              onChange={handleChange}
-              placeholder="0,00"
-              min="0"
-              step="0.01"
-              disabled={
-                saving ||
-                Boolean(editingId && salesByClient.has(editingId))
-              }
-              style={styles.input}
-            />
-            <span style={styles.helperText}>
-              Saldo histórico preservado. Compras novas e seus recebimentos são controlados individualmente.
-              {editingId && salesByClient.has(editingId)
-                ? " Não alterável enquanto houver compras registradas."
-                : ""}
-            </span>
-          </label>
-
-          <label style={styles.label}>
-            Observações
-            <textarea
-              name="notes"
-              value={form.notes}
-              onChange={handleChange}
-              placeholder="Ex.: prefere receber no fim do mês..."
-              rows={4}
-              disabled={saving}
-              style={styles.textarea}
-            />
-          </label>
-
-          <button
-            type="submit"
-            disabled={saving}
-            style={{
-              ...styles.button,
-              opacity: saving ? 0.65 : 1,
-              cursor: saving ? "not-allowed" : "pointer",
-            }}
-          >
-            {saving
-              ? "Salvando..."
-              : editingId
-                ? "Salvar alterações"
-                : "Cadastrar cliente"}
-          </button>
-        </form>
-
-        <section style={styles.card}>
-          <div style={styles.listHeader}>
-            <div>
-              <h2 style={styles.cardTitle}>Clientes cadastrados</h2>
-              <p style={styles.helperText}>
-                {filteredClients.length} cliente(s) encontrado(s).
-              </p>
-            </div>
-          </div>
-
-          <input
-            type="search"
-            value={searchText}
-            onChange={(event) => setSearchText(event.target.value)}
-            placeholder="Pesquisar nome, apelido, telefone, CPF ou endereço"
-            style={styles.searchInput}
-          />
-
-          {loadingClients ? (
-            <div style={styles.empty}>
-              <span style={styles.emptyIcon}>⏳</span>
-              <strong>Carregando clientes...</strong>
-            </div>
-          ) : filteredClients.length === 0 ? (
-            <div style={styles.empty}>
-              <span style={styles.emptyIcon}>👥</span>
-              <strong>Nenhum cliente encontrado</strong>
-              <p>Cadastre um cliente ou altere sua pesquisa.</p>
-            </div>
-          ) : (
-            <div style={styles.list}>
-              {filteredClients.map((client) => {
-                const purchases = salesByClient.get(client.id);
-                const hasOpenPurchase = Number(purchases?.pending || 0) > 0;
-                const clientStatus = getClientStatus(client);
-
-                return (
-                <article key={client.id} style={styles.clientItem}>
-                  <div style={styles.clientContent}>
-                    <span
-                      style={{
-                        ...styles.statusBadge,
-                        color: hasOpenPurchase ? "#dc2626" : clientStatus.color,
-                        background: hasOpenPurchase
-                          ? "#fee2e2"
-                          : clientStatus.background,
-                      }}
-                    >
-                      {hasOpenPurchase ? "Compra em aberto" : clientStatus.label}
-                    </span>
-                    <h3 style={styles.clientName}>{client.name}</h3>
-
-                    {client.nickname && (
-                      <p style={styles.nickname}>
-                        Conhecido como: {client.nickname}
-                      </p>
-                    )}
-
-                    <p style={styles.clientInfo}>
-                      📞 {client.phone || "Telefone não informado"}
-                    </p>
-
-                    {client.cpf && (
-                      <p style={styles.clientInfo}>🪪 CPF: {client.cpf}</p>
-                    )}
-
-                    <p style={styles.clientInfo}>
-                      📍 {[client.street, client.number, client.district, client.city]
-                        .filter(Boolean)
-                        .join(" • ") || "Endereço não informado"}
-                    </p>
-
-                    {client.notes && (
-                      <p style={styles.notes}>📝 {client.notes}</p>
-                    )}
-                  </div>
-
-                  <div style={styles.rightArea}>
-                    <div style={styles.debtBox}>
-                      <span style={styles.debtLabel}>
-                        Saldo histórico agregado
-                      </span>
-
-                      <strong style={styles.debtValue}>
-                        {formatCurrency(client.totalDebt)}
-                      </strong>
-                    </div>
-
-                    {purchases && (
-                      <div style={styles.debtBox}>
-                        <span style={styles.debtLabel}>
-                          {purchases.count} compra(s) • saldo em compras
-                        </span>
-                        <strong style={styles.debtValue}>
-                          {formatCurrency(purchases.pending)}
-                        </strong>
-                      </div>
-                    )}
-
-                    <div style={styles.actions}>
-                      {purchases ? (
-                        <span style={styles.helperText}>
-                          Para não misturar saldos, receba cada compra pela tela Financeiro.
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          onClick={() => handleReceivePayment(client)}
-                          disabled={receivingClientId === client.id}
-                          style={styles.receiveButton}
-                        >
-                          {receivingClientId === client.id
-                            ? "Registrando..."
-                            : "Receber saldo legado"}
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => handleShowHistory(client)}
-                        style={styles.historyButton}
-                      >
-                        Histórico
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => openWhatsApp(client)}
-                        style={styles.whatsAppButton}
-                        title="Enviar cobrança pelo WhatsApp"
-                      >
-                        WhatsApp
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleEdit(client)}
-                        style={styles.editButton}
-                      >
-                        Editar
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(client)}
-                        style={styles.deleteButton}
-                      >
-                        Excluir
-                      </button>
-                    </div>
-                  </div>
-                </article>
-                );
-              })}
-            </div>
-          )}
-        </section>
-      </section>
+      </details>
     </div>
   );
 }
-
-const styles = {
-  page: {
-    color: "#0f172a",
-    fontFamily: "Arial, sans-serif",
-  },
-
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: "20px",
-    marginBottom: "24px",
-  },
-
-  headerCards: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "12px",
-  },
-
-  eyebrow: {
-    margin: 0,
-    color: "#2563eb",
-    fontWeight: "800",
-    fontSize: "13px",
-    textTransform: "uppercase",
-  },
-
-  title: {
-    margin: "5px 0",
-    fontSize: "32px",
-  },
-
-  subtitle: {
-    margin: 0,
-    color: "#64748b",
-  },
-
-  counter: {
-    minWidth: "145px",
-    padding: "16px",
-    borderRadius: "16px",
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    textAlign: "center",
-  },
-
-  counterLabel: {
-    display: "block",
-    color: "#64748b",
-    fontSize: "13px",
-    marginBottom: "6px",
-  },
-
-  counterValue: {
-    fontSize: "28px",
-  },
-
-  moneyValue: {
-    color: "#16a34a",
-    fontSize: "19px",
-  },
-
-  grid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 320px), 1fr))",
-    gap: "22px",
-  },
-
-  card: {
-    padding: "24px",
-    borderRadius: "18px",
-    background: "#ffffff",
-    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.08)",
-  },
-
-  reconciliationList: {
-    display: "grid",
-    gap: "10px",
-  },
-
-  reconciliationSummary: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "8px",
-    marginBottom: "14px",
-    color: "#475569",
-    fontSize: "12px",
-  },
-
-  reconciliationItem: {
-    display: "grid",
-    gap: "5px",
-    padding: "14px",
-    border: "1px solid #fde68a",
-    borderRadius: "12px",
-    background: "#fffbeb",
-    color: "#475569",
-    overflowWrap: "anywhere",
-    fontSize: "13px",
-  },
-
-  formHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "12px",
-  },
-
-  cardTitle: {
-    margin: "0 0 18px",
-    fontSize: "21px",
-  },
-
-  cancelButton: {
-    border: 0,
-    background: "transparent",
-    color: "#64748b",
-    fontWeight: "700",
-    cursor: "pointer",
-  },
-
-  label: {
-    display: "grid",
-    gap: "8px",
-    marginBottom: "16px",
-    color: "#334155",
-    fontSize: "14px",
-    fontWeight: "700",
-  },
-
-  input: {
-    width: "100%",
-    boxSizing: "border-box",
-    padding: "13px 14px",
-    borderRadius: "11px",
-    border: "1px solid #cbd5e1",
-    outline: "none",
-    fontSize: "15px",
-    color: "#111827",
-    background: "#ffffff",
-  },
-
-  button: {
-    width: "100%",
-    border: 0,
-    borderRadius: "11px",
-    padding: "14px",
-    background: "#2563eb",
-    color: "#ffffff",
-    fontSize: "16px",
-    fontWeight: "800",
-  },
-
-  listHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: "12px",
-  },
-
-  helperText: {
-    margin: "-10px 0 18px",
-    color: "#64748b",
-    fontSize: "14px",
-  },
-
-  searchInput: {
-    width: "100%",
-    boxSizing: "border-box",
-    padding: "13px 14px",
-    marginBottom: "18px",
-    borderRadius: "11px",
-    border: "1px solid #cbd5e1",
-    outline: "none",
-    fontSize: "15px",
-  },
-
-  empty: {
-    minHeight: "280px",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    textAlign: "center",
-    color: "#64748b",
-  },
-
-  emptyIcon: {
-    marginBottom: "12px",
-    fontSize: "40px",
-  },
-
-  list: {
-    display: "grid",
-    gap: "12px",
-  },
-
-  clientItem: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: "20px",
-    padding: "17px",
-    borderRadius: "14px",
-    border: "1px solid #e2e8f0",
-    background: "#f8fafc",
-  },
-
-  clientContent: {
-    flex: "1 1 200px",
-  },
-
-  clientName: {
-    margin: "0 0 8px",
-    fontSize: "17px",
-  },
-
-  clientInfo: {
-    margin: "4px 0",
-    color: "#64748b",
-    fontSize: "14px",
-  },
-
-  rightArea: {
-    display: "grid",
-    justifyItems: "end",
-    gap: "12px",
-  },
-
-  debtBox: {
-    minWidth: "120px",
-    textAlign: "right",
-  },
-
-  debtLabel: {
-    display: "block",
-    marginBottom: "5px",
-    color: "#64748b",
-    fontSize: "12px",
-  },
-
-  debtValue: {
-    color: "#16a34a",
-    fontSize: "17px",
-  },
-
-  actions: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "7px",
-  },
-
-  whatsAppButton: {
-    border: 0,
-    borderRadius: "8px",
-    padding: "8px 10px",
-    background: "#16a34a",
-    color: "#ffffff",
-    fontWeight: "700",
-    cursor: "pointer",
-  },
-
-  editButton: {
-    border: 0,
-    borderRadius: "8px",
-    padding: "8px 10px",
-    background: "#2563eb",
-    color: "#ffffff",
-    fontWeight: "700",
-    cursor: "pointer",
-  },
-
-
-  twoColumns: {
-    display: "grid",
-    gridTemplateColumns: "minmax(90px, 0.7fr) minmax(150px, 1.3fr)",
-    gap: "12px",
-  },
-
-  textarea: {
-    width: "100%",
-    boxSizing: "border-box",
-    padding: "13px 14px",
-    borderRadius: "11px",
-    border: "1px solid #cbd5e1",
-    outline: "none",
-    resize: "vertical",
-    fontFamily: "inherit",
-    fontSize: "15px",
-    color: "#111827",
-    background: "#ffffff",
-  },
-
-  statusBadge: {
-    display: "inline-block",
-    marginBottom: "8px",
-    padding: "5px 9px",
-    borderRadius: "999px",
-    fontSize: "11px",
-    fontWeight: "800",
-  },
-
-  nickname: {
-    margin: "0 0 8px",
-    color: "#7c3aed",
-    fontSize: "13px",
-    fontWeight: "700",
-  },
-
-  notes: {
-    margin: "8px 0 0",
-    padding: "9px 10px",
-    borderRadius: "9px",
-    background: "#ffffff",
-    color: "#475569",
-    fontSize: "13px",
-  },
-
-  receiveButton: {
-    border: 0,
-    borderRadius: "8px",
-    padding: "8px 10px",
-    background: "#0f766e",
-    color: "#ffffff",
-    fontWeight: "700",
-    cursor: "pointer",
-  },
-
-  historyButton: {
-    border: 0,
-    borderRadius: "8px",
-    padding: "8px 10px",
-    background: "#7c3aed",
-    color: "#ffffff",
-    fontWeight: "700",
-    cursor: "pointer",
-  },
-  deleteButton: {
-    border: 0,
-    borderRadius: "8px",
-    padding: "8px 10px",
-    background: "#dc2626",
-    color: "#ffffff",
-    fontWeight: "700",
-    cursor: "pointer",
-  },
-};

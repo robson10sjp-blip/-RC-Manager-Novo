@@ -7,12 +7,17 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 
+import { useLocation } from "react-router-dom";
+
 import { auth, db } from "../firebase/config";
 import { runTransaction } from "../firebase/firestoreAccess";
 
 export default function StockPage() {
   const [products, setProducts] = useState([]);
-  const [searchText, setSearchText] = useState("");
+  const location = useLocation();
+  const [searchText, setSearchText] = useState(
+    () => String(location.state?.search || "")
+  );
   const [loading, setLoading] = useState(true);
   const [adjustingId, setAdjustingId] = useState(null);
 

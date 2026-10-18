@@ -7,12 +7,31 @@ import {
   serverTimestamp,
 } from "firebase/firestore";
 
+import { createPortal } from "react-dom";
+import { useNavigate } from "react-router-dom";
+import {
+  LuBoxes,
+  LuPackagePlus,
+  LuPencil,
+  LuPlus,
+  LuSearch,
+  LuShirt,
+  LuTag,
+  LuTrash2,
+  LuTrendingUp,
+  LuTriangleAlert,
+  LuWallet,
+  LuX,
+} from "react-icons/lu";
+
 import { auth, db } from "../firebase/config";
 import {
   addDoc,
   deleteDoc,
   updateDoc,
 } from "../firebase/firestoreAccess";
+import "./ClientsPremium.css";
+import "./ProductsPremium.css";
 
 const emptyForm = {
   code: "",
@@ -25,11 +44,47 @@ const emptyForm = {
   quantity: "",
 };
 
+function formatCurrency(value) {
+  return Number(value || 0).toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+}
+
+function formatCategory(category) {
+  const categories = {
+    masculino: "Masculino",
+    feminino: "Feminino",
+    infantil: "Infantil",
+    outros: "Outros",
+  };
+
+  return categories[category] || category || "Não informada";
+}
+
+function getStockStatus(quantityValue) {
+  const quantity = Number(quantityValue || 0);
+
+  if (quantity <= 0) {
+    return { key: "out", label: "Sem estoque" };
+  }
+
+  if (quantity <= 3) {
+    return { key: "low", label: "Estoque baixo" };
+  }
+
+  return { key: "in", label: "Em estoque" };
+}
+
 export default function ProductsPage() {
   const [products, setProducts] = useState([]);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
   const [searchText, setSearchText] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [stockFilter, setStockFilter] = useState("all");
+  const [showForm, setShowForm] = useState(false);
+  const navigate = useNavigate();
   const [loadingProducts, setLoadingProducts] = useState(true);
   const [saving, setSaving] = useState(false);
 
@@ -93,26 +148,29 @@ export default function ProductsPage() {
   const filteredProducts = useMemo(() => {
     const search = searchText.trim().toLowerCase();
 
-    if (!search) {
-      return products;
-    }
-
     return products.filter((product) => {
-      const code = String(product.code || "").toLowerCase();
-      const name = String(product.name || "").toLowerCase();
-      const category = String(product.category || "").toLowerCase();
-      const size = String(product.size || "").toLowerCase();
-      const color = String(product.color || "").toLowerCase();
+      const quantity = Number(product.quantity || 0);
 
-      return (
-        code.includes(search) ||
-        name.includes(search) ||
-        category.includes(search) ||
-        size.includes(search) ||
-        color.includes(search)
-      );
+      if (categoryFilter !== "all" && product.category !== categoryFilter) {
+        return false;
+      }
+
+      if (stockFilter === "out" && quantity > 0) return false;
+      if (stockFilter === "low" && !(quantity > 0 && quantity <= 3)) return false;
+      if (stockFilter === "in" && quantity <= 3) return false;
+
+      if (!search) return true;
+
+      return [
+        product.code,
+        product.name,
+        product.category,
+        formatCategory(product.category),
+        product.size,
+        product.color,
+      ].some((field) => String(field || "").toLowerCase().includes(search));
     });
-  }, [products, searchText]);
+  }, [products, searchText, categoryFilter, stockFilter]);
 
   const totalPieces = useMemo(() => {
     return products.reduce(
@@ -159,6 +217,13 @@ export default function ProductsPage() {
   function clearForm() {
     setForm(emptyForm);
     setEditingId(null);
+    setShowForm(false);
+  }
+
+  function openNewForm() {
+    setForm(emptyForm);
+    setEditingId(null);
+    setShowForm(true);
   }
 
   async function handleSubmit(event) {
@@ -271,6 +336,7 @@ export default function ProductsPage() {
 
   function handleEdit(product) {
     setEditingId(product.id);
+    setShowForm(true);
 
     setForm({
       code: product.code || "",
@@ -281,11 +347,6 @@ export default function ProductsPage() {
       costPrice: String(product.costPrice ?? ""),
       salePrice: String(product.salePrice ?? ""),
       quantity: String(product.quantity ?? ""),
-    });
-
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
     });
   }
 
@@ -327,743 +388,266 @@ export default function ProductsPage() {
     }
   }
 
-  function formatCurrency(value) {
-    return Number(value || 0).toLocaleString("pt-BR", {
-      style: "currency",
-      currency: "BRL",
-    });
-  }
+  const categoryOptions = useMemo(() => {
+    const base = ["feminino", "masculino", "infantil", "outros"];
+    const extra = products
+      .map((product) => String(product.category || "").trim())
+      .filter((category) => category && !base.includes(category));
 
-  function formatCategory(category) {
-    const categories = {
-      masculino: "Masculino",
-      feminino: "Feminino",
-      infantil: "Infantil",
-    };
+    return [...base, ...new Set(extra)];
+  }, [products]);
 
-    return categories[category] || category || "Não informada";
-  }
+  const potentialProfit = totalSaleValue - totalCostValue;
 
-  function getStockStatus(quantityValue) {
-    const quantity = Number(quantityValue || 0);
+  const kpis = [
+    { label: "Produtos cadastrados", value: products.length, icon: LuShirt, tone: "navy" },
+    { label: "Peças em estoque", value: totalPieces, icon: LuBoxes, tone: "navy" },
+    { label: "Estoque baixo", value: lowStockCount, icon: LuTriangleAlert, tone: "red", hint: "Até 3 peças, inclui itens zerados" },
+    { label: "Valor investido", value: formatCurrency(totalCostValue), icon: LuWallet, tone: "gold" },
+    { label: "Valor potencial de venda", value: formatCurrency(totalSaleValue), icon: LuTag, tone: "gold" },
+    { label: "Lucro bruto potencial", value: formatCurrency(potentialProfit), icon: LuTrendingUp, tone: "green" },
+  ];
 
-    if (quantity <= 0) {
-      return {
-        label: "Sem estoque",
-        color: "#dc2626",
-        background: "#fee2e2",
-      };
-    }
+  const hasFilters =
+    searchText.trim() || categoryFilter !== "all" || stockFilter !== "all";
 
-    if (quantity <= 3) {
-      return {
-        label: "Estoque baixo",
-        color: "#ca8a04",
-        background: "#fef9c3",
-      };
-    }
-
-    return {
-      label: "Em estoque",
-      color: "#16a34a",
-      background: "#dcfce7",
-    };
+  function renderField(label, input) {
+    return (
+      <label className="pr-field">
+        <span>{label}</span>
+        {input}
+      </label>
+    );
   }
 
   return (
-    <div style={styles.page}>
-      <header style={styles.header}>
+    <div className="cl pr">
+      <header className="cl-header">
         <div>
-          <p style={styles.eyebrow}>RC Confecções</p>
-
-          <h1 style={styles.title}>Produtos</h1>
-
-          <p style={styles.subtitle}>
-            Cadastre e acompanhe todas as peças do estoque.
+          <p className="cl-eyebrow">RC Confecções</p>
+          <h1>Produtos</h1>
+          <p className="cl-subtitle">
+            Controle de mercadorias: cadastre e acompanhe todas as peças.
           </p>
         </div>
 
-        <div style={styles.headerCards}>
-          <div style={styles.counter}>
-            <span style={styles.counterLabel}>
-              Produtos cadastrados
-            </span>
-
-            <strong style={styles.counterValue}>
-              {products.length}
-            </strong>
-          </div>
-
-          <div style={styles.counter}>
-            <span style={styles.counterLabel}>
-              Peças em estoque
-            </span>
-
-            <strong style={styles.counterValue}>
-              {totalPieces}
-            </strong>
-          </div>
-
-          <div style={styles.counter}>
-            <span style={styles.counterLabel}>
-              Estoque baixo
-            </span>
-
-            <strong style={styles.warningValue}>
-              {lowStockCount}
-            </strong>
-          </div>
-        </div>
+        <button
+          type="button"
+          className="cl-btn cl-btn-primary cl-new"
+          onClick={openNewForm}
+        >
+          <LuPlus aria-hidden="true" /> Novo produto
+        </button>
       </header>
 
-      <section style={styles.summaryGrid}>
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>
-            Valor investido no estoque
-          </span>
+      <div className="pr-kpis">
+        {kpis.map((kpi) => {
+          const Icon = kpi.icon;
 
-          <strong style={styles.summaryValue}>
-            {formatCurrency(totalCostValue)}
-          </strong>
-        </div>
+          return (
+            <article key={kpi.label} className={`cl-kpi cl-kpi-${kpi.tone} pr-kpi`}>
+              <span className="cl-kpi-icon"><Icon aria-hidden="true" /></span>
+              <span className="cl-kpi-label">{kpi.label}</span>
+              <strong>{kpi.value}</strong>
+              {kpi.hint && <small>{kpi.hint}</small>}
+            </article>
+          );
+        })}
+      </div>
 
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>
-            Valor de venda do estoque
-          </span>
-
-          <strong style={styles.saleSummaryValue}>
-            {formatCurrency(totalSaleValue)}
-          </strong>
-        </div>
-
-        <div style={styles.summaryCard}>
-          <span style={styles.summaryLabel}>
-            Lucro bruto estimado
-          </span>
-
-          <strong style={styles.profitValue}>
-            {formatCurrency(totalSaleValue - totalCostValue)}
-          </strong>
-        </div>
-      </section>
-
-      <section style={styles.grid}>
-        <form onSubmit={handleSubmit} style={styles.card}>
-          <div style={styles.formHeader}>
-            <h2 style={styles.cardTitle}>
-              {editingId ? "Editar produto" : "Novo produto"}
-            </h2>
-
-            {editingId && (
-              <button
-                type="button"
-                onClick={clearForm}
-                style={styles.cancelButton}
-              >
-                Cancelar
-              </button>
-            )}
-          </div>
-
-          <label style={styles.label}>
-            Código
-            <input
-              type="text"
-              name="code"
-              value={form.code}
-              onChange={handleChange}
-              placeholder="Exemplo: CAM-001"
-              required
-              disabled={saving}
-              style={styles.input}
-            />
-          </label>
-
-          <label style={styles.label}>
-            Nome ou descrição
-            <input
-              type="text"
-              name="name"
-              value={form.name}
-              onChange={handleChange}
-              placeholder="Exemplo: Camisa social"
-              required
-              disabled={saving}
-              style={styles.input}
-            />
-          </label>
-
-          <label style={styles.label}>
-            Categoria
-            <select
-              name="category"
-              value={form.category}
-              onChange={handleChange}
-              disabled={saving}
-              style={styles.input}
-            >
-              <option value="feminino">Feminino</option>
-              <option value="masculino">Masculino</option>
-              <option value="infantil">Infantil</option>
-            </select>
-          </label>
-
-          <div style={styles.twoColumns}>
-            <label style={styles.label}>
-              Tamanho
-              <input
-                type="text"
-                name="size"
-                value={form.size}
-                onChange={handleChange}
-                placeholder="P, M, G, 42..."
-                disabled={saving}
-                style={styles.input}
-              />
-            </label>
-
-            <label style={styles.label}>
-              Cor
-              <input
-                type="text"
-                name="color"
-                value={form.color}
-                onChange={handleChange}
-                placeholder="Preto, azul..."
-                disabled={saving}
-                style={styles.input}
-              />
-            </label>
-          </div>
-
-          <div style={styles.twoColumns}>
-            <label style={styles.label}>
-              Preço de custo
-              <input
-                type="number"
-                name="costPrice"
-                value={form.costPrice}
-                onChange={handleChange}
-                placeholder="0,00"
-                min="0"
-                step="0.01"
-                disabled={saving}
-                style={styles.input}
-              />
-            </label>
-
-            <label style={styles.label}>
-              Preço de venda
-              <input
-                type="number"
-                name="salePrice"
-                value={form.salePrice}
-                onChange={handleChange}
-                placeholder="0,00"
-                min="0"
-                step="0.01"
-                required
-                disabled={saving}
-                style={styles.input}
-              />
-            </label>
-          </div>
-
-          <label style={styles.label}>
-            Quantidade em estoque
-            <input
-              type="number"
-              name="quantity"
-              value={form.quantity}
-              onChange={handleChange}
-              placeholder="0"
-              min="0"
-              step="1"
-              required
-              disabled={saving}
-              style={styles.input}
-            />
-          </label>
-
-          <button
-            type="submit"
-            disabled={saving}
-            style={{
-              ...styles.button,
-              opacity: saving ? 0.65 : 1,
-              cursor: saving ? "not-allowed" : "pointer",
-            }}
-          >
-            {saving
-              ? "Salvando..."
-              : editingId
-                ? "Salvar alterações"
-                : "Cadastrar produto"}
-          </button>
-        </form>
-
-        <section style={styles.card}>
-          <h2 style={styles.cardTitle}>
-            Produtos cadastrados
-          </h2>
-
-          <p style={styles.helperText}>
-            {filteredProducts.length} produto(s) encontrado(s).
-          </p>
-
+      <section className="cl-panel">
+        <div className="cl-search">
+          <LuSearch aria-hidden="true" />
           <input
             type="search"
             value={searchText}
-            onChange={(event) =>
-              setSearchText(event.target.value)
-            }
-            placeholder="Pesquisar código, nome, categoria, tamanho ou cor"
-            style={styles.searchInput}
+            onChange={(event) => setSearchText(event.target.value)}
+            placeholder="Código, nome, tamanho ou cor"
+            aria-label="Pesquisar produtos"
           />
+        </div>
 
-          {loadingProducts ? (
-            <div style={styles.empty}>
-              <span style={styles.emptyIcon}>⏳</span>
-              <strong>Carregando produtos...</strong>
-            </div>
-          ) : filteredProducts.length === 0 ? (
-            <div style={styles.empty}>
-              <span style={styles.emptyIcon}>📦</span>
-              <strong>Nenhum produto encontrado</strong>
+        <div className="cl-filters">
+          <label>
+            Categoria
+            <select
+              value={categoryFilter}
+              onChange={(event) => setCategoryFilter(event.target.value)}
+            >
+              <option value="all">Todas as categorias</option>
+              {categoryOptions.map((category) => (
+                <option key={category} value={category}>
+                  {formatCategory(category)}
+                </option>
+              ))}
+            </select>
+          </label>
 
-              <p>
-                Cadastre um produto ou altere sua pesquisa.
-              </p>
-            </div>
-          ) : (
-            <div style={styles.list}>
-              {filteredProducts.map((product) => {
-                const stockStatus = getStockStatus(
-                  product.quantity
-                );
+          <label>
+            Situação do estoque
+            <select
+              value={stockFilter}
+              onChange={(event) => setStockFilter(event.target.value)}
+            >
+              <option value="all">Todas</option>
+              <option value="in">Em estoque</option>
+              <option value="low">Estoque baixo</option>
+              <option value="out">Sem estoque</option>
+            </select>
+          </label>
 
-                return (
-                  <article
-                    key={product.id}
-                    style={styles.productItem}
-                  >
-                    <div style={styles.productContent}>
-                      <div style={styles.productTitleArea}>
-                        <h3 style={styles.productName}>
-                          {product.name}
-                        </h3>
-
-                        <span
-                          style={{
-                            ...styles.statusBadge,
-                            color: stockStatus.color,
-                            background: stockStatus.background,
-                          }}
-                        >
-                          {stockStatus.label}
-                        </span>
-                      </div>
-
-                      <p style={styles.productCode}>
-                        Código: {product.code}
-                      </p>
-
-                      <div style={styles.tags}>
-                        <span style={styles.tag}>
-                          {formatCategory(product.category)}
-                        </span>
-
-                        <span style={styles.tag}>
-                          Tamanho: {product.size || "Não informado"}
-                        </span>
-
-                        <span style={styles.tag}>
-                          Cor: {product.color || "Não informada"}
-                        </span>
-                      </div>
-
-                      <div style={styles.priceGrid}>
-                        <div>
-                          <span style={styles.smallLabel}>
-                            Custo
-                          </span>
-
-                          <strong style={styles.costValue}>
-                            {formatCurrency(product.costPrice)}
-                          </strong>
-                        </div>
-
-                        <div>
-                          <span style={styles.smallLabel}>
-                            Venda
-                          </span>
-
-                          <strong style={styles.saleValue}>
-                            {formatCurrency(product.salePrice)}
-                          </strong>
-                        </div>
-
-                        <div>
-                          <span style={styles.smallLabel}>
-                            Estoque
-                          </span>
-
-                          <strong style={styles.quantityValue}>
-                            {Number(product.quantity || 0)}
-                          </strong>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div style={styles.actions}>
-                      <button
-                        type="button"
-                        onClick={() => handleEdit(product)}
-                        style={styles.editButton}
-                      >
-                        Editar
-                      </button>
-
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(product)}
-                        style={styles.deleteButton}
-                      >
-                        Excluir
-                      </button>
-                    </div>
-                  </article>
-                );
-              })}
-            </div>
+          {hasFilters && (
+            <button
+              type="button"
+              className="cl-btn cl-btn-ghost"
+              onClick={() => {
+                setSearchText("");
+                setCategoryFilter("all");
+                setStockFilter("all");
+              }}
+            >
+              Limpar filtros
+            </button>
           )}
-        </section>
+        </div>
+
+        <p className="cl-count">
+          {filteredProducts.length} de {products.length} produto(s)
+        </p>
+
+        {loadingProducts ? (
+          <div className="cl-empty"><strong>Carregando produtos...</strong></div>
+        ) : filteredProducts.length === 0 ? (
+          <div className="cl-empty">
+            <strong>Nenhum produto encontrado</strong>
+            <span>Cadastre um produto ou altere a pesquisa e os filtros.</span>
+          </div>
+        ) : (
+          <div className="pr-grid">
+            {filteredProducts.map((product) => {
+              const status = getStockStatus(product.quantity);
+
+              return (
+                <article key={product.id} className={`pr-card pr-${status.key}`}>
+                  <div className="pr-card-head">
+                    <div className="pr-title">
+                      <h3 title={product.name}>{product.name}</h3>
+                      <p>Código {product.code}</p>
+                    </div>
+                    <span className={`cl-status pr-badge-${status.key}`}>
+                      {status.label}
+                    </span>
+                  </div>
+
+                  <div className="pr-tags">
+                    <span>{formatCategory(product.category)}</span>
+                    <span>Tam. {product.size || "—"}</span>
+                    <span>{product.color || "Sem cor"}</span>
+                  </div>
+
+                  <dl className="pr-numbers">
+                    <div><dt>Custo</dt><dd>{formatCurrency(product.costPrice)}</dd></div>
+                    <div><dt>Venda</dt><dd className="pr-sale">{formatCurrency(product.salePrice)}</dd></div>
+                    <div><dt>Estoque</dt><dd className={`pr-qty pr-qty-${status.key}`}>{Number(product.quantity || 0)}</dd></div>
+                  </dl>
+
+                  <div className="pr-actions">
+                    <button type="button" className="cl-btn cl-btn-soft" onClick={() => handleEdit(product)}>
+                      <LuPencil aria-hidden="true" /> Editar
+                    </button>
+                    <button
+                      type="button"
+                      className="cl-btn cl-btn-gold"
+                      onClick={() => navigate("/estoque", { state: { search: product.code || product.name || "" } })}
+                    >
+                      <LuPackagePlus aria-hidden="true" /> Entrada
+                    </button>
+                    <button type="button" className="cl-btn cl-btn-danger" onClick={() => handleDelete(product)}>
+                      <LuTrash2 aria-hidden="true" /> Excluir
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        )}
       </section>
+
+      {showForm && createPortal(
+        <div
+          className="app-main pr-overlay"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !saving) clearForm();
+          }}
+        >
+          <form
+            onSubmit={handleSubmit}
+            className="pr-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={editingId ? "Editar produto" : "Novo produto"}
+          >
+            <div className="pr-modal-head">
+              <h2>{editingId ? "Editar produto" : "Novo produto"}</h2>
+              <button
+                type="button"
+                className="cl-btn cl-btn-ghost"
+                onClick={clearForm}
+                disabled={saving}
+                aria-label="Fechar"
+              >
+                <LuX aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="pr-form-grid">
+              {renderField("Código", (
+                <input type="text" name="code" value={form.code} onChange={handleChange} placeholder="Exemplo: CAM-001" required disabled={saving} />
+              ))}
+              {renderField("Categoria", (
+                <select name="category" value={form.category} onChange={handleChange} disabled={saving}>
+                  {[...new Set([...categoryOptions, form.category])].map((category) => (
+                    <option key={category} value={category}>{formatCategory(category)}</option>
+                  ))}
+                </select>
+              ))}
+              <div className="pr-span">
+                {renderField("Nome ou descrição", (
+                  <input type="text" name="name" value={form.name} onChange={handleChange} placeholder="Exemplo: Camisa social" required disabled={saving} />
+                ))}
+              </div>
+              {renderField("Tamanho", (
+                <input type="text" name="size" value={form.size} onChange={handleChange} placeholder="P, M, G, 42..." disabled={saving} />
+              ))}
+              {renderField("Cor", (
+                <input type="text" name="color" value={form.color} onChange={handleChange} placeholder="Preto, azul..." disabled={saving} />
+              ))}
+              {renderField("Preço de custo", (
+                <input type="number" inputMode="decimal" name="costPrice" value={form.costPrice} onChange={handleChange} placeholder="0,00" min="0" step="0.01" disabled={saving} />
+              ))}
+              {renderField("Preço de venda", (
+                <input type="number" inputMode="decimal" name="salePrice" value={form.salePrice} onChange={handleChange} placeholder="0,00" min="0" step="0.01" required disabled={saving} />
+              ))}
+              <div className="pr-span">
+                {renderField("Quantidade em estoque", (
+                  <input type="number" inputMode="numeric" name="quantity" value={form.quantity} onChange={handleChange} placeholder="0" min="0" step="1" required disabled={saving} />
+                ))}
+              </div>
+            </div>
+
+            <div className="pr-modal-foot">
+              <button type="button" className="cl-btn cl-btn-ghost" onClick={clearForm} disabled={saving}>
+                Cancelar
+              </button>
+              <button type="submit" className="cl-btn cl-btn-primary" disabled={saving}>
+                {saving ? "Salvando..." : editingId ? "Salvar alterações" : "Cadastrar produto"}
+              </button>
+            </div>
+          </form>
+        </div>,
+        document.body
+      )}
     </div>
   );
 }
-
-const styles = {
-  page: {
-    color: "#0f172a",
-    fontFamily: "Arial, sans-serif",
-  },
-
-  header: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: "20px",
-    marginBottom: "20px",
-  },
-
-  headerCards: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "12px",
-  },
-
-  eyebrow: {
-    margin: 0,
-    color: "#2563eb",
-    fontSize: "13px",
-    fontWeight: "800",
-    textTransform: "uppercase",
-  },
-
-  title: {
-    margin: "5px 0",
-    fontSize: "32px",
-  },
-
-  subtitle: {
-    margin: 0,
-    color: "#64748b",
-  },
-
-  counter: {
-    minWidth: "135px",
-    padding: "15px",
-    borderRadius: "16px",
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    textAlign: "center",
-  },
-
-  counterLabel: {
-    display: "block",
-    marginBottom: "6px",
-    color: "#64748b",
-    fontSize: "12px",
-  },
-
-  counterValue: {
-    fontSize: "26px",
-  },
-
-  warningValue: {
-    color: "#ca8a04",
-    fontSize: "26px",
-  },
-
-  summaryGrid: {
-    display: "grid",
-    gridTemplateColumns:
-      "repeat(auto-fit, minmax(190px, 1fr))",
-    gap: "14px",
-    marginBottom: "22px",
-  },
-
-  summaryCard: {
-    padding: "18px",
-    borderRadius: "16px",
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
-  },
-
-  summaryLabel: {
-    display: "block",
-    marginBottom: "8px",
-    color: "#64748b",
-    fontSize: "13px",
-  },
-
-  summaryValue: {
-    fontSize: "20px",
-  },
-
-  saleSummaryValue: {
-    color: "#2563eb",
-    fontSize: "20px",
-  },
-
-  profitValue: {
-    color: "#16a34a",
-    fontSize: "20px",
-  },
-
-  grid: {
-    display: "grid",
-    gridTemplateColumns:
-      "repeat(auto-fit, minmax(320px, 1fr))",
-    alignItems: "start",
-    gap: "22px",
-  },
-
-  card: {
-    padding: "24px",
-    borderRadius: "18px",
-    background: "#ffffff",
-    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.08)",
-  },
-
-  formHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: "12px",
-  },
-
-  cardTitle: {
-    margin: "0 0 18px",
-    fontSize: "21px",
-  },
-
-  cancelButton: {
-    border: 0,
-    background: "transparent",
-    color: "#64748b",
-    fontWeight: "700",
-    cursor: "pointer",
-  },
-
-  label: {
-    display: "grid",
-    gap: "8px",
-    marginBottom: "16px",
-    color: "#334155",
-    fontSize: "14px",
-    fontWeight: "700",
-  },
-
-  twoColumns: {
-    display: "grid",
-    gridTemplateColumns:
-      "repeat(auto-fit, minmax(130px, 1fr))",
-    gap: "12px",
-  },
-
-  input: {
-    width: "100%",
-    boxSizing: "border-box",
-    padding: "13px 14px",
-    borderRadius: "11px",
-    border: "1px solid #cbd5e1",
-    outline: "none",
-    background: "#ffffff",
-    fontSize: "15px",
-  },
-
-  button: {
-    width: "100%",
-    border: 0,
-    borderRadius: "11px",
-    padding: "14px",
-    background: "#2563eb",
-    color: "#ffffff",
-    fontSize: "16px",
-    fontWeight: "800",
-  },
-
-  helperText: {
-    margin: "-10px 0 18px",
-    color: "#64748b",
-    fontSize: "14px",
-  },
-
-  searchInput: {
-    width: "100%",
-    boxSizing: "border-box",
-    padding: "13px 14px",
-    marginBottom: "18px",
-    borderRadius: "11px",
-    border: "1px solid #cbd5e1",
-    outline: "none",
-    fontSize: "15px",
-  },
-
-  empty: {
-    minHeight: "300px",
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    textAlign: "center",
-    color: "#64748b",
-  },
-
-  emptyIcon: {
-    marginBottom: "12px",
-    fontSize: "42px",
-  },
-
-  list: {
-    display: "grid",
-    gap: "14px",
-  },
-
-  productItem: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: "18px",
-    padding: "18px",
-    borderRadius: "15px",
-    border: "1px solid #e2e8f0",
-    background: "#f8fafc",
-  },
-
-  productContent: {
-    flex: "1 1 280px",
-  },
-
-  productTitleArea: {
-    display: "flex",
-    alignItems: "center",
-    flexWrap: "wrap",
-    gap: "10px",
-  },
-
-  productName: {
-    margin: 0,
-    fontSize: "18px",
-  },
-
-  statusBadge: {
-    display: "inline-block",
-    padding: "5px 9px",
-    borderRadius: "999px",
-    fontSize: "11px",
-    fontWeight: "800",
-  },
-
-  productCode: {
-    margin: "8px 0",
-    color: "#64748b",
-    fontSize: "13px",
-  },
-
-  tags: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "7px",
-    marginBottom: "15px",
-  },
-
-  tag: {
-    padding: "5px 8px",
-    borderRadius: "8px",
-    background: "#e2e8f0",
-    color: "#334155",
-    fontSize: "12px",
-    fontWeight: "700",
-  },
-
-  priceGrid: {
-    display: "grid",
-    gridTemplateColumns:
-      "repeat(auto-fit, minmax(85px, 1fr))",
-    gap: "12px",
-  },
-
-  smallLabel: {
-    display: "block",
-    marginBottom: "4px",
-    color: "#64748b",
-    fontSize: "11px",
-  },
-
-  costValue: {
-    color: "#475569",
-    fontSize: "15px",
-  },
-
-  saleValue: {
-    color: "#16a34a",
-    fontSize: "16px",
-  },
-
-  quantityValue: {
-    color: "#2563eb",
-    fontSize: "18px",
-  },
-
-  actions: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "8px",
-  },
-
-  editButton: {
-    border: 0,
-    borderRadius: "8px",
-    padding: "9px 12px",
-    background: "#2563eb",
-    color: "#ffffff",
-    fontWeight: "700",
-    cursor: "pointer",
-  },
-
-  deleteButton: {
-    border: 0,
-    borderRadius: "8px",
-    padding: "9px 12px",
-    background: "#dc2626",
-    color: "#ffffff",
-    fontWeight: "700",
-    cursor: "pointer",
-  },
-};

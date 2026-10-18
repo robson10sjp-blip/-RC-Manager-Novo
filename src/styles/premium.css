@@ -1,0 +1,450 @@
+/* =====================================================
+   RC PREMIUM — tema visual (somente apresentação)
+   Carregado depois de index.css; não altera dados nem regras.
+===================================================== */
+
+:root {
+  --rc-navy-900: #060b17;
+  --rc-navy-800: #0a1226;
+  --rc-navy-700: #111c36;
+  --rc-gold: #c9a24d;
+  --rc-gold-soft: #e7d3a0;
+  --rc-gold-bg: rgba(201, 162, 77, 0.14);
+  --rc-bg: #f2f3f7;
+  --rc-surface: #ffffff;
+  --rc-line: #e4e7ee;
+  --rc-ink: #0e1730;
+  --rc-muted: #5f6b82;
+  --rc-green: #15803d;
+  --rc-red: #b91c1c;
+  --rc-radius: 18px;
+  --rc-shadow: 0 1px 2px rgba(10, 18, 38, 0.05), 0 10px 28px rgba(10, 18, 38, 0.07);
+}
+
+body {
+  background: var(--rc-bg);
+  color: var(--rc-ink);
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+/* ---------- Estrutura ---------- */
+
+/* Remove a coluna fixa de 1126px herdada do modelo inicial do Vite */
+#root {
+  display: block;
+  width: 100%;
+  max-width: none;
+  border-inline: 0;
+  text-align: left;
+}
+
+.app-layout {
+  background: var(--rc-bg);
+}
+
+.app-main {
+  padding: 28px 32px 40px;
+  background:
+    radial-gradient(900px 420px at 100% 0%, rgba(201, 162, 77, 0.09), transparent 60%),
+    var(--rc-bg);
+}
+
+.app-content {
+  max-width: 1480px;
+}
+
+.app-watermark {
+  display: none;
+}
+
+.readonly-banner {
+  margin: 0 0 18px;
+  padding: 11px 16px;
+  border: 1px solid var(--rc-gold-soft);
+  border-left: 4px solid var(--rc-gold);
+  border-radius: 12px;
+  background: #fffaf0;
+  color: #5a4515;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+/* ---------- Menu lateral ---------- */
+
+.app-sidebar {
+  width: 264px;
+  min-width: 264px;
+  padding: 24px 14px;
+  background: linear-gradient(180deg, var(--rc-navy-800) 0%, var(--rc-navy-900) 100%);
+  border-right: 1px solid rgba(201, 162, 77, 0.28);
+  box-shadow: 10px 0 34px rgba(6, 11, 23, 0.25);
+}
+
+.sidebar-brand {
+  padding: 2px 6px 22px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid rgba(201, 162, 77, 0.35);
+}
+
+.sidebar-logo {
+  width: 54px;
+  height: 54px;
+  border-radius: 14px;
+  box-shadow: 0 0 0 2px rgba(201, 162, 77, 0.55), 0 8px 22px rgba(0, 0, 0, 0.4);
+}
+
+.sidebar-brand-text strong {
+  font-size: 20px;
+  letter-spacing: 0.01em;
+}
+
+.sidebar-brand-text span {
+  margin-top: 3px;
+  color: var(--rc-gold);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.sidebar-menu {
+  gap: 4px;
+}
+
+.sidebar-link {
+  position: relative;
+  min-height: 48px;
+  padding: 11px 14px;
+  border-radius: 12px;
+  color: #c3cbdd;
+  font-size: 15.5px;
+  font-weight: 600;
+}
+
+.sidebar-link:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: transparent;
+  color: #ffffff;
+  transform: none;
+}
+
+.sidebar-link-active,
+.sidebar-link-active:hover {
+  background: linear-gradient(90deg, var(--rc-gold-bg), rgba(201, 162, 77, 0.03));
+  border-color: rgba(201, 162, 77, 0.3);
+  color: #ffffff;
+}
+
+.sidebar-link-active::before {
+  content: "";
+  position: absolute;
+  left: -14px;
+  top: 10px;
+  bottom: 10px;
+  width: 4px;
+  border-radius: 0 4px 4px 0;
+  background: var(--rc-gold);
+}
+
+.sidebar-icon {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  font-size: 21px;
+  color: #8f9bb5;
+}
+
+.sidebar-link-active .sidebar-icon {
+  color: var(--rc-gold);
+}
+
+/* ---------- Tipografia ---------- */
+
+.app-main h1 {
+  color: var(--rc-ink) !important;
+  font-size: 32px !important;
+  font-weight: 800 !important;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+}
+
+.app-main h2 {
+  color: var(--rc-ink) !important;
+  font-size: 20px !important;
+  font-weight: 750 !important;
+  letter-spacing: -0.01em;
+}
+
+.app-main h3 {
+  color: var(--rc-ink);
+  font-size: 16.5px;
+}
+
+.app-main p,
+.app-main label,
+.app-main span {
+  line-height: 1.45;
+}
+
+/* ---------- Cartões ---------- */
+
+.app-main section,
+.app-main article,
+.app-main .card,
+.app-main .dashboard-card,
+.app-main .summary-card,
+.app-main .stat-card {
+  background: var(--rc-surface) !important;
+  border: 1px solid var(--rc-line) !important;
+  border-radius: var(--rc-radius) !important;
+  box-shadow: var(--rc-shadow) !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Seções que apenas organizam uma grade de cartões não são cartões */
+.app-main section[style*="display: grid"] {
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+/* Elementos aninhados com fundo próprio (inline) não recebem sombra dupla */
+.app-main section section,
+.app-main section article,
+.app-main article article {
+  box-shadow: none !important;
+}
+
+.app-main [style*="rgb(37, 99, 235)"][style*="border-top"],
+.app-main [style*="rgb(124, 58, 237)"][style*="border-top"],
+.app-main [style*="rgb(220, 38, 38)"][style*="border-top"],
+.app-main [style*="rgb(22, 163, 74)"][style*="border-top"] {
+  border-top: 3px solid var(--rc-gold) !important;
+}
+
+/* ---------- Formulários ---------- */
+
+.app-main input,
+.app-main select,
+.app-main textarea {
+  min-height: 44px;
+  border: 1px solid #d3d8e3 !important;
+  border-radius: 12px !important;
+  background: #ffffff !important;
+  color: var(--rc-ink);
+  font-size: 15.5px;
+}
+
+.app-main input:focus,
+.app-main select:focus,
+.app-main textarea:focus {
+  border-color: var(--rc-gold) !important;
+  box-shadow: 0 0 0 3px rgba(201, 162, 77, 0.22) !important;
+  outline: none;
+}
+
+.app-main input[type="search"],
+.app-main input[placeholder*="esquis"],
+.app-main input[placeholder*="uscar"] {
+  padding-left: 14px;
+}
+
+.app-main label {
+  color: #364159;
+  font-weight: 650;
+}
+
+/* ---------- Botões ---------- */
+
+.app-main button {
+  min-height: 44px;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.005em;
+}
+
+.app-main button:hover {
+  transform: none;
+  filter: brightness(1.06);
+  box-shadow: 0 6px 16px rgba(10, 18, 38, 0.16);
+}
+
+/* Botões primários (azul padrão) viram azul-marinho com detalhe dourado */
+.app-main button[style*="rgb(37, 99, 235)"],
+.app-main button[style*="rgb(15, 23, 42)"] {
+  background: linear-gradient(180deg, var(--rc-navy-700), var(--rc-navy-800)) !important;
+  border: 1px solid rgba(201, 162, 77, 0.55) !important;
+  color: #ffffff !important;
+}
+
+/* ---------- Tabelas ---------- */
+
+.app-main table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 15px;
+}
+
+.app-main th {
+  padding: 11px 12px;
+  background: #f5f6fa;
+  color: var(--rc-muted);
+  font-size: 12.5px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.app-main td {
+  padding: 12px;
+  border-bottom: 1px solid var(--rc-line);
+}
+
+.app-main tbody tr:hover td {
+  background: #fafbfd;
+}
+
+/* ---------- Páginas com estilos em linha: grades mais aproveitadas ---------- */
+
+.app-main [style*="display: grid"][style*="auto-fit"],
+.app-main [style*="display: grid"][style*="auto-fill"] {
+  gap: 14px !important;
+}
+
+.app-main [style*="max-width"][style*="margin: 0px auto"] {
+  max-width: none !important;
+}
+
+/* ---------- Contas a pagar / Financeiro (classes existentes) ---------- */
+
+.dashboard-payables,
+.payables-section,
+.checks-section,
+.payables-panel {
+  border-radius: var(--rc-radius) !important;
+}
+
+.dashboard-payables-heading p,
+.payables-eyebrow {
+  color: var(--rc-gold) !important;
+  letter-spacing: 0.14em;
+}
+
+.dashboard-payables .dashboard-payables-heading a {
+  background: var(--rc-navy-800);
+  color: #ffffff;
+  border: 1px solid rgba(201, 162, 77, 0.55);
+  font-size: 13px;
+  padding: 10px 14px;
+  border-radius: 10px;
+}
+
+/* ---------- Celular ---------- */
+
+@media (max-width: 1100px) {
+  .app-main {
+    padding: 22px 18px 32px;
+  }
+}
+
+@media (max-width: 760px) {
+  .app-layout {
+    flex-direction: column;
+  }
+
+  .app-sidebar {
+    position: fixed;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    min-width: 0;
+    height: auto;
+    padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+    overflow: visible;
+    border-right: 0;
+    border-top: 1px solid rgba(201, 162, 77, 0.45);
+    box-shadow: 0 -10px 30px rgba(6, 11, 23, 0.35);
+  }
+
+  .sidebar-brand {
+    display: none;
+  }
+
+  .sidebar-menu {
+    flex-direction: row;
+    gap: 2px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .sidebar-menu::-webkit-scrollbar {
+    display: none;
+  }
+
+  .sidebar-link,
+  .sidebar-link-active,
+  .sidebar-link:hover {
+    flex: 0 0 auto;
+    flex-direction: column;
+    justify-content: center;
+    gap: 3px;
+    min-width: 72px;
+    min-height: 56px;
+    padding: 7px 6px;
+    border-radius: 10px;
+    text-align: center;
+  }
+
+  .sidebar-link-active::before {
+    left: 14px;
+    right: 14px;
+    top: 0;
+    bottom: auto;
+    width: auto;
+    height: 3px;
+    border-radius: 0 0 4px 4px;
+  }
+
+  .sidebar-icon {
+    width: auto;
+    font-size: 21px;
+  }
+
+  .sidebar-label {
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .app-main {
+    padding: 16px 12px 96px;
+  }
+
+  .app-main h1 {
+    font-size: 26px !important;
+  }
+
+  .app-main h2 {
+    font-size: 18px !important;
+  }
+
+  .app-main input,
+  .app-main select,
+  .app-main textarea {
+    min-height: 48px;
+    font-size: 16px !important;
+  }
+
+  .app-main table {
+    display: block;
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+}

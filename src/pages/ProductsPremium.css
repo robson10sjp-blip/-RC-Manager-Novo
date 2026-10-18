@@ -1,0 +1,209 @@
+.pr-kpis {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.pr-kpi {
+  min-width: 0;
+}
+
+.pr-kpi strong {
+  overflow-wrap: anywhere;
+}
+
+.cl-kpi-green { border-top-color: var(--rc-green) !important; }
+.cl-kpi-green strong { color: var(--rc-green); }
+
+.pr-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.pr-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px !important;
+  border-top: 4px solid var(--rc-green) !important;
+  border-radius: 16px !important;
+}
+
+.pr-card.pr-low { border-top-color: var(--rc-gold) !important; background: #fffdf6 !important; }
+.pr-card.pr-out { border-top-color: var(--rc-red) !important; background: #fff8f8 !important; }
+
+.pr-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pr-title {
+  min-width: 0;
+}
+
+.pr-title h3 {
+  margin: 0;
+  overflow: hidden;
+  font-size: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-title p {
+  margin: 3px 0 0;
+  color: var(--rc-muted);
+  font-size: 13.5px;
+}
+
+.pr-card .cl-status {
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.pr-badge-in { background: #dcfce7; color: #166534; }
+.pr-badge-low { background: #fdf3d8; color: #7a5a14; }
+.pr-badge-out { background: #fee2e2; color: #991b1b; }
+
+.pr-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.pr-tags span {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #f1f3f8;
+  color: #364159;
+  font-size: 12.5px;
+  font-weight: 650;
+}
+
+.pr-numbers {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: #f7f8fb;
+}
+
+.pr-numbers dt {
+  color: var(--rc-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.pr-numbers dd {
+  margin: 2px 0 0;
+  font-size: 15.5px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.pr-sale { color: #8a6a1f; }
+.pr-qty { font-size: 19px !important; }
+.pr-qty-in { color: var(--rc-green); }
+.pr-qty-low { color: #a16207; }
+.pr-qty-out { color: var(--rc-red); }
+
+.pr-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.app-main .pr-actions .cl-btn {
+  min-width: 0;
+  padding: 0 8px;
+}
+
+/* Modal */
+
+.app-main.pr-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow-y: auto;
+  background: rgba(7, 12, 28, 0.55) !important;
+}
+
+.pr-modal {
+  display: grid;
+  gap: 16px;
+  width: min(640px, 100%);
+  max-height: calc(100dvh - 32px);
+  padding: 22px !important;
+  overflow-y: auto;
+  border: 1px solid rgba(201, 162, 77, 0.45) !important;
+  border-radius: 20px !important;
+  background: #fff !important;
+  box-shadow: 0 24px 60px rgba(7, 12, 28, 0.35) !important;
+}
+
+.pr-modal-head,
+.pr-modal-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.pr-modal-head h2 {
+  margin: 0;
+}
+
+.pr-modal-foot {
+  justify-content: flex-end;
+}
+
+.pr-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.pr-span {
+  grid-column: 1 / -1;
+}
+
+.pr-field {
+  display: grid;
+  gap: 5px;
+  color: var(--rc-muted);
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pr-field input,
+.pr-field select {
+  width: 100%;
+  min-width: 0;
+}
+
+@media (max-width: 1180px) {
+  .pr-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 760px) {
+  .pr-kpis { gap: 10px; }
+  .pr-kpi { padding: 14px !important; }
+  .pr-kpi.cl-kpi-navy { grid-column: auto; }
+  .pr-grid { grid-template-columns: minmax(0, 1fr); }
+  .pr-form-grid { gap: 10px; }
+  .pr-modal-foot { flex-direction: column-reverse; }
+  .pr-modal-foot .cl-btn { width: 100%; }
+  .app-main.pr-overlay { align-items: end; padding: 0; }
+  .pr-modal { max-height: 92dvh; border-radius: 20px 20px 0 0 !important; }
+}
