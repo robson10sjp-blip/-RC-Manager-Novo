@@ -208,3 +208,73 @@ export async function shareReceiptFile(file) {
     throw error;
   }
 }
+
+export function getReceiptImageFileName(receiptNumber) {
+  const number = String(receiptNumber ?? "").replace(/\D/g, "");
+  return number
+    ? `Recibo-RC-Confeccoes-${number.padStart(6, "0")}.png`
+    : "Recibo-RC-Confeccoes.png";
+}
+
+function canvasToBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) =>
+        blob ? resolve(blob) : reject(new Error("Falha ao gerar a imagem.")),
+      "image/png"
+    );
+  });
+}
+
+// Captura cada página do recibo (mesmo layout da visualização) e empilha em uma única imagem PNG.
+export async function buildReceiptImageFile(element, receiptNumber) {
+  if (!element) throw new Error("Recibo não encontrado.");
+
+  if (document.fonts?.ready) await document.fonts.ready;
+
+  const pages = Array.from(element.querySelectorAll("[data-rcp-page]"));
+  if (pages.length === 0) {
+    throw new Error("Não foi possível localizar as páginas do recibo.");
+  }
+
+  const images = Array.from(element.querySelectorAll("img"));
+  await Promise.all(
+    images.map((img) =>
+      img.complete
+        ? img.decode?.().catch(() => undefined)
+        : new Promise((resolve) => {
+            img.addEventListener("load", resolve, { once: true });
+            img.addEventListener("error", resolve, { once: true });
+          })
+    )
+  );
+
+  const canvases = [];
+  for (let index = 0; index < pages.length; index += 1) {
+    const canvas = await capturePage(pages[index], index);
+    if (!canvas.width || !canvas.height) {
+      throw new Error("Não foi possível desenhar o recibo.");
+    }
+    canvases.push(canvas);
+  }
+
+  let finalCanvas = canvases[0];
+  if (canvases.length > 1) {
+    finalCanvas = document.createElement("canvas");
+    finalCanvas.width = Math.max(...canvases.map((c) => c.width));
+    finalCanvas.height = canvases.reduce((sum, c) => sum + c.height, 0);
+    const context = finalCanvas.getContext("2d");
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
+    let offset = 0;
+    canvases.forEach((c) => {
+      context.drawImage(c, 0, offset);
+      offset += c.height;
+    });
+  }
+
+  const blob = await canvasToBlob(finalCanvas);
+  return new File([blob], getReceiptImageFileName(receiptNumber), {
+    type: "image/png",
+  });
+}

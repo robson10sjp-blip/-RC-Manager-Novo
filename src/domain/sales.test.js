@@ -612,3 +612,143 @@ test("reports legacy balance differences only as reconciliation candidates", () 
     },
   ]);
 });
+
+import {
+  applyStockDelta,
+  calculateStockDeltas,
+  getMaxEditableQuantity,
+} from "./sales.js";
+
+// Simula a transação: calcula tudo e só confirma se nenhum produto falhar.
+function editSale(stock, oldItems, newItems) {
+  const next = { ...stock };
+  for (const [productId, delta] of calculateStockDeltas(oldItems, newItems)) {
+    next[productId] = applyStockDelta(next[productId], delta, productId);
+  }
+  return next;
+}
+
+const pants36 = (quantity) => ({ productId: "calca-36", quantity });
+const pants38 = (quantity) => ({ productId: "calca-38", quantity });
+const shirt = (quantity) => ({ productId: "blusa-m", quantity });
+
+test("edit without changing items does not touch stock (5 stock, sold 3)", () => {
+  const stock = { "calca-36": 2 };
+  assert.equal(calculateStockDeltas([pants36(3)], [pants36(3)]).size, 0);
+  assert.deepEqual(editSale(stock, [pants36(3)], [pants36(3)]), stock);
+});
+
+test("adding a new product only requires stock for the added item", () => {
+  const stock = { "calca-36": 2, "blusa-m": 4 };
+  assert.deepEqual(
+    editSale(stock, [pants36(3)], [pants36(3), shirt(4)]),
+    { "calca-36": 2, "blusa-m": 0 }
+  );
+  assert.throws(
+    () => editSale(stock, [pants36(3)], [pants36(3), shirt(5)]),
+    /Estoque insuficiente/
+  );
+});
+
+test("increasing deducts only the difference", () => {
+  assert.deepEqual(
+    editSale({ "calca-36": 2 }, [pants36(3)], [pants36(4)]),
+    { "calca-36": 1 }
+  );
+  assert.throws(
+    () => editSale({ "calca-36": 2 }, [pants36(3)], [pants36(6)]),
+    /Estoque insuficiente/
+  );
+});
+
+test("decreasing or removing returns stock", () => {
+  assert.deepEqual(
+    editSale({ "calca-36": 2 }, [pants36(3)], [pants36(2)]),
+    { "calca-36": 3 }
+  );
+  assert.deepEqual(
+    editSale({ "calca-36": 2, "blusa-m": 1 }, [pants36(3), shirt(1)], [shirt(1)]),
+    { "calca-36": 5, "blusa-m": 1 }
+  );
+  assert.deepEqual(
+    editSale({ "calca-36": 2 }, [pants36(3)], [pants36(0)]),
+    { "calca-36": 5 }
+  );
+});
+
+test("changing size returns the old size and deducts the new one", () => {
+  assert.deepEqual(
+    editSale({ "calca-36": 2, "calca-38": 1 }, [pants36(3)], [pants38(1)]),
+    { "calca-36": 5, "calca-38": 0 }
+  );
+  assert.throws(
+    () => editSale({ "calca-36": 2, "calca-38": 1 }, [pants36(3)], [pants38(2)]),
+    /Estoque insuficiente/
+  );
+});
+
+test("multiple products and repeated lines are grouped", () => {
+  const deltas = calculateStockDeltas(
+    [pants36(2), pants36(1), pants38(2), shirt(1)],
+    [pants36(3), pants38(1), shirt(2), { productId: "novo", quantity: 2 }]
+  );
+  assert.deepEqual(Object.fromEntries(deltas), {
+    "calca-38": -1,
+    "blusa-m": 1,
+    novo: 2,
+  });
+});
+
+test("a failed edit leaves stock untouched (all-or-nothing)", () => {
+  const stock = { "calca-36": 2, "blusa-m": 0 };
+  const snapshot = { ...stock };
+  assert.throws(() =>
+    editSale(stock, [pants36(3)], [pants36(1), shirt(1)])
+  );
+  assert.deepEqual(stock, snapshot);
+});
+
+test("stock never goes negative and max editable includes the original quantity", () => {
+  assert.throws(() => applyStockDelta(0, 1, "x"), /Estoque insuficiente/);
+  assert.equal(applyStockDelta(2, -3), 5);
+  assert.equal(getMaxEditableQuantity(2, 3), 5);
+  assert.equal(getMaxEditableQuantity(0, 0), 0);
+});
+
+test("deleting a sale returns each product exactly once, summing repeated lines", () => {
+  const items = [pants36(2), pants36(1), pants38(2)];
+  const stock = { "calca-36": 2, "calca-38": 0 };
+  const after = editSale(stock, items, []);
+  assert.deepEqual(after, { "calca-36": 5, "calca-38": 2 });
+  // estoque original (5 e 2) restaurado, sem devolver duas vezes
+  assert.equal(calculateStockDeltas(items, []).get("calca-36"), -3);
+});
+
+test("deleting a sale with no valid items returns nothing", () => {
+  assert.equal(calculateStockDeltas([{ quantity: 2 }], []).size, 0);
+  assert.equal(calculateStockDeltas([], []).size, 0);
+});
+
+import { formatItemLabel } from "./sales.js";
+
+test("item label shows the selected size and is not duplicated", () => {
+  assert.equal(formatItemLabel({ name: "Calça feminina", size: "36" }), "Calça feminina — Tam. 36");
+  assert.equal(formatItemLabel({ name: "Calça feminina — Tam. 36", size: "36" }), "Calça feminina — Tam. 36");
+  assert.equal(formatItemLabel({ name: "Blusa" }), "Blusa");
+});
+
+test("receipt items keep each size separate without changing amounts", () => {
+  const sale = {
+    id: "abc123",
+    items: [
+      { productId: "a", name: "Calça feminina", size: "36", quantity: 1, unitPrice: 50, subtotal: 50 },
+      { productId: "b", name: "Calça feminina", size: "38", quantity: 2, unitPrice: 50, subtotal: 100 },
+    ],
+    total: 150,
+  };
+  const receipt = prepareSaleReceipt(sale);
+  assert.deepEqual(receipt.items.map((item) => item.name), ["Calça feminina — Tam. 36", "Calça feminina — Tam. 38"]);
+  assert.equal(receipt.items[1].subtotal, 100);
+  assert.equal(receipt.total, 150);
+  assert.equal(sale.items[0].name, "Calça feminina");
+});

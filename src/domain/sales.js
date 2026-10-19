@@ -480,6 +480,15 @@ export function analyzeLegacyBalances(clients = [], sales = []) {
   });
 }
 
+// "Calça feminina — Tam. 36". Não duplica o tamanho se o nome já o contém.
+export function formatItemLabel(item = {}) {
+  const name = String(item.name || item.productName || "").trim();
+  const size = String(item.size || "").trim();
+  if (!size) return name;
+  if (/\s[—-]\s*Tam\.\s/i.test(name)) return name;
+  return `${name} — Tam. ${size}`;
+}
+
 export function prepareSaleReceipt(sale, now = new Date()) {
   const saleDate =
     toDate(sale.saleDate) ||
@@ -507,6 +516,9 @@ export function prepareSaleReceipt(sale, now = new Date()) {
 
   return {
     ...sale,
+    items: Array.isArray(sale.items)
+      ? sale.items.map((item) => ({ ...item, name: formatItemLabel(item) }))
+      : sale.items,
     saleDate,
     dueDate,
     receiptNumber:
@@ -516,4 +528,58 @@ export function prepareSaleReceipt(sale, now = new Date()) {
           ? saleId.slice(-6)
           : String(now.getTime()).slice(-6),
   };
+}
+
+function sumQuantitiesByProduct(items = []) {
+  const totals = new Map();
+  for (const item of items) {
+    if (!item?.productId) continue;
+    const quantity = Math.max(0, Math.floor(Number(item.quantity) || 0));
+    totals.set(item.productId, (totals.get(item.productId) || 0) + quantity);
+  }
+  return totals;
+}
+
+// Compara os itens gravados com os editados. Cada produto (ID único, que já
+// representa tamanho/numeração) recebe a diferença: positiva = baixa adicional,
+// negativa = devolução. Itens repetidos são agrupados e diferença zero é omitida.
+export function calculateStockDeltas(oldItems = [], newItems = []) {
+  const oldTotals = sumQuantitiesByProduct(oldItems);
+  const newTotals = sumQuantitiesByProduct(newItems);
+  const deltas = new Map();
+
+  for (const productId of new Set([...oldTotals.keys(), ...newTotals.keys()])) {
+    const difference =
+      (newTotals.get(productId) || 0) - (oldTotals.get(productId) || 0);
+    if (difference !== 0) deltas.set(productId, difference);
+  }
+
+  return deltas;
+}
+
+// Aplica a diferença ao estoque atual. Só exige estoque para a quantidade
+// adicional; nunca permite resultado negativo.
+export function applyStockDelta(currentStock, delta, productName = "produto") {
+  const stock = Number(currentStock) || 0;
+  const updated = stock - delta;
+
+  if (delta > 0 && delta > stock) {
+    throw new Error(
+      `Estoque insuficiente para ${productName}. Quantidade adicional: ${delta}. Disponível: ${stock}.`
+    );
+  }
+
+  if (updated < 0) {
+    throw new Error(`Estoque inválido para ${productName}.`);
+  }
+
+  return updated;
+}
+
+// Maior quantidade que a linha pode ter ao editar: estoque atual + o que a venda já reservou.
+export function getMaxEditableQuantity(currentStock, originalQuantity = 0) {
+  return (
+    Math.max(0, Number(currentStock) || 0) +
+    Math.max(0, Math.floor(Number(originalQuantity) || 0))
+  );
 }

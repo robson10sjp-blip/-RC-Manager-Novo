@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "../components/PageHeader.jsx";
+import QuickSalePicker from "../components/QuickSalePicker.jsx";
 import { onAuthStateChanged } from "firebase/auth";
 import { useLocation } from "react-router-dom";
 import {
@@ -17,6 +18,7 @@ import {
 } from "react-icons/lu";
 import ReceiptTemplate from "../components/receipts/ReceiptTemplate";
 import {
+  buildReceiptImageFile,
   buildReceiptPdfFile,
   canShareReceiptFile,
   downloadReceiptFile,
@@ -28,12 +30,15 @@ import {
   adjustLegacyClientDebt,
   applyPaymentToSale,
   calculateSaleAmounts,
+  formatItemLabel,
   isSaleOverdue as checkSaleOverdue,
   organizeSalesByTrip2026,
   prepareSaleReceipt,
   reusePaymentOperation,
   updateStockAfterSale,
-  updateStockAfterSaleEdit,
+  applyStockDelta,
+  calculateStockDeltas,
+  getMaxEditableQuantity,
 } from "../domain/sales";
 import { toDate, toDateInputValue } from "../utils/dates";
 import {
@@ -85,6 +90,8 @@ export default function SalesPage() {
   const [clientSearch, setClientSearch] = useState("");
   const [receiptPdf, setReceiptPdf] = useState({ key: null, status: "idle", file: null });
   const [receiptNotice, setReceiptNotice] = useState("");
+  const [receiptImage, setReceiptImage] = useState({ key: null, file: null });
+  const [imageBusy, setImageBusy] = useState(false);
   const [sortOrder, setSortOrder] = useState("newest");
   const [salesLoadError, setSalesLoadError] = useState("");
 
@@ -96,6 +103,7 @@ export default function SalesPage() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editingSaleId, setEditingSaleId] = useState(null);
+  const [quickMode, setQuickMode] = useState(false);
   const [receivingSaleId, setReceivingSaleId] = useState(null);
   const receivingSaleLock = useRef(false);
   const pendingPaymentOperation = useRef(null);
@@ -420,6 +428,46 @@ export default function SalesPage() {
     }));
   }
 
+  // Quantidade que a venda em edição já reservou por produto (já descontada do estoque).
+  const originalQuantities = new Map();
+  if (editingSaleId) {
+    const originalSale = sales.find(
+      (currentSale) => currentSale.id === editingSaleId
+    );
+    for (const originalItem of originalSale?.items || []) {
+      originalQuantities.set(
+        originalItem.productId,
+        (originalQuantities.get(originalItem.productId) || 0) +
+          Number(originalItem.quantity || 0)
+      );
+    }
+  }
+
+  // A Venda Rápida só altera sale.items; o salvamento continua sendo o da venda tradicional.
+  function handleQuickItemsChange(items) {
+    setSale((current) => {
+      const updatedSale = { ...current, items };
+
+      if (current.paymentMethod === "avista") {
+        updatedSale.amountPaid = String(
+          items.reduce(
+            (sum, item) =>
+              sum + Number(item.quantity || 0) * Number(item.price || 0),
+            0
+          )
+        );
+      }
+
+      return updatedSale;
+    });
+  }
+
+  function scrollToFinishSale() {
+    document
+      .getElementById("sale-finish")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   function addItem() {
     setSale((current) => ({
       ...current,
@@ -514,6 +562,7 @@ export default function SalesPage() {
   }
 
   function clearSale() {
+    setQuickMode(false);
     setSale(createEmptySale());
     setClientSearch("");
 
@@ -788,6 +837,14 @@ export default function SalesPage() {
         console.error("Erro ao gerar PDF do recibo:", error);
         if (!cancelled) setReceiptPdf({ key: receiptKey, status: "error", file: null });
       }
+
+      // Pré-gera a imagem PNG para o compartilhamento ocorrer logo após o toque (exigência do iOS).
+      try {
+        const image = await buildReceiptImageFile(receiptRef.current, receiptKey);
+        if (!cancelled) setReceiptImage({ key: receiptKey, file: image });
+      } catch (error) {
+        console.error("Erro ao pré-gerar imagem do recibo:", error);
+      }
     }, 400);
 
     return () => {
@@ -829,6 +886,56 @@ export default function SalesPage() {
         "Não foi possível abrir o compartilhamento. O PDF foi baixado para você enviar manualmente."
       );
       downloadReceiptFile(file);
+    }
+  }
+
+  async function getReceiptImage() {
+    if (receiptImage.key === receiptKey && receiptImage.file) return receiptImage.file;
+    const file = await buildReceiptImageFile(receiptRef.current, receiptKey);
+    setReceiptImage({ key: receiptKey, file });
+    return file;
+  }
+
+  async function handleDownloadReceiptImage() {
+    if (!receiptRef.current || imageBusy) return;
+    setReceiptNotice("");
+    setImageBusy(true);
+    try {
+      downloadReceiptFile(await getReceiptImage());
+    } catch (error) {
+      console.error("Erro ao gerar imagem do recibo:", error);
+      setReceiptNotice("Não foi possível gerar a imagem do recibo.");
+    } finally {
+      setImageBusy(false);
+    }
+  }
+
+  async function handleShareReceiptImage() {
+    if (!receiptRef.current || imageBusy) return;
+    setReceiptNotice("");
+    setImageBusy(true);
+    let file = null;
+    try {
+      file = await getReceiptImage();
+      const result = await shareReceiptFile(file);
+      if (result === "unsupported") {
+        downloadReceiptFile(file);
+        setReceiptNotice(
+          "Este dispositivo não permite compartilhar a imagem diretamente. A imagem foi baixada para você enviar pelo WhatsApp."
+        );
+      }
+    } catch (error) {
+      console.error("Erro ao compartilhar imagem do recibo:", error);
+      if (file) {
+        downloadReceiptFile(file);
+        setReceiptNotice(
+          "Não foi possível abrir o compartilhamento. A imagem foi baixada para você enviar manualmente."
+        );
+      } else {
+        setReceiptNotice("Não foi possível gerar a imagem do recibo.");
+      }
+    } finally {
+      setImageBusy(false);
     }
   }
 
@@ -912,23 +1019,28 @@ export default function SalesPage() {
           legacyClientData = legacyClientSnapshot.data();
         }
 
+        // Exclusão = edição para zero itens: cada produto devolve a soma das suas linhas.
+        const returnedQuantities = new Map(
+          [...calculateStockDeltas(savedSale.items, [])].map(
+            ([productId, delta]) => [productId, -delta]
+          )
+        );
+
         const productDataList = [];
 
-        for (const item of savedSale.items || []) {
+        for (const [productId, quantity] of returnedQuantities) {
           const productReference = doc(
             db,
             "users",
             user.uid,
             "products",
-            item.productId
+            productId
           );
 
-          const productSnapshot = await transaction.get(productReference);
-
           productDataList.push({
-            item,
+            quantity,
             reference: productReference,
-            snapshot: productSnapshot,
+            snapshot: await transaction.get(productReference),
           });
         }
 
@@ -939,8 +1051,7 @@ export default function SalesPage() {
             );
 
             transaction.update(productData.reference, {
-              quantity:
-                currentQuantity + Number(productData.item.quantity || 0),
+              quantity: currentQuantity + productData.quantity,
               updatedAt: serverTimestamp(),
             });
           }
@@ -1363,59 +1474,42 @@ export default function SalesPage() {
         newLegacyClientData = newClientSnapshot.data();
       }
 
+      const oldItemsByProduct = new Map(
+        (oldSale.items || []).map((oldItem) => [oldItem.productId, oldItem])
+      );
+      const stockDeltas = calculateStockDeltas(oldSale.items, sale.items);
+
+      // Só os produtos com diferença ou linhas novas precisam ser lidos; itens inalterados não tocam o estoque.
+      const productIdsToRead = new Set([
+        ...stockDeltas.keys(),
+        ...sale.items
+          .map((newItem) => newItem.productId)
+          .filter((productId) => !oldItemsByProduct.has(productId)),
+      ]);
       const productReferences = new Map();
-
-      for (const oldItem of oldSale.items || []) {
-        productReferences.set(
-          oldItem.productId,
-          doc(
-            db,
-            "users",
-            user.uid,
-            "products",
-            oldItem.productId
-          )
-        );
-      }
-
-      for (const newItem of sale.items) {
-        productReferences.set(
-          newItem.productId,
-          doc(
-            db,
-            "users",
-            user.uid,
-            "products",
-            newItem.productId
-          )
-        );
-      }
-
       const productSnapshots = new Map();
 
-      for (const [productId, reference] of productReferences) {
+      for (const productId of productIdsToRead) {
+        const reference = doc(db, "users", user.uid, "products", productId);
+        productReferences.set(productId, reference);
         productSnapshots.set(productId, await transaction.get(reference));
       }
 
-      const oldQuantities = new Map();
-      const newQuantities = new Map();
-
-      for (const oldItem of oldSale.items || []) {
-        oldQuantities.set(
-          oldItem.productId,
-          Number(oldItem.quantity || 0)
-        );
-      }
-
-      for (const newItem of sale.items) {
-        newQuantities.set(
-          newItem.productId,
-          Number(newItem.quantity || 0)
-        );
-      }
-
       const savedItems = sale.items.map((newItem) => {
+        const oldItem = oldItemsByProduct.get(newItem.productId);
         const snapshot = productSnapshots.get(newItem.productId);
+        const newQuantity = Number(newItem.quantity || 0);
+        const unitPrice = Number(newItem.price || 0);
+
+        // Linha já existente: preserva os dados históricos gravados na venda.
+        if (oldItem) {
+          return {
+            ...oldItem,
+            quantity: newQuantity,
+            unitPrice,
+            subtotal: newQuantity * unitPrice,
+          };
+        }
 
         if (!snapshot?.exists()) {
           throw new Error(
@@ -1424,18 +1518,6 @@ export default function SalesPage() {
         }
 
         const product = snapshot.data();
-        const currentQuantity = Number(product.quantity || 0);
-        const oldQuantity = Number(
-          oldQuantities.get(newItem.productId) || 0
-        );
-        const newQuantity = Number(newItem.quantity || 0);
-        const available = currentQuantity + oldQuantity;
-
-        if (newQuantity > available) {
-          throw new Error(
-            `Estoque insuficiente para ${product.name}. Disponível para edição: ${available}.`
-          );
-        }
 
         return {
           productId: snapshot.id,
@@ -1445,28 +1527,28 @@ export default function SalesPage() {
           size: product.size || "",
           color: product.color || "",
           quantity: newQuantity,
-          unitPrice: Number(newItem.price || 0),
-          subtotal:
-            newQuantity * Number(newItem.price || 0),
+          unitPrice,
+          subtotal: newQuantity * unitPrice,
         };
       });
 
-      for (const [productId, reference] of productReferences) {
+      for (const [productId, delta] of stockDeltas) {
         const snapshot = productSnapshots.get(productId);
 
-        if (!snapshot?.exists()) continue;
+        if (!snapshot?.exists()) {
+          if (delta > 0) {
+            throw new Error(
+              "Um dos produtos selecionados não foi encontrado."
+            );
+          }
+          // Produto removido do cadastro: não há estoque a devolver.
+          continue;
+        }
 
-        const currentQuantity = Number(snapshot.data().quantity || 0);
-        const oldQuantity = Number(oldQuantities.get(productId) || 0);
-        const newQuantity = Number(newQuantities.get(productId) || 0);
-        const updatedQuantity = updateStockAfterSaleEdit(
-          currentQuantity,
-          oldQuantity,
-          newQuantity
-        );
+        const product = snapshot.data();
 
-        transaction.update(reference, {
-          quantity: updatedQuantity,
+        transaction.update(productReferences.get(productId), {
+          quantity: applyStockDelta(product.quantity, delta, product.name),
           updatedAt: serverTimestamp(),
         });
       }
@@ -1771,18 +1853,58 @@ export default function SalesPage() {
               Produtos da venda
             </h3>
 
-            <button
-              type="button"
-              onClick={addItem}
-              disabled={saving}
-              style={styles.addButton}
-            >
-              + Adicionar produto
-            </button>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!quickMode) {
+                    setSale((current) => ({
+                      ...current,
+                      items: current.items.filter((item) => item.productId),
+                    }));
+                  } else {
+                    setSale((current) => ({
+                      ...current,
+                      items:
+                        current.items.length > 0
+                          ? current.items
+                          : [{ ...emptyItem }],
+                    }));
+                  }
+                  setQuickMode((current) => !current);
+                }}
+                disabled={saving}
+                style={styles.addButton}
+              >
+                {quickMode ? "Venda tradicional" : "⚡ Venda Rápida"}
+              </button>
+
+              {!quickMode && (
+                <button
+                  type="button"
+                  onClick={addItem}
+                  disabled={saving}
+                  style={styles.addButton}
+                >
+                  + Adicionar produto
+                </button>
+              )}
+            </div>
           </div>
 
+          {quickMode && (
+            <QuickSalePicker
+              products={products}
+              items={sale.items}
+              originalQuantities={originalQuantities}
+              disabled={saving}
+              onChange={handleQuickItemsChange}
+              onFinish={scrollToFinishSale}
+            />
+          )}
+
           <div style={styles.itemsList}>
-            {sale.items.map((item, index) => {
+            {!quickMode && sale.items.map((item, index) => {
               const product = products.find(
                 (currentProduct) =>
                   currentProduct.id ===
@@ -1822,14 +1944,19 @@ export default function SalesPage() {
                               currentProduct.id
                             }
                             disabled={
-                              Number(
-                                currentProduct.quantity ||
-                                  0
+                              getMaxEditableQuantity(
+                                currentProduct.quantity,
+                                originalQuantities.get(
+                                  currentProduct.id
+                                )
                               ) <= 0
                             }
                           >
-                            {currentProduct.name} —{" "}
-                            {currentProduct.code} —{" "}
+                            {currentProduct.name}
+                            {currentProduct.size
+                              ? ` — Tam. ${currentProduct.size}`
+                              : ""}{" "}
+                            — {currentProduct.code} —{" "}
                             Estoque:{" "}
                             {Number(
                               currentProduct.quantity ||
@@ -1845,8 +1972,9 @@ export default function SalesPage() {
                     <p style={styles.stockInfo}>
                       Estoque disponível:{" "}
                       <strong>
-                        {Number(
-                          product.quantity || 0
+                        {getMaxEditableQuantity(
+                          product.quantity,
+                          originalQuantities.get(product.id)
                         )}
                       </strong>
                     </p>
@@ -1860,9 +1988,11 @@ export default function SalesPage() {
                         min="1"
                         max={
                           product
-                            ? Number(
-                                product.quantity ||
-                                  0
+                            ? getMaxEditableQuantity(
+                                product.quantity,
+                                originalQuantities.get(
+                                  product.id
+                                )
                               )
                             : undefined
                         }
@@ -2008,6 +2138,7 @@ export default function SalesPage() {
           </div>
 
           <button
+            id="sale-finish"
             type="submit"
             disabled={saving}
             style={{
@@ -2171,7 +2302,7 @@ export default function SalesPage() {
                   <ul className="sl-products">
                     {(currentSale.items || []).map((item, index) => (
                       <li key={`${currentSale.id}-${index}`}>
-                        <span>{item.quantity}x {item.name}</span>
+                        <span>{item.quantity}x {formatItemLabel(item)}</span>
                         <strong>{formatCurrency(item.subtotal)}</strong>
                       </li>
                     ))}
@@ -2281,6 +2412,24 @@ export default function SalesPage() {
                 style={styles.receiptDownloadButton}
               >
                 ⬇️ Baixar PDF
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownloadReceiptImage}
+                disabled={imageBusy}
+                style={{ ...styles.receiptImageButton, opacity: imageBusy ? 0.65 : 1 }}
+              >
+                🖼️ Baixar imagem
+              </button>
+
+              <button
+                type="button"
+                onClick={handleShareReceiptImage}
+                disabled={imageBusy}
+                style={{ ...styles.receiptImageButton, opacity: imageBusy ? 0.65 : 1 }}
+              >
+                {imageBusy ? "Gerando imagem..." : "📲 Enviar imagem"}
               </button>
             </div>
 
@@ -2920,6 +3069,18 @@ const styles = {
     color: "#111111",
     fontWeight: "800",
     cursor: "pointer",
+  },
+
+  receiptImageButton: {
+    border: 0,
+    borderRadius: "9px",
+    padding: "11px 16px",
+    background: "#0b1f4d",
+    color: "#f5c542",
+    fontWeight: "800",
+    cursor: "pointer",
+    flex: "1 1 140px",
+    minWidth: 0,
   },
 
   deleteSaleButton: {
