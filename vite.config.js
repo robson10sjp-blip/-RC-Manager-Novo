@@ -67,6 +67,9 @@ export default defineConfig({
 
       workbox: {
         navigateFallback: "/index.html",
+        cleanupOutdatedCaches: true,
+        skipWaiting: true,
+        clientsClaim: true,
         maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
 
         runtimeCaching: [
