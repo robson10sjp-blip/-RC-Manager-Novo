@@ -95,6 +95,88 @@ service cloud.firestore {
         && data.updatedAt == request.time;
     }
 
+    function giftStockChange(uid, gift, returning) {
+      let before = get(/databases/$(database)/documents/users/$(uid)/products/$(gift.productId)).data;
+      let after = getAfter(/databases/$(database)/documents/users/$(uid)/products/$(gift.productId)).data;
+      return nonNegativeInt(before.quantity)
+        && nonNegativeInt(after.quantity)
+        && after.quantity == before.quantity + (returning ? gift.quantity : -gift.quantity)
+        && after.diff(before).affectedKeys().hasOnly(['quantity', 'updatedAt'])
+        && after.updatedAt == request.time;
+    }
+
+    function giftMovementMatches(uid, giftId, gift, movementId, returning) {
+      let movement = getAfter(/databases/$(database)/documents/users/$(uid)/stockMovements/$(movementId)).data;
+      let product = get(/databases/$(database)/documents/users/$(uid)/products/$(gift.productId)).data;
+      return !exists(/databases/$(database)/documents/users/$(uid)/stockMovements/$(movementId))
+        && movement.type == (returning ? 'cancelamento_brinde' : 'brinde')
+        && movement.giftId == giftId
+        && movement.clientId == gift.clientId
+        && movement.productId == gift.productId
+        && movement.quantity == gift.quantity
+        && movement.unitCost == gift.unitCost
+        && movement.totalCost == gift.totalCost
+        && movement.get('tripId', '') == gift.get('tripId', '')
+        && movement.get('tripCity', '') == gift.get('tripCity', '')
+        && movement.previousQuantity == product.quantity
+        && movement.newQuantity == product.quantity + (returning ? gift.quantity : -gift.quantity)
+        && movement.createdAt == request.time;
+    }
+
+    function validGiftCreate(uid, giftId) {
+      let gift = request.resource.data;
+      let product = get(/databases/$(database)/documents/users/$(uid)/products/$(gift.productId)).data;
+      return gift.keys().hasOnly([
+          'clientId', 'productId', 'productName', 'quantity', 'giftDate',
+          'tripId', 'tripName', 'tripCity', 'cityKey', 'unitCost', 'totalCost',
+          'status', 'stockMovementId', 'createdAt'
+        ])
+        && gift.clientId is string && gift.productId is string
+        && gift.productName == product.get('name', '')
+        && gift.tripCity == get(/databases/$(database)/documents/users/$(uid)/clients/$(gift.clientId)).data.city
+        && gift.cityKey is string && gift.cityKey.size() > 0
+        && validTripReference(uid, gift)
+        && nonNegativeInt(gift.quantity) && gift.quantity > 0
+        && nonNegativeNumber(gift.unitCost)
+        && gift.unitCost == float(product.costPrice)
+        && nonNegativeNumber(gift.totalCost)
+        // Mesmo arredondamento de calculateGiftCost, incluindo Number.EPSILON.
+        && math.abs(gift.totalCost - math.round(
+          (gift.unitCost * gift.quantity + 0.0000000000000002220446049250313) * 100
+        ) / 100.0) < 0.000001
+        && gift.status == 'active'
+        && gift.giftDate == request.time && gift.createdAt == request.time
+        && gift.stockMovementId == 'gift-' + giftId
+        && giftStockChange(uid, gift, false)
+        && giftMovementMatches(uid, giftId, gift, gift.stockMovementId, false);
+    }
+
+    function validGiftCancel(uid, giftId) {
+      let before = resource.data;
+      let after = request.resource.data;
+      return before.status == 'active' && after.status == 'cancelled'
+        && after.diff(before).affectedKeys().hasOnly(['status', 'cancelledAt', 'cancelStockMovementId'])
+        && nonNegativeInt(before.quantity) && before.quantity > 0
+        && nonNegativeNumber(before.unitCost) && nonNegativeNumber(before.totalCost)
+        && after.cancelledAt == request.time
+        && after.cancelStockMovementId == 'gift-cancel-' + giftId
+        && giftStockChange(uid, before, true)
+        && giftMovementMatches(uid, giftId, before, after.cancelStockMovementId, true);
+    }
+
+    function validGiftMovement(uid, movementId) {
+      let data = request.resource.data;
+      let gift = getAfter(/databases/$(database)/documents/users/$(uid)/clientGifts/$(data.giftId)).data;
+      let giftPath = /databases/$(database)/documents/users/$(uid)/clientGifts/$(data.giftId);
+      let returning = data.type == 'cancelamento_brinde';
+      return (returning
+          ? get(giftPath).data.status == 'active' && gift.status == 'cancelled'
+            && gift.cancelStockMovementId == movementId
+          : !exists(giftPath) && gift.status == 'active' && gift.stockMovementId == movementId)
+        && giftStockChange(uid, gift, returning)
+        && giftMovementMatches(uid, data.giftId, gift, movementId, returning);
+    }
+
     match /users/{uid} {
       allow read, write: if false;
 
@@ -198,7 +280,11 @@ service cloud.firestore {
           && request.resource.data.type is string
           && nonNegativeNumber(request.resource.data.quantity)
           && nonNegativeNumber(request.resource.data.previousQuantity)
-          && nonNegativeNumber(request.resource.data.newQuantity);
+          && nonNegativeNumber(request.resource.data.newQuantity)
+          && (request.resource.data.type in ['brinde', 'cancelamento_brinde']
+            ? validGiftMovement(uid, movementId)
+            : !('giftId' in request.resource.data)
+              && !movementId.matches('^gift-.*$'));
         allow update, delete: if false;
       }
 
@@ -214,7 +300,7 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
-      // Prego legado e brindes continuam somente leitura.
+      // A classificacao Prego usa clients; a colecao legada permanece somente leitura.
       match /pregoClients/{clientId} {
         allow read: if owner(uid);
         allow write: if false;
@@ -234,7 +320,9 @@ service cloud.firestore {
 
       match /clientGifts/{giftId} {
         allow read: if owner(uid);
-        allow write: if false;
+        allow create: if owner(uid) && validGiftCreate(uid, giftId);
+        allow update: if owner(uid) && validGiftCancel(uid, giftId);
+        allow delete: if false;
       }
 
       match /{document=**} {

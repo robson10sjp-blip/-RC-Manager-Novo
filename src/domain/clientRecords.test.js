@@ -139,3 +139,12 @@ test("cancelled gifts do not trigger same-trip duplicate warnings", () => {
     true
   );
 });
+
+test("gift duplicate warnings use shared trip IDs and do not merge new same-name trips", () => {
+  const gifts = [{ tripId: "trip-one", tripName: "3", tripCity: "Tucumã", status: "active" }];
+  assert.equal(hasGiftForTrip(gifts, "3", "Tucumã", "trip-one"), true);
+  assert.equal(hasGiftForTrip(gifts, "3", "Tucumã", "trip-two"), false);
+  assert.equal(hasGiftForTrip(gifts, "3", "Xinguara", "trip-one"), false);
+  assert.equal(hasGiftForTrip([{ tripName: "3ª viagem", tripCity: "Tucumã", status: "active" }],
+    "3", "Tucumã", "legacy-number-3"), true);
+});

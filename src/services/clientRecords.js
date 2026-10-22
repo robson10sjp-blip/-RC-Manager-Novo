@@ -10,7 +10,7 @@ import {
 } from "../domain/clientRecords.js";
 import { getClientCityKey } from "../domain/clientCities.js";
 
-export const CLIENT_RECORD_WRITES_ENABLED = false;
+export const CLIENT_GIFT_WRITES_ENABLED = true;
 export const CLIENT_VISIT_WRITES_ENABLED = true;
 
 export async function createClientTrip({ db, userId, name }) {
@@ -29,14 +29,6 @@ export async function createClientTrip({ db, userId, name }) {
     });
   });
   return { id: tripId, name: tripName };
-}
-
-function assertClientRecordWritesEnabled() {
-  if (!CLIENT_RECORD_WRITES_ENABLED) {
-    throw new Error(
-      "Gravações de brindes aguardam revisão das regras Firestore."
-    );
-  }
 }
 
 export async function recordClientVisit({
@@ -96,11 +88,16 @@ export async function recordClientGift({
   clientId,
   productId,
   quantity,
+  tripId,
   tripName,
   tripCity,
 }) {
-  assertClientRecordWritesEnabled();
-  if (!operationId) throw new Error("Identificador da entrega ausente.");
+  if (!userId || !clientId || !productId || !operationId) {
+    throw new Error("Cliente, produto, usuário e identificador da entrega são obrigatórios.");
+  }
+  if (!tripId || !tripName?.trim() || !getClientCityKey(tripCity)) {
+    throw new Error("Selecione a cidade e uma viagem confirmada antes de registrar o brinde.");
+  }
   const giftReference = doc(db, "users", userId, "clientGifts", `gift-${operationId}`);
   const productReference = doc(db, "users", userId, "products", productId);
   const movementReference = doc(
@@ -123,8 +120,9 @@ export async function recordClientGift({
         savedGift.clientId !== clientId ||
         savedGift.productId !== productId ||
         Number(savedGift.quantity) !== Number(quantity) ||
+        savedGift.tripId !== tripId ||
         savedGift.tripName !== tripName ||
-        savedGift.tripCity !== tripCity
+        getClientCityKey(savedGift.tripCity) !== getClientCityKey(tripCity)
       ) {
         throw new Error("Identificador de entrega já utilizado com outros dados.");
       }
@@ -134,12 +132,20 @@ export async function recordClientGift({
       throw new Error("Já existe uma movimentação com este identificador.");
     }
 
+    const clientSnapshot = await transaction.get(doc(db, "users", userId, "clients", clientId));
+    if (!clientSnapshot.exists() ||
+      getClientCityKey(clientSnapshot.data().city) !== getClientCityKey(tripCity)) {
+      throw new Error("A cliente não existe ou não pertence à cidade selecionada.");
+    }
     const productSnapshot = await transaction.get(productReference);
     if (!productSnapshot.exists()) {
       throw new Error("O produto selecionado não existe mais no estoque.");
     }
     const product = productSnapshot.data();
-    const available = Math.floor(Number(product.quantity) || 0);
+    if (!Number.isInteger(product.quantity) || product.quantity < 0) {
+      throw new Error("O estoque deste produto precisa ter uma quantidade inteira válida antes da entrega.");
+    }
+    const available = product.quantity;
     const count = validateGiftQuantity(quantity, available);
     if (
       product.costPrice === null ||
@@ -164,8 +170,10 @@ export async function recordClientGift({
       productName: product.name || "",
       quantity: count,
       giftDate: serverTimestamp(),
-      tripName,
-      tripCity,
+      tripId,
+      tripName: tripName.trim(),
+      tripCity: clientSnapshot.data().city,
+      cityKey: getClientCityKey(tripCity),
       unitCost,
       totalCost,
       status: "active",
@@ -176,6 +184,8 @@ export async function recordClientGift({
       type: "brinde",
       reason: "Brinde registrado para cliente",
       clientId,
+      tripId,
+      tripCity: clientSnapshot.data().city,
       productId,
       productName: product.name || "",
       quantity: count,
@@ -191,15 +201,10 @@ export async function recordClientGift({
 }
 
 export async function cancelClientGift({ db, userId, gift }) {
-  assertClientRecordWritesEnabled();
+  if (!userId || !gift?.id) {
+    throw new Error("Usuário e identificador do brinde são obrigatórios.");
+  }
   const giftReference = doc(db, "users", userId, "clientGifts", gift.id);
-  const productReference = doc(
-    db,
-    "users",
-    userId,
-    "products",
-    gift.productId
-  );
   const reversalReference = doc(
     db,
     "users",
@@ -212,21 +217,29 @@ export async function cancelClientGift({ db, userId, gift }) {
     const giftSnapshot = await transaction.get(giftReference);
     if (!giftSnapshot.exists()) throw new Error("O brinde não foi encontrado.");
     const savedGift = giftSnapshot.data();
+    const reversalSnapshot = await transaction.get(reversalReference);
+    if (savedGift.status === "cancelled" &&
+      savedGift.cancelStockMovementId === reversalReference.id && reversalSnapshot.exists()) {
+      return;
+    }
     if (savedGift.status !== "active") {
       throw new Error("Este brinde já foi cancelado.");
     }
 
+    const productReference = doc(db, "users", userId, "products", savedGift.productId);
     const productSnapshot = await transaction.get(productReference);
     if (!productSnapshot.exists()) {
       throw new Error("O produto do brinde não foi encontrado no estoque.");
     }
-    const reversalSnapshot = await transaction.get(reversalReference);
     if (reversalSnapshot.exists()) {
       throw new Error("A devolução deste brinde já foi movimentada.");
     }
 
     const product = productSnapshot.data();
-    const currentQuantity = Math.floor(Number(product.quantity) || 0);
+    if (!Number.isInteger(product.quantity) || product.quantity < 0) {
+      throw new Error("O estoque deste produto precisa ter uma quantidade inteira válida antes da devolução.");
+    }
+    const currentQuantity = product.quantity;
     const count = validateGiftQuantity(savedGift.quantity, Number.MAX_SAFE_INTEGER);
     const nextQuantity = currentQuantity + count;
 
@@ -243,6 +256,8 @@ export async function cancelClientGift({ db, userId, gift }) {
       type: "cancelamento_brinde",
       reason: "Cancelamento de brinde com devolução ao estoque",
       clientId: savedGift.clientId,
+      ...(savedGift.tripId ? { tripId: savedGift.tripId } : {}),
+      ...(savedGift.tripCity ? { tripCity: savedGift.tripCity } : {}),
       productId: savedGift.productId,
       productName: savedGift.productName || product.name || "",
       quantity: count,

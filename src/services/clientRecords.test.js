@@ -1,15 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  CLIENT_RECORD_WRITES_ENABLED,
+  CLIENT_GIFT_WRITES_ENABLED,
   CLIENT_VISIT_WRITES_ENABLED,
   cancelClientGift,
   recordClientGift,
   recordClientVisit,
 } from "./clientRecords.js";
 
-test("visits are enabled separately while gifts remain blocked", async () => {
-  assert.equal(CLIENT_RECORD_WRITES_ENABLED, false);
+test("visits and gifts enabled with explicit scope validation before any write", async () => {
+  assert.equal(CLIENT_GIFT_WRITES_ENABLED, true);
   assert.equal(CLIENT_VISIT_WRITES_ENABLED, true);
   await assert.rejects(
     recordClientVisit({
@@ -33,14 +33,14 @@ test("visits are enabled separately while gifts remain blocked", async () => {
       tripName: "Viagem de teste",
       tripCity: "Tucumã",
     }),
-    /aguardam revisão das regras Firestore/
+    /Selecione a cidade e uma viagem confirmada/
   );
   await assert.rejects(
     cancelClientGift({
       db: {},
-      userId: "fake-user",
-      gift: { id: "fake-gift", productId: "fake-product" },
+      userId: "",
+      gift: { id: "fake-gift" },
     }),
-    /aguardam revisão das regras Firestore/
+    /Usuário e identificador/
   );
 });

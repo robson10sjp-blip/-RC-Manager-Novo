@@ -247,6 +247,8 @@
 
 .cl-trip-selector select,
 .cl-trip-selector input,
+.cl-gift-dialog select,
+.cl-gift-dialog input,
 .cl-visit-selectors select {
   box-sizing: border-box;
   width: 100%;

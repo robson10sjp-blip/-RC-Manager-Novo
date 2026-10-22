@@ -20,8 +20,9 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
+  writeBatch,
 } from "firebase/firestore";
-import { createClientTrip, recordClientVisit } from "../src/services/clientRecords.js";
+import { createClientTrip, recordClientVisit, recordClientGift, cancelClientGift } from "../src/services/clientRecords.js";
 import { buildClientVisitSummary } from "../src/domain/clientRecords.js";
 
 const PROJECT_ID = "demo-rc-manager-rules";
@@ -200,7 +201,7 @@ test("keeps payment records immutable after creation", async () => {
   );
 });
 
-test("blocks malformed visits and gated gifts", async () => {
+test("blocks malformed visits and gifts without atomic stock movement", async () => {
   const db = testEnv.authenticatedContext(USER_A).firestore();
 
   await assertFails(
@@ -476,11 +477,249 @@ test("unknown paths and user root are denied even for the owner", async () => {
   await assertFails(getDoc(doc(db, "other", "x")));
 });
 
-test("denies malformed visits and owner writes to gifts and pregoClients", async () => {
+test("denies malformed visits, incomplete gift cancellations and legacy prego writes", async () => {
   const db = ownerDb();
   await assertFails(setDoc(ref(db, "pregoClients", "p1"), { clientId: "client-1" }));
   await assertFails(updateDoc(ref(db, "clientVisits", "visit-1"), { status: "purchased" }));
   await assertFails(updateDoc(ref(db, "clientGifts", "gift-1"), { status: "cancelled" }));
+});
+
+async function giftInput(db, overrides = {}) {
+  const trip = await createClientTrip({ db, userId: USER_A, name: "Brindes outubro" });
+  return {
+    db, userId: USER_A, operationId: crypto.randomUUID(),
+    clientId: "client-1", productId: "product-1", quantity: 2,
+    tripId: trip.id, tripName: trip.name, tripCity: "Tucumã",
+    ...overrides,
+  };
+}
+
+test("gift service: register, reload history and preserve financial records, visits and classification", async () => {
+  const db = ownerDb();
+  const input = await giftInput(db);
+  const unchangedPaths = [
+    ["clients", "client-1"], ["sales", "sale-open"], ["sales", "sale-paid"],
+    ["payables", "payable-1"], ["clientVisits", "visit-1"],
+  ];
+  const before = await Promise.all(unchangedPaths.map(async (path) => (await getDoc(ref(db, ...path))).data()));
+  const id = await assertSucceeds(recordClientGift(input));
+  const reloaded = ownerDb();
+  const gift = (await getDoc(ref(reloaded, "clientGifts", id))).data();
+  assert.equal(gift.clientId, input.clientId);
+  assert.equal(gift.tripId, input.tripId);
+  assert.equal(gift.tripCity, "Tucumã – PA");
+  assert.equal(gift.cityKey, "tucuma");
+  assert.equal(gift.totalCost, 20);
+  assert.equal(gift.status, "active");
+  assert.equal((await getDoc(ref(reloaded, "products", "product-1"))).data().quantity, 3);
+  const movement = (await getDoc(ref(reloaded, "stockMovements", gift.stockMovementId))).data();
+  assert.equal(movement.giftId, id);
+  assert.equal(movement.previousQuantity, 5);
+  assert.equal(movement.newQuantity, 3);
+  assert.equal(movement.tripId, input.tripId);
+  assert.ok((await getDocs(collection(reloaded, "users", USER_A, "clientGifts"))).docs.some((d) => d.id === id));
+  for (let i = 0; i < unchangedPaths.length; i++) {
+    assert.deepEqual((await getDoc(ref(db, ...unchangedPaths[i]))).data(), before[i]);
+  }
+  assert.equal((await getDocs(collection(db, "users", USER_A, "expenses"))).size, 0);
+});
+
+test("gift correction: cancel persisted product, restore once and register corrected delivery", async () => {
+  const db = ownerDb();
+  const input = await giftInput(db);
+  const id = await recordClientGift(input);
+  // The caller's product must never determine which stock is returned.
+  await assertSucceeds(cancelClientGift({ db, userId: USER_A, gift: { id, productId: "not-the-product" } }));
+  await assertSucceeds(cancelClientGift({ db, userId: USER_A, gift: { id } }));
+  assert.equal((await getDoc(ref(db, "products", "product-1"))).data().quantity, 5);
+  const cancelled = (await getDoc(ref(db, "clientGifts", id))).data();
+  assert.equal(cancelled.status, "cancelled");
+  assert.equal(cancelled.quantity, 2);
+  assert.equal((await getDoc(ref(db, "stockMovements", cancelled.cancelStockMovementId))).data().quantity, 2);
+  const correctedId = await recordClientGift({ ...input, operationId: crypto.randomUUID(), quantity: 1 });
+  assert.notEqual(correctedId, id);
+  assert.equal((await getDoc(ref(ownerDb(), "products", "product-1"))).data().quantity, 4);
+  assert.equal((await getDoc(ref(ownerDb(), "clientGifts", correctedId))).data().quantity, 1);
+  assert.equal((await getDocs(collection(db, "users", USER_A, "stockMovements"))).size, 3);
+});
+
+test("gift transactions: concurrent conflicts never duplicate stock; explicit retry is idempotent", async () => {
+  const db = ownerDb();
+  const input = await giftInput(db);
+  const attempts = await Promise.allSettled([
+    recordClientGift(input), recordClientGift({ ...input, db: ownerDb() }),
+  ]);
+  assert.ok(attempts.some((result) => result.status === "fulfilled"));
+  for (const result of attempts.filter((result) => result.status === "rejected")) {
+    assert.equal(result.reason.code, "permission-denied");
+  }
+  const id = await recordClientGift(input);
+  assert.equal(id, `gift-${input.operationId}`);
+  assert.equal((await getDoc(ref(db, "products", "product-1"))).data().quantity, 3);
+  await assert.rejects(recordClientGift({ ...input, quantity: 1 }), /já utilizado/);
+  const cancellations = await Promise.allSettled([
+    cancelClientGift({ db, userId: USER_A, gift: { id } }),
+    cancelClientGift({ db: ownerDb(), userId: USER_A, gift: { id } }),
+  ]);
+  assert.ok(cancellations.some((result) => result.status === "fulfilled"));
+  for (const result of cancellations.filter((result) => result.status === "rejected")) {
+    assert.equal(result.reason.code, "permission-denied");
+  }
+  await cancelClientGift({ db, userId: USER_A, gift: { id } });
+  assert.equal((await getDoc(ref(db, "products", "product-1"))).data().quantity, 5);
+  assert.equal((await getDocs(collection(db, "users", USER_A, "stockMovements"))).size, 2);
+});
+
+test("gift transactions: concurrent deliveries cannot overdraw stock", async () => {
+  const db = ownerDb();
+  const input = await giftInput(db, { quantity: 4 });
+  const outcomes = await Promise.allSettled([
+    recordClientGift(input), recordClientGift({ ...input, operationId: crypto.randomUUID(), db: ownerDb() }),
+  ]);
+  assert.equal(outcomes.filter((r) => r.status === "fulfilled").length, 1);
+  const rejected = outcomes.find((r) => r.status === "rejected");
+  assert.ok(rejected.reason.code === "permission-denied" || /superar o estoque/.test(rejected.reason.message));
+  await assert.rejects(recordClientGift({ ...input, operationId: crypto.randomUUID() }), /superar o estoque/);
+  assert.equal((await getDoc(ref(db, "products", "product-1"))).data().quantity, 1);
+  assert.equal((await getDocs(collection(db, "users", USER_A, "stockMovements"))).size, 1);
+});
+
+test("gift service rejects invalid quantity, missing client/product, wrong city and unknown trip", async () => {
+  const db = ownerDb();
+  const input = await giftInput(db);
+  for (const quantity of [0, -1, 1.5, 6]) {
+    await assert.rejects(recordClientGift({ ...input, quantity }), /quantidade/);
+  }
+  await assert.rejects(recordClientGift({ ...input, clientId: "missing" }), /cliente não existe/);
+  await assert.rejects(recordClientGift({ ...input, productId: "missing" }), /produto selecionado não existe/);
+  await assert.rejects(recordClientGift({ ...input, tripCity: "Xinguara" }), /não pertence/);
+  await assertFails(recordClientGift({ ...input, tripId: `trip-${crypto.randomUUID()}` }));
+  assert.equal((await getDoc(ref(db, "products", "product-1"))).data().quantity, 5);
+});
+
+test("gift rules require atomic stock and matching movement; reject financial mutations and forged cancellations", async () => {
+  const db = ownerDb();
+  const id = await recordClientGift(await giftInput(db));
+  const saved = (await getDoc(ref(db, "clientGifts", id))).data();
+  const clonedId = "gift-forged";
+  const forged = {
+    ...saved, stockMovementId: `gift-${clonedId}`, giftDate: serverTimestamp(), createdAt: serverTimestamp(),
+  };
+  await assertFails(setDoc(ref(db, "clientGifts", clonedId), forged));
+  const batch = writeBatch(db);
+  batch.set(ref(db, "clientGifts", clonedId), forged);
+  batch.update(ref(db, "products", "product-1"), { quantity: 1, updatedAt: serverTimestamp() });
+  await assertFails(batch.commit()); // No matching movement: neither write may commit.
+  assert.equal((await getDoc(ref(db, "products", "product-1"))).data().quantity, 3);
+  for (const change of [
+    { quantity: 99 }, { clientId: "client-b" }, { productId: "legacy-product" },
+    { tripId: "legacy-number-4" }, { tripCity: "Xinguara" }, { totalCost: 0 },
+    { status: "cancelled", cancelledAt: serverTimestamp(), cancelStockMovementId: `gift-cancel-${id}` },
+  ]) await assertFails(updateDoc(ref(db, "clientGifts", id), change));
+  await assertFails(deleteDoc(ref(db, "clientGifts", id)));
+  await assertFails(setDoc(ref(db, "stockMovements", "gift-unlinked"), {
+    type: "brinde", giftId: id, productId: "product-1", quantity: 2,
+    previousQuantity: 3, newQuantity: 1, unitCost: 10, totalCost: 20, createdAt: serverTimestamp(),
+  }));
+  await cancelClientGift({ db, userId: USER_A, gift: { id } });
+  await assertFails(updateDoc(ref(db, "clientGifts", id), { status: "active" }));
+  await assertFails(updateDoc(ref(db, "stockMovements", saved.stockMovementId), { quantity: 1 }));
+  await assertFails(deleteDoc(ref(db, "stockMovements", `gift-cancel-${id}`)));
+});
+
+test("gift permissions: another user or unauthenticated session cannot access a valid gift", async () => {
+  const db = ownerDb();
+  const input = await giftInput(db);
+  const id = await recordClientGift(input);
+  const data = (await getDoc(ref(db, "clientGifts", id))).data();
+  for (const context of [testEnv.authenticatedContext(USER_B), testEnv.unauthenticatedContext()]) {
+    const foreign = context.firestore();
+    await assertFails(getDoc(ref(foreign, "clientGifts", id)));
+    await assertFails(getDocs(collection(foreign, "users", USER_A, "clientGifts")));
+    await assertFails(setDoc(ref(foreign, "clientGifts", "copy"), data));
+    await assertFails(updateDoc(ref(foreign, "clientGifts", id), { status: "cancelled" }));
+    await assertFails(deleteDoc(ref(foreign, "clientGifts", id)));
+    await assertFails(cancelClientGift({ db: foreign, userId: USER_A, gift: { id } }));
+  }
+  await assert.rejects(recordClientGift({
+    ...input, db: testEnv.authenticatedContext(USER_B).firestore(), userId: USER_B,
+    clientId: "client-1", // A client from A cannot be used in B's own namespace either.
+  }), /cliente não existe/);
+  assert.equal((await getDoc(ref(db, "products", "product-1"))).data().quantity, 3);
+});
+
+test("gift rules validate the complete atomic payload rather than trusting the client service", async () => {
+  const db = ownerDb();
+  const input = await giftInput(db);
+  async function deliver({ giftChange = {}, movementChange = {}, quantityAfter = 3 } = {}) {
+    const id = `gift-${crypto.randomUUID()}`;
+    const movementId = `gift-${id}`;
+    const gift = {
+      clientId: "client-1", productId: "product-1", productName: "Produto A",
+      tripId: input.tripId, tripName: input.tripName, tripCity: "Tucumã – PA", cityKey: "tucuma",
+      quantity: 2, unitCost: 10, totalCost: 20, status: "active",
+      stockMovementId: movementId, giftDate: serverTimestamp(), createdAt: serverTimestamp(), ...giftChange,
+    };
+    const batch = writeBatch(db);
+    batch.set(ref(db, "clientGifts", id), gift);
+    batch.update(ref(db, "products", "product-1"), { quantity: quantityAfter, updatedAt: serverTimestamp() });
+    batch.set(ref(db, "stockMovements", movementId), {
+      type: "brinde", giftId: id, clientId: gift.clientId, productId: gift.productId,
+      productName: gift.productName, tripId: gift.tripId, tripCity: gift.tripCity,
+      quantity: gift.quantity, unitCost: gift.unitCost, totalCost: gift.totalCost,
+      previousQuantity: 5, newQuantity: quantityAfter, createdAt: serverTimestamp(), ...movementChange,
+    });
+    return batch.commit();
+  }
+  for (const giftChange of [
+    { quantity: 0 }, { quantity: 1.5 }, { quantity: 6 },
+    { unitCost: 1, totalCost: 2 }, { totalCost: 99 },
+    { clientId: "client-b" }, { tripCity: "Xinguara" }, { tripId: "missing-trip" },
+    { tripName: "Wrong trip name" }, { status: "cancelled" }, { amountPaid: 10 },
+  ]) await assertFails(deliver({ giftChange }));
+  await assertFails(deliver({ movementChange: { quantity: 1 } }));
+  await assertFails(deliver({ movementChange: { tripId: "legacy-number-4" } }));
+  await assertFails(deliver({ quantityAfter: 4 }));
+  await assertFails(deliver({ quantityAfter: -1 }));
+  assert.equal((await getDoc(ref(db, "products", "product-1"))).data().quantity, 5);
+  await assertSucceeds(deliver());
+});
+
+test("gift cost rounding matches the application and cancelling keeps historical cost after price changes", async () => {
+  const db = ownerDb();
+  await updateDoc(ref(db, "products", "product-1"), { costPrice: 1.005 });
+  const input = await giftInput(db, { quantity: 1 });
+  const id = await assertSucceeds(recordClientGift(input));
+  assert.equal((await getDoc(ref(db, "clientGifts", id))).data().totalCost, 1.01);
+  await updateDoc(ref(db, "products", "product-1"), { costPrice: 15 });
+  await assertSucceeds(cancelClientGift({ db, userId: USER_A, gift: { id } }));
+  const reversal = (await getDoc(ref(db, "stockMovements", `gift-cancel-${id}`))).data();
+  assert.equal(reversal.totalCost, 1.01);
+  assert.equal(reversal.unitCost, 1.005);
+  assert.equal((await getDoc(ref(db, "products", "product-1"))).data().costPrice, 15);
+});
+
+test("legacy gift history without tripId remains readable and can be reversed without migration", async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    const db = context.firestore();
+    await updateDoc(ref(db, "products", "product-1"), { quantity: 3 });
+    await setDoc(ref(db, "clientGifts", "legacy-complete"), {
+      clientId: "client-1", productId: "product-1", productName: "Produto A",
+      quantity: 2, tripName: "3ª viagem", tripCity: "Tucumã – PA",
+      status: "active", unitCost: 10, totalCost: 20,
+      giftDate: new Date("2026-10-01T12:00:00Z"),
+      createdAt: new Date("2026-10-01T12:00:00Z"),
+    });
+  });
+  const db = ownerDb();
+  const before = (await getDoc(ref(db, "clientGifts", "legacy-complete"))).data();
+  await assertSucceeds(cancelClientGift({ db, userId: USER_A, gift: { id: "legacy-complete" } }));
+  const after = (await getDoc(ref(db, "clientGifts", "legacy-complete"))).data();
+  assert.equal(after.tripId, undefined);
+  assert.equal(after.tripName, before.tripName);
+  assert.deepEqual(after.giftDate, before.giftDate);
+  assert.equal(after.status, "cancelled");
+  assert.equal((await getDoc(ref(db, "products", "product-1"))).data().quantity, 5);
 });
 
 test("real visit service: mark, reload from another session, undo, counts and idempotent retry", async () => {

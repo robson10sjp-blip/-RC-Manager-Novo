@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import PageHeader from "../components/PageHeader.jsx";
 import { onAuthStateChanged } from "firebase/auth";
 import {
@@ -48,7 +49,7 @@ import {
   calculateGiftCost,
 } from "../domain/clientRecords";
 import {
-  CLIENT_RECORD_WRITES_ENABLED,
+  CLIENT_GIFT_WRITES_ENABLED,
   CLIENT_VISIT_WRITES_ENABLED,
   cancelClientGift,
   recordClientGift,
@@ -120,6 +121,8 @@ export default function ClientsPage() {
   const [giftProductId, setGiftProductId] = useState("");
   const [giftQuantity, setGiftQuantity] = useState("1");
   const [giftError, setGiftError] = useState("");
+  const [giftDataReady, setGiftDataReady] = useState({ products: false, gifts: false });
+  const [giftTrip, setGiftTrip] = useState(null);
   const [savingClientRecord, setSavingClientRecord] = useState(false);
   const clientRecordLock = useRef(false);
   const giftLock = useRef(false);
@@ -161,6 +164,11 @@ export default function ClientsPage() {
       setVisitTripId("");
       setVisitTripName("");
       setVisitError("");
+      setGiftClient(null);
+      setGiftTrip(null);
+      setGiftRecords([]);
+      setGiftProducts([]);
+      giftOperationId.current = null;
       setGiftClient(null);
 
       if (!user) {
@@ -273,6 +281,7 @@ export default function ClientsPage() {
             ...document.data(),
           }))
         );
+        setGiftDataReady((current) => ({ ...current, products: true }));
       },
       (error) => {
         console.error("Erro ao carregar produtos para brindes:", error);
@@ -295,6 +304,7 @@ export default function ClientsPage() {
                 (toDate(first.giftDate)?.getTime() || 0)
             )
         );
+        setGiftDataReady((current) => ({ ...current, gifts: true }));
       },
       (error) => {
         console.error("Erro ao carregar brindes da cliente:", error);
@@ -514,7 +524,7 @@ export default function ClientsPage() {
   );
 
   const clientRecordWritesBlocked =
-    !CLIENT_RECORD_WRITES_ENABLED || isFirestoreReadOnly();
+    !CLIENT_GIFT_WRITES_ENABLED || isFirestoreReadOnly();
   const visitWritesBlocked = !CLIENT_VISIT_WRITES_ENABLED || isFirestoreReadOnly() ||
     loadingTrips || Boolean(tripLoadError);
   const selectedClientGifts = giftRecords.filter(
@@ -603,7 +613,7 @@ export default function ClientsPage() {
   }
 
   function handleOpenGift(client) {
-    if (!visitCity || !visitTripName.trim()) {
+    if (!visitCity || !visitTripId || !visitTripName.trim()) {
       alert("Selecione manualmente a cidade e a viagem antes de registrar um brinde.");
       return;
     }
@@ -612,6 +622,10 @@ export default function ClientsPage() {
       return;
     }
     setGiftError("");
+    setGiftRecords([]);
+    setGiftProducts([]);
+    setGiftDataReady({ products: false, gifts: false });
+    setGiftTrip({ id: visitTripId, name: visitTripName, city: visitCity });
     setGiftProductId("");
     setGiftQuantity("1");
     giftOperationId.current = null;
@@ -620,7 +634,8 @@ export default function ClientsPage() {
 
   async function handleGiftSubmit(event) {
     event.preventDefault();
-    if (giftLock.current || clientRecordWritesBlocked) return;
+    if (giftLock.current || clientRecordWritesBlocked ||
+      !giftDataReady.products || !giftDataReady.gifts) return;
     const product = giftProducts.find((entry) => entry.id === giftProductId);
     if (!giftClient || !product || !userId) {
       setGiftError("Selecione uma cliente e um produto cadastrado no estoque.");
@@ -636,8 +651,9 @@ export default function ClientsPage() {
 
     const alreadyGifted = hasGiftForTrip(
       giftRecords,
-      visitTripName,
-      visitCity
+      giftTrip.name,
+      giftTrip.city,
+      giftTrip.id
     );
     const duplicateWarning = alreadyGifted
       ? "Esta cliente já recebeu um brinde nesta viagem. Deseja registrar outro mesmo assim?\n\n"
@@ -669,15 +685,18 @@ export default function ClientsPage() {
         clientId: giftClient.id,
         productId: product.id,
         quantity: giftQuantity,
-        tripName: visitTripName.trim(),
-        tripCity: visitCity,
+        tripId: giftTrip.id,
+        tripName: giftTrip.name,
+        tripCity: giftTrip.city,
       });
       setGiftProductId("");
       setGiftQuantity("1");
       giftOperationId.current = null;
     } catch (error) {
       console.error("Erro ao registrar brinde:", error);
-      setGiftError(error.message);
+      setGiftError(error.code === "permission-denied"
+        ? "Entrega não confirmada. Confira o histórico e tente novamente com os mesmos dados; uma operação concorrente pode ter alterado o estoque. Se o bloqueio persistir, publique o firestore.rules atualizado para brindes."
+        : error.message);
     } finally {
       giftLock.current = false;
       setSavingClientRecord(false);
@@ -701,7 +720,9 @@ export default function ClientsPage() {
       await cancelClientGift({ db, userId, gift });
     } catch (error) {
       console.error("Erro ao cancelar brinde:", error);
-      setGiftError(error.message);
+      setGiftError(error.code === "permission-denied"
+        ? "Cancelamento não confirmado. Confira o histórico e tente novamente; outra sessão pode ter cancelado este brinde. Se o bloqueio persistir, publique o firestore.rules atualizado para brindes."
+        : error.message);
     } finally {
       giftLock.current = false;
       setSavingClientRecord(false);
@@ -1954,28 +1975,27 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
           onClose={() => setSelectedReceiptSale(null)}
         />
       )}
-      {giftClient && (
+      {giftClient && createPortal(
         <div className="cl-record-overlay">
           <section className="cl-gift-dialog" role="dialog" aria-modal="true" aria-label="Dar brinde">
             <header>
               <div>
                 <h2>Dar brinde</h2>
-                <p>{giftClient.name} · {visitTripName} · {getClientCityDisplay(visitCity)}</p>
+                <p>{giftClient.name} · {giftTrip.name} · {getClientCityDisplay(giftTrip.city)}</p>
               </div>
-              <button type="button" className="cl-btn cl-btn-soft" onClick={() => setGiftClient(null)}>
+              <button type="button" className="cl-btn cl-btn-soft" disabled={savingClientRecord} onClick={() => setGiftClient(null)}>
                 Fechar
               </button>
             </header>
 
             {clientRecordWritesBlocked && (
               <p className="cl-record-pending" role="status">
-                A entrega e o cancelamento estão pausados até a revisão das regras
-                Firestore para brindes, produtos e movimentações de estoque.
+                Esta prévia está em modo somente leitura e não permite brindes.
               </p>
             )}
             {giftError && <p className="cl-record-error" role="alert">{giftError}</p>}
 
-            {hasGiftForTrip(selectedClientGifts, visitTripName, visitCity) && (
+            {hasGiftForTrip(selectedClientGifts, giftTrip.name, giftTrip.city, giftTrip.id) && (
               <p className="cl-gift-warning" role="status">
                 Esta cliente já recebeu brinde nesta viagem. Outra entrega exige confirmação.
               </p>
@@ -1986,6 +2006,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                 Produto cadastrado no estoque
                 <select
                   value={giftProductId}
+                  disabled={savingClientRecord || !giftDataReady.products}
                   onChange={(event) => setGiftProductId(event.target.value)}
                   required
                 >
@@ -2007,6 +2028,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                   step="1"
                   max={giftProducts.find((product) => product.id === giftProductId)?.quantity || 1}
                   value={giftQuantity}
+                  disabled={savingClientRecord}
                   onChange={(event) => setGiftQuantity(event.target.value)}
                   required
                 />
@@ -2038,6 +2060,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                 disabled={
                   savingClientRecord ||
                   clientRecordWritesBlocked ||
+                  !giftDataReady.products || !giftDataReady.gifts ||
                   !giftProductId
                 }
               >
@@ -2047,6 +2070,8 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
 
             <div className="cl-gift-history">
               <h3>Histórico de brindes</h3>
+              <p>Para corrigir um lançamento, cancele e devolva ao estoque; depois registre a entrega correta. O histórico é preservado.</p>
+              {!giftDataReady.gifts && <p role="status">Carregando histórico...</p>}
               {selectedClientGifts.length === 0 ? (
                 <p>Nenhum brinde registrado para esta cliente.</p>
               ) : (
@@ -2081,7 +2106,8 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
               )}
             </div>
           </section>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

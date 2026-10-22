@@ -1,4 +1,4 @@
-import { getClientCityKey, normalizeSearchText } from "./clientCities.js";
+import { getClientCityKey } from "./clientCities.js";
 import { getRecordTripId } from "./tripIdentity.js";
 
 export function createVisitRecordId(clientId, tripId, city) {
@@ -78,13 +78,13 @@ export function calculateGiftCost(unitCost, quantity) {
   return Math.round((cost * count + Number.EPSILON) * 100) / 100;
 }
 
-export function hasGiftForTrip(gifts = [], tripName, city) {
-  const tripKey = normalizeSearchText(tripName);
+export function hasGiftForTrip(gifts = [], tripName, city, tripId) {
+  const tripKey = getRecordTripId({ tripId, tripName });
   const cityKey = getClientCityKey(city);
   return gifts.some(
     (gift) =>
       gift.status !== "cancelled" &&
-      normalizeSearchText(gift.tripName) === tripKey &&
+      getRecordTripId(gift) === tripKey &&
       getClientCityKey(gift.tripCity) === cityKey
   );
 }
