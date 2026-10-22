@@ -1,8 +1,15 @@
-import { defineConfig } from "vite";
+import { defineConfig, loadEnv } from "vite";
+import process from "node:process";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
+import { validateFirebaseBuildEnv } from "./src/firebase/configValidation.js";
 
-export default defineConfig({
+export default defineConfig(({ command, mode }) => {
+  if (command === "build") {
+    validateFirebaseBuildEnv(loadEnv(mode, process.cwd(), "VITE_FIREBASE_"));
+  }
+
+  return {
   plugins: [
     react(),
 
@@ -87,4 +94,5 @@ export default defineConfig({
       },
     }),
   ],
+  };
 });

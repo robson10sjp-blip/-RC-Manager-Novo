@@ -1,5 +1,12 @@
 # React + Vite
 
+## Firebase no build de producao
+
+- No Netlify, cadastre as seis variaveis `VITE_FIREBASE_*` exigidas em `src/firebase/configValidation.js`, no contexto **Production**, disponiveis para **Builds**, usando a configuracao web do projeto Firebase existente. No plano gratuito, use todos os escopos (o plano nao permite restringir a um escopo especifico). `VITE_FIREBASE_MEASUREMENT_ID` e opcional.
+- O Vite incorpora esses valores no JavaScript durante o build; alterar variaveis exige um novo deploy. `.env.local` nao e versionado e nao esta disponivel no Netlify.
+- O build falha explicitamente se uma variavel obrigatoria faltar ou contiver um valor de exemplo. A mensagem mostra apenas nomes de variaveis, nunca valores.
+- O Service Worker usa atualizacao automatica e os arquivos de entrada do PWA exigem revalidacao HTTP. Nenhuma correcao requer apagar IndexedDB, login ou dados locais.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:

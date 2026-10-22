@@ -9,6 +9,21 @@ NODE_VERSION = "22"
 directory = "netlify/functions"
 node_bundler = "esbuild"
 
+[[headers]]
+for = "/index.html"
+[headers.values]
+Cache-Control = "no-cache"
+
+[[headers]]
+for = "/sw.js"
+[headers.values]
+Cache-Control = "no-cache"
+
+[[headers]]
+for = "/registerSW.js"
+[headers.values]
+Cache-Control = "no-cache"
+
 [[redirects]]
 from = "/*"
 to = "/index.html"
