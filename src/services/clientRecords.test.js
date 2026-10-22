@@ -2,13 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   CLIENT_RECORD_WRITES_ENABLED,
+  CLIENT_VISIT_WRITES_ENABLED,
   cancelClientGift,
   recordClientGift,
   recordClientVisit,
 } from "./clientRecords.js";
 
-test("new client-record writes stay blocked pending Firestore rules review", async () => {
+test("visits are enabled separately while gifts remain blocked", async () => {
   assert.equal(CLIENT_RECORD_WRITES_ENABLED, false);
+  assert.equal(CLIENT_VISIT_WRITES_ENABLED, true);
   await assert.rejects(
     recordClientVisit({
       db: {},
@@ -18,7 +20,7 @@ test("new client-record writes stay blocked pending Firestore rules review", asy
       tripName: "Viagem de teste",
       status: "not_purchased",
     }),
-    /aguardam revisão das regras Firestore/
+    /Selecione uma viagem confirmada/
   );
   await assert.rejects(
     recordClientGift({

@@ -18,6 +18,9 @@ import {
 } from "react-icons/lu";
 import ReceiptTemplate from "../components/receipts/ReceiptTemplate";
 import FinancialValue from "../components/FinancialValue.jsx";
+import TripSelector from "../components/TripSelector.jsx";
+import useClientTrips from "../hooks/useClientTrips.js";
+import { buildTripOptions, getRecordTripId } from "../domain/tripIdentity.js";
 import {
   buildReceiptImageFile,
   buildReceiptPdfFile,
@@ -72,6 +75,7 @@ function createEmptySale() {
     saleDate: toDateInputValue(saleDate),
     dueDate: toDateInputValue(dueDate),
     tripName: "",
+    tripId: "",
     tripCity: "",
     items: [{ ...emptyItem }],
   };
@@ -84,6 +88,8 @@ export default function SalesPage() {
   const [clients, setClients] = useState([]);
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
+  const [userId, setUserId] = useState("");
+  const { trips, visits, loading: loadingTrips, error: tripLoadError } = useClientTrips(userId);
   const location = useLocation();
   const requestedClientId = location.state?.newSaleClientId || "";
   const [tripFilter, setTripFilter] = useState("fourth");
@@ -102,12 +108,17 @@ export default function SalesPage() {
   }));
   const [showSaleForm, setShowSaleForm] = useState(Boolean(requestedClientId));
   const [saving, setSaving] = useState(false);
+  const [creatingTrip, setCreatingTrip] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editingSaleId, setEditingSaleId] = useState(null);
   const [quickMode, setQuickMode] = useState(false);
   const [receivingSaleId, setReceivingSaleId] = useState(null);
   const receivingSaleLock = useRef(false);
   const pendingPaymentOperation = useRef(null);
+  const knownTrips = useMemo(() => buildTripOptions({
+    trips: [...trips, ...(sale.tripId ? [{ id: sale.tripId, name: sale.tripName }] : [])],
+    sales, visits,
+  }), [trips, sales, visits, sale.tripId, sale.tripName]);
 
   useEffect(() => {
     let unsubscribeClients = null;
@@ -115,6 +126,7 @@ export default function SalesPage() {
     let unsubscribeSales = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
+      setUserId(user?.uid || "");
       if (unsubscribeClients) unsubscribeClients();
       if (unsubscribeProducts) unsubscribeProducts();
       if (unsubscribeSales) unsubscribeSales();
@@ -563,6 +575,7 @@ export default function SalesPage() {
   }
 
   function clearSale() {
+    setCreatingTrip(false);
     setQuickMode(false);
     setSale(createEmptySale());
     setClientSearch("");
@@ -572,6 +585,7 @@ export default function SalesPage() {
   }
 
   function handleEditSale(currentSale) {
+    setCreatingTrip(false);
     const saleDate =
       toDate(currentSale.saleDate) ||
       toDate(currentSale.createdAt) ||
@@ -594,6 +608,7 @@ export default function SalesPage() {
       saleDate: toDateInputValue(saleDate),
       dueDate: toDateInputValue(legacyDueDate),
       tripName: currentSale.tripName || "",
+      tripId: getRecordTripId(currentSale),
       tripCity: currentSale.tripCity || "",
       items:
         (currentSale.items || []).length > 0
@@ -1088,6 +1103,11 @@ export default function SalesPage() {
   async function handleSubmit(event) {
     event.preventDefault();
 
+    if (creatingTrip) {
+      alert("Confirme ou cancele a criação da nova viagem antes de salvar a venda.");
+      return;
+    }
+
     const user = auth.currentUser;
 
     if (!user) {
@@ -1346,7 +1366,8 @@ export default function SalesPage() {
               ? new Date(`${sale.dueDate}T12:00:00`)
               : null,
             tripName: sale.tripName.trim(),
-            tripCity: sale.tripCity.trim(),
+            tripId: sale.tripId,
+            tripCity: sale.tripCity.trim() || clientData.city || "",
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
@@ -1614,6 +1635,7 @@ export default function SalesPage() {
           ? new Date(`${sale.dueDate}T12:00:00`)
           : null,
         tripName: sale.tripName.trim(),
+        tripId: sale.tripId,
         tripCity: sale.tripCity.trim(),
         updatedAt: serverTimestamp(),
       });
@@ -1686,7 +1708,10 @@ export default function SalesPage() {
         <button
           type="button"
           className="cl-btn cl-btn-primary cl-new"
-          onClick={() => setShowSaleForm((current) => !current)}
+          onClick={() => {
+            setCreatingTrip(false);
+            setShowSaleForm((current) => !current);
+          }}
           aria-expanded={showSaleForm}
           aria-controls="new-sale-form"
         >
@@ -1814,22 +1839,16 @@ export default function SalesPage() {
           </div>
 
           <div style={styles.itemGrid}>
-            <label style={styles.label}>
-              Viagem (opcional)
-              <input
-                type="text"
-                value={sale.tripName}
-                onChange={(event) =>
-                  setSale((current) => ({
-                    ...current,
-                    tripName: event.target.value,
-                  }))
-                }
-                placeholder="Ex.: Viagem de outubro"
-                disabled={saving}
-                style={styles.input}
-              />
-            </label>
+            <TripSelector
+              userId={userId}
+              options={knownTrips}
+              value={sale.tripId}
+              onPendingChange={setCreatingTrip}
+              disabled={saving || loadingTrips || Boolean(tripLoadError)}
+              onChange={(trip) => setSale((current) => ({
+                ...current, tripId: trip.id, tripName: trip.name,
+              }))}
+            />
 
             <label style={styles.label}>
               Cidade da viagem (opcional)
@@ -1848,6 +1867,7 @@ export default function SalesPage() {
               />
             </label>
           </div>
+          {tripLoadError && <p role="alert" className="cl-record-error">{tripLoadError}</p>}
 
           <div style={styles.itemsHeader}>
             <h3 style={styles.sectionTitle}>

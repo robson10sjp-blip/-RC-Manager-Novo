@@ -8,13 +8,33 @@ import {
   createVisitRecordId,
   validateGiftQuantity,
 } from "../domain/clientRecords.js";
+import { getClientCityKey } from "../domain/clientCities.js";
 
 export const CLIENT_RECORD_WRITES_ENABLED = false;
+export const CLIENT_VISIT_WRITES_ENABLED = true;
+
+export async function createClientTrip({ db, userId, name }) {
+  const tripName = String(name || "").trim().replace(/\s+/g, " ");
+  if (!userId || !tripName || tripName.length > 100) {
+    throw new Error("Informe um nome de viagem de até 100 caracteres e entre no sistema.");
+  }
+  if (!globalThis.crypto?.randomUUID) {
+    throw new Error("Este dispositivo não oferece um identificador seguro para a viagem.");
+  }
+  const tripId = `trip-${globalThis.crypto.randomUUID()}`;
+  await runTransaction(db, async (transaction) => {
+    transaction.set(doc(db, "users", userId, "trips", tripId), {
+      name: tripName,
+      createdAt: serverTimestamp(),
+    });
+  });
+  return { id: tripId, name: tripName };
+}
 
 function assertClientRecordWritesEnabled() {
   if (!CLIENT_RECORD_WRITES_ENABLED) {
     throw new Error(
-      "Gravações de visitas, Clientes Prego e brindes aguardam revisão das regras Firestore."
+      "Gravações de brindes aguardam revisão das regras Firestore."
     );
   }
 }
@@ -24,17 +44,25 @@ export async function recordClientVisit({
   userId,
   clientId,
   city,
+  tripId,
   tripName,
   status,
 }) {
-  assertClientRecordWritesEnabled();
   if (!["not_purchased", "unvisited"].includes(status)) {
     throw new Error("Situação de visita inválida.");
   }
-  const recordId = createVisitRecordId(clientId, tripName);
+  if (!userId || !tripName?.trim() || !tripId) {
+    throw new Error("Selecione uma viagem confirmada e entre no sistema.");
+  }
+  const recordId = createVisitRecordId(clientId, tripId, city);
   const reference = doc(db, "users", userId, "clientVisits", recordId);
 
   return runTransaction(db, async (transaction) => {
+    const clientSnapshot = await transaction.get(doc(db, "users", userId, "clients", clientId));
+    if (!clientSnapshot.exists() ||
+      getClientCityKey(clientSnapshot.data().city) !== getClientCityKey(city)) {
+      throw new Error("A cliente não existe ou não pertence à cidade selecionada.");
+    }
     const snapshot = await transaction.get(reference);
     const saved = snapshot.exists() ? snapshot.data() : {};
     if (saved.status === status) return false;
@@ -43,8 +71,10 @@ export async function recordClientVisit({
       reference,
       {
         clientId,
-        city,
-        tripName,
+        city: clientSnapshot.data().city,
+        cityKey: getClientCityKey(city),
+        tripId,
+        tripName: tripName.trim(),
         status,
         history: [
           ...(Array.isArray(saved.history) ? saved.history : []),

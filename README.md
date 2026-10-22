@@ -35,12 +35,22 @@ Currently, two official plugins are available:
 - O controle global de privacidade oculta indicadores monetários por padrão e mantém a preferência no armazenamento local do navegador (`rc-manager-financial-values-hidden`). Preços individuais de produtos permanecem visíveis.
 - Os campos de nome formatam nomes novos ou alterados durante a edição; salvar outros campos sem tocar em um nome antigo mantém o texto armazenado.
 - A classificação RC Premium é manual e permanente, armazenada no próprio documento da cliente como `classification`; novas clientes começam como `unclassified`. “Clientes Prego” é um filtro da mesma classificação. Registros antigos ativos em `pregoClients` continuam sendo reconhecidos como Prego até que uma classificação explícita seja escolhida, sem migração automática dos dados.
-- O controle de visitas exige seleção manual de cidade e viagem; nomes já usados são opções, e uma nova viagem pode ser identificada manualmente. “Comprou” só é inferido por uma venda com o mesmo ID de cliente e nome explícito da viagem; cada novo escopo inicia como “Falta visitar” e marcações “Não comprou” podem ser desfeitas.
-- As telas e serviços de visitas e brindes usam coleções próprias (`users/{uid}/clientVisits` e `clientGifts`). Essas gravações permanecem bloqueadas até revisar as regras Firestore. Brindes usam transações para validar estoque, registrar custo separado e devolver estoque uma única vez ao cancelar; não são lançados em despesas, vendas, dívidas nem lucro.
+- Visitas exigem selecao manual de cidade e viagem. Clientes e Vendas compartilham o seletor: "Confirmar nova viagem" cria `users/{uid}/trips/{tripId}` com UUID permanente, inclusive quando duas viagens tem o mesmo nome. Novas vendas e visitas guardam o mesmo `tripId`; nenhuma data financeira e usada para adivinhar a identidade.
+- Rotulos historicos como "3", "3a viagem" e "3ª viagem" recebem a mesma identidade de leitura `legacy-number-3`. Nomes explicitos antigos recebem uma identidade `legacy-name-*`. Isso nao migra nem regrava documentos antigos; viagens novas sempre tem UUID independente do historico. O recibo premium e os calculos financeiros nao mudam.
+- `clientVisits` registra cliente por ID, cidade, chave canonica da cidade, `tripId`, nome de exibicao, status e historico. A transacao valida a existencia/cidade da cliente e usa um documento deterministico por cliente/cidade/viagem. Repetir a mesma marcacao nao duplica o historico. Desfazer grava `unvisited`, sem excluir o registro. "Comprou" e derivado apenas de venda nao cancelada do mesmo cliente/viagem/cidade; quando uma venda antiga nao informa cidade, usa-se a cidade da cliente.
+- As gravacoes de visitas estao habilitadas no app e dependem da publicacao manual do `firestore.rules` atualizado. Se a regra ainda nao foi publicada, o app mostra o erro de permissao explicitamente. Brindes continuam bloqueados, separadamente, sem alteracao nesta entrega.
 - As regras versionadas de segurança estão em `firestore.rules`, com configuração local em `firebase.json`. O escopo padrão é por proprietário (`users/{uid}`), negando acesso cruzado entre contas e negando por padrão caminhos não mapeados.
-- `clientVisits`, `clientGifts` e `pregoClients` seguem com escrita bloqueada nas rules, alinhado ao bloqueio do app até revisão final de habilitação.
+- As regras permitem criar/atualizar visitas apenas sob o UID do dono, com cliente existente, cidade correspondente, viagem valida e status `not_purchased`/`unvisited`. O escopo e a data de criacao sao imutaveis; exclusao e status manual "Comprou" sao negados. O cadastro `trips` so permite leitura e criacao pelo dono, sem alteracao/exclusao. `clientGifts` e `pregoClients` continuam com escrita bloqueada.
 - Pagamentos (`sales/*/payments`, `clients/*/payments`, `payables/*/payments`) e `stockMovements` são imutáveis após criação nas rules atuais.
 - Para validar as rules sem produção: `npm run test:rules` (usa emulador Firestore com dados fictícios). Esse teste não grava nem lê dados reais.
+
+### Aplicar as regras de visitas
+
+1. No projeto Firebase ja utilizado pelo sistema, abra **Firestore Database > Regras** e guarde a versao publicada atual.
+2. Substitua todo o editor pelo conteudo completo de [firestore.rules](./firestore.rules) e clique em **Publicar**. Publicar regras nao altera documentos. Nao e necessario mudar credenciais, criar indices ou migrar registros.
+3. Reabra o app e selecione cidade/viagem em Clientes. A criacao de uma viagem requer uma confirmacao explicita. Marque "Nao comprou", recarregue, selecione o mesmo escopo e confira; desfaca e confira novamente.
+4. A validacao automatica de persistencia e acesso entre usuarios deve ser feita com `npm run test:rules`, sem gravacoes de teste em producao.
+5. Para reverter, restaure as regras restritivas imediatamente anteriores, mantendo o isolamento por UID. Nao restaure a antiga regra de acesso geral a qualquer usuario autenticado.
 
 ## Fornecedores e contas a pagar
 

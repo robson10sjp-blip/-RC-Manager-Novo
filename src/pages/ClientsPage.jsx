@@ -41,6 +41,7 @@ import {
 } from "../domain/clientClassification.js";
 import { toDate } from "../utils/dates";
 import {
+  buildClientVisitSummary,
   hasGiftForTrip,
   resolveClientTripVisitStatus,
   validateGiftQuantity,
@@ -48,6 +49,7 @@ import {
 } from "../domain/clientRecords";
 import {
   CLIENT_RECORD_WRITES_ENABLED,
+  CLIENT_VISIT_WRITES_ENABLED,
   cancelClientGift,
   recordClientGift,
   recordClientVisit,
@@ -78,6 +80,9 @@ import {
 import { getSalePendingAmount } from "../domain/financeReceivables";
 import ReceiptViewer from "../components/receipts/ReceiptViewer.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
+import TripSelector from "../components/TripSelector.jsx";
+import useClientTrips from "../hooks/useClientTrips.js";
+import { buildTripOptions } from "../domain/tripIdentity.js";
 import "./ClientsPremium.css";
 
 const emptyForm = {
@@ -105,9 +110,9 @@ export default function ClientsPage() {
   const [classificationError, setClassificationError] = useState("");
   const [visitCity, setVisitCity] = useState("");
   const [visitTripName, setVisitTripName] = useState("");
-  const [manualVisitTrip, setManualVisitTrip] = useState(false);
+  const [visitTripId, setVisitTripId] = useState("");
   const [visitStatusFilter, setVisitStatusFilter] = useState("unvisited");
-  const [visitRecords, setVisitRecords] = useState([]);
+  const { trips, visits: visitRecords, loading: loadingTrips, error: tripLoadError } = useClientTrips(userId);
   const [visitError, setVisitError] = useState("");
   const [giftClient, setGiftClient] = useState(null);
   const [giftProducts, setGiftProducts] = useState([]);
@@ -152,7 +157,10 @@ export default function ClientsPage() {
       setSales([]);
       setUserId(user?.uid || "");
       setPregoClientIds(new Set());
-      setVisitRecords([]);
+      setVisitCity("");
+      setVisitTripId("");
+      setVisitTripName("");
+      setVisitError("");
       setGiftClient(null);
 
       if (!user) {
@@ -248,29 +256,6 @@ export default function ClientsPage() {
       }
     );
   }, [userId]);
-
-  useEffect(() => {
-    if (!userId || !visitCity || !visitTripName.trim()) {
-      return undefined;
-    }
-
-    return onSnapshot(
-      collection(db, "users", userId, "clientVisits"),
-      (snapshot) => {
-        setVisitRecords(
-          snapshot.docs.map((document) => ({
-            id: document.id,
-            ...document.data(),
-          }))
-        );
-        setVisitError("");
-      },
-      (error) => {
-        console.error("Erro ao carregar visitas:", error);
-        setVisitError(`Não foi possível carregar as visitas: ${error.message}`);
-      }
-    );
-  }, [userId, visitCity, visitTripName]);
 
   useEffect(() => {
     if (!userId || !giftClient) {
@@ -509,56 +494,29 @@ export default function ClientsPage() {
     (client) => resolveClientClassification(client, pregoClientIds) === "prego"
   ).length;
 
-  const visitRows = useMemo(
-    () =>
-      clients
-        .filter(
-          (client) =>
-            getClientCityKey(client.city) === getClientCityKey(visitCity)
-        )
-        .map((client) => ({
-          client,
-          status: resolveClientTripVisitStatus({
-            client,
-            city: visitCity,
-            tripName: visitTripName,
-            visitRecords,
-            sales,
-          }),
-        })),
-    [clients, sales, visitCity, visitRecords, visitTripName]
-  );
-
-  const visitCounts = useMemo(
-    () => ({
-      unvisited: visitRows.filter((entry) => entry.status === "unvisited").length,
-      not_purchased: visitRows.filter((entry) => entry.status === "not_purchased").length,
-      bought: visitRows.filter((entry) => entry.status === "bought").length,
+  const { rows: visitRows, counts: visitCounts } = useMemo(
+    () => buildClientVisitSummary({
+      clients, city: visitCity, tripId: visitTripId, visitRecords, sales,
     }),
-    [visitRows]
+    [clients, sales, visitCity, visitRecords, visitTripId]
   );
 
   const visibleVisitRows = visitRows.filter(
     (entry) => entry.status === visitStatusFilter
   );
 
-  const knownTripNames = useMemo(() => {
-    const trips = new Map();
-    for (const tripName of [
-      ...sales.map((sale) => sale.tripName),
-      ...visitRecords.map((record) => record.tripName),
-    ]) {
-      const name = String(tripName || "").trim();
-      const key = normalizeSearchText(name);
-      if (key) trips.set(key, name);
-    }
-    return Array.from(trips.values()).sort((first, second) =>
-      first.localeCompare(second, "pt-BR")
-    );
-  }, [sales, visitRecords]);
+  const knownTrips = useMemo(
+    () => buildTripOptions({
+      trips: [...trips, ...(visitTripId ? [{ id: visitTripId, name: visitTripName }] : [])],
+      sales, visits: visitRecords,
+    }),
+    [trips, sales, visitRecords, visitTripId, visitTripName]
+  );
 
   const clientRecordWritesBlocked =
     !CLIENT_RECORD_WRITES_ENABLED || isFirestoreReadOnly();
+  const visitWritesBlocked = !CLIENT_VISIT_WRITES_ENABLED || isFirestoreReadOnly() ||
+    loadingTrips || Boolean(tripLoadError);
   const selectedClientGifts = giftRecords.filter(
     (gift) => gift.clientId === giftClient?.id
   );
@@ -606,8 +564,8 @@ export default function ClientsPage() {
   }
 
   async function handleVisitStatus(client, status) {
-    if (clientRecordLock.current || clientRecordWritesBlocked) return;
-    if (!visitCity || !visitTripName.trim()) {
+    if (clientRecordLock.current || visitWritesBlocked) return;
+    if (!visitCity || !visitTripId) {
       alert("Selecione uma cidade e uma viagem antes de marcar a visita.");
       return;
     }
@@ -629,12 +587,15 @@ export default function ClientsPage() {
         userId,
         clientId: client.id,
         city: visitCity,
+        tripId: visitTripId,
         tripName: visitTripName.trim(),
         status,
       });
     } catch (error) {
       console.error("Erro ao atualizar visita:", error);
-      setVisitError(error.message);
+      setVisitError(error.code === "permission-denied"
+        ? "O Firebase recusou a gravação. Publique o firestore.rules atualizado para liberar visitas somente ao proprietário."
+        : error.message);
     } finally {
       clientRecordLock.current = false;
       setSavingClientRecord(false);
@@ -1539,7 +1500,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
               const clientVisitStatus = resolveClientTripVisitStatus({
                 client,
                 city: visitCity,
-                tripName: visitTripName,
+                tripId: visitTripId,
                 visitRecords,
                 sales,
               });
@@ -1780,7 +1741,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                             }
                             disabled={
                               savingClientRecord ||
-                              clientRecordWritesBlocked ||
+                              visitWritesBlocked ||
                               !visitCity ||
                               !visitTripName.trim() ||
                               getClientCityKey(client.city) !==
@@ -1832,7 +1793,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
             <p>
               Escolha a cidade e a viagem manualmente. Uma nova viagem começa
               sem herdar as marcações anteriores. “Comprou” exige uma venda
-              vinculada ao mesmo ID de cliente e ao mesmo nome explícito de viagem.
+              vinculada ao mesmo ID de cliente e ao mesmo identificador de viagem.
             </p>
           </div>
         </header>
@@ -1847,57 +1808,30 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
               }}
             >
               <option value="">Selecione uma cidade</option>
-              {CLIENT_CITIES.map((city) => (
+              {cities.map((city) => (
                 <option key={city} value={city}>{city}</option>
               ))}
             </select>
           </label>
-          <label>
-            Viagem
-            <select
-              value={manualVisitTrip ? "__manual__" : visitTripName}
-              onChange={(event) => {
-                if (event.target.value === "__manual__") {
-                  setVisitError("");
-                  setManualVisitTrip(true);
-                  setVisitTripName("");
-                  return;
-                }
-                setVisitError("");
-                setManualVisitTrip(false);
-                setVisitTripName(event.target.value);
-              }}
-            >
-              <option value="">Selecione uma viagem</option>
-              {knownTripNames.map((name) => (
-                <option key={normalizeSearchText(name)} value={name}>{name}</option>
-              ))}
-              <option value="__manual__">Outra viagem (digitar nome)</option>
-            </select>
-          </label>
-          {manualVisitTrip && (
-            <label>
-              Nome/identificador único da viagem
-              <input
-                value={visitTripName}
-                onChange={(event) => {
-                  setVisitError("");
-                  setVisitTripName(event.target.value);
-                }}
-                placeholder="Ex.: Rota Sul 2026"
-                maxLength={100}
-                required
-              />
-            </label>
-          )}
+          <TripSelector
+            userId={userId}
+            options={knownTrips}
+            value={visitTripId}
+            disabled={savingClientRecord || loadingTrips || Boolean(tripLoadError)}
+            onChange={(trip) => {
+              setVisitError("");
+              setVisitTripId(trip.id);
+              setVisitTripName(trip.name);
+            }}
+          />
         </div>
 
-        {clientRecordWritesBlocked && (
+        {isFirestoreReadOnly() && (
           <p className="cl-record-pending" role="status">
-            A consulta pode ser preparada, mas novas marcações estão pausadas
-            até a revisão das regras Firestore para a coleção de visitas.
+            Esta prévia está em modo somente leitura e não permite marcações.
           </p>
         )}
+        {tripLoadError && <p className="cl-record-error" role="alert">{tripLoadError}</p>}
         {visitError && <p className="cl-record-error" role="alert">{visitError}</p>}
 
         <div className="cl-visit-tabs" role="tablist" aria-label="Situação da visita">
@@ -1941,7 +1875,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                     type="button"
                     className="cl-btn cl-btn-soft"
                     onClick={() => handleVisitStatus(client, "unvisited")}
-                    disabled={savingClientRecord || clientRecordWritesBlocked}
+                    disabled={savingClientRecord || visitWritesBlocked}
                   >
                     Desfazer marcação
                   </button>
@@ -1950,7 +1884,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                     type="button"
                     className="cl-btn cl-btn-soft"
                     onClick={() => handleVisitStatus(client, "not_purchased")}
-                    disabled={savingClientRecord || clientRecordWritesBlocked}
+                    disabled={savingClientRecord || visitWritesBlocked}
                   >
                     Não comprou
                   </button>

@@ -21,6 +21,8 @@ import {
   setDoc,
   updateDoc,
 } from "firebase/firestore";
+import { createClientTrip, recordClientVisit } from "../src/services/clientRecords.js";
+import { buildClientVisitSummary } from "../src/domain/clientRecords.js";
 
 const PROJECT_ID = "demo-rc-manager-rules";
 const RULES_PATH = path.resolve(process.cwd(), "firestore.rules");
@@ -198,7 +200,7 @@ test("keeps payment records immutable after creation", async () => {
   );
 });
 
-test("blocks writes to gated collections (visits/gifts)", async () => {
+test("blocks malformed visits and gated gifts", async () => {
   const db = testEnv.authenticatedContext(USER_A).firestore();
 
   await assertFails(
@@ -454,6 +456,7 @@ test("cross-user: second user cannot read, list, write or delete in any collecti
     "pregoClients",
     "clientVisits",
     "clientGifts",
+    "trips",
   ];
   for (const name of names) {
     await assertFails(getDocs(collection(intruder, "users", USER_A, name)));
@@ -473,9 +476,114 @@ test("unknown paths and user root are denied even for the owner", async () => {
   await assertFails(getDoc(doc(db, "other", "x")));
 });
 
-test("denies owner writes to visits, gifts and pregoClients (intentional, flag disabled)", async () => {
+test("denies malformed visits and owner writes to gifts and pregoClients", async () => {
   const db = ownerDb();
   await assertFails(setDoc(ref(db, "pregoClients", "p1"), { clientId: "client-1" }));
   await assertFails(updateDoc(ref(db, "clientVisits", "visit-1"), { status: "purchased" }));
   await assertFails(updateDoc(ref(db, "clientGifts", "gift-1"), { status: "cancelled" }));
+});
+
+test("real visit service: mark, reload from another session, undo, counts and idempotent retry", async () => {
+  const db = ownerDb();
+  const trip = await createClientTrip({ db, userId: USER_A, name: "Rota Sul" });
+  const input = {
+    db, userId: USER_A, clientId: "client-1", city: "Tucumã",
+    tripId: trip.id, tripName: trip.name, status: "not_purchased",
+  };
+  const originalClient = (await getDoc(ref(db, "clients", "client-1"))).data();
+  const originalProduct = (await getDoc(ref(db, "products", "product-1"))).data();
+  const originalSale = (await getDoc(ref(db, "sales", "sale-open"))).data();
+  assert.equal(await assertSucceeds(recordClientVisit(input)), true);
+  assert.equal(await assertSucceeds(recordClientVisit(input)), false);
+
+  const reloadDb = ownerDb();
+  const readRecords = async () => (await getDocs(collection(reloadDb, "users", USER_A, "clientVisits")))
+    .docs.map((document) => ({ ...document.data(), id: document.id }));
+  const clients = [{ id: "client-1", ...originalClient }];
+  const summary = async (tripId, city = "Tucumã") => buildClientVisitSummary({
+    clients, city, tripId, visitRecords: await readRecords(), sales: [],
+  }).counts;
+  assert.deepEqual(await summary(trip.id), { unvisited: 0, not_purchased: 1, bought: 0 });
+  assert.deepEqual(await summary("trip-new"), { unvisited: 1, not_purchased: 0, bought: 0 });
+  assert.deepEqual(await summary(trip.id, "Xinguara"), { unvisited: 0, not_purchased: 0, bought: 0 });
+  const saved = (await readRecords()).find((record) => record.tripId === trip.id);
+  assert.equal(saved.cityKey, "tucuma");
+  assert.equal(saved.history.length, 1);
+  await assertSucceeds(recordClientVisit({ ...input, status: "unvisited" }));
+  assert.deepEqual(await summary(trip.id), { unvisited: 1, not_purchased: 0, bought: 0 });
+  assert.equal((await readRecords()).find((record) => record.tripId === trip.id).history.length, 2);
+  assert.deepEqual((await getDoc(ref(db, "clients", "client-1"))).data(), originalClient);
+  assert.deepEqual((await getDoc(ref(db, "products", "product-1"))).data(), originalProduct);
+  assert.deepEqual((await getDoc(ref(db, "sales", "sale-open"))).data(), originalSale);
+});
+
+test("equal-name new trips stay separate; sales and visits share the saved trip ID", async () => {
+  const db = ownerDb();
+  const first = await createClientTrip({ db, userId: USER_A, name: "3" });
+  const second = await createClientTrip({ db, userId: USER_A, name: "3" });
+  assert.notEqual(first.id, second.id);
+  const visit = {
+    db, userId: USER_A, clientId: "client-1", city: "Tucumã",
+    tripId: first.id, tripName: first.name, status: "not_purchased",
+  };
+  await assertSucceeds(recordClientVisit(visit));
+  await assertSucceeds(updateDoc(ref(db, "sales", "sale-open"), {
+    tripId: first.id, tripName: first.name, tripCity: "Tucumã",
+  }));
+  const sales = [{ id: "sale-open", ...(await getDoc(ref(db, "sales", "sale-open"))).data() }];
+  const records = (await getDocs(collection(db, "users", USER_A, "clientVisits")))
+    .docs.map((document) => document.data());
+  const input = {
+    clients: [{ id: "client-1", city: "Tucumã" }], city: "Tucumã",
+    visitRecords: records, sales,
+  };
+  assert.equal(buildClientVisitSummary({ ...input, tripId: first.id }).counts.bought, 1);
+  assert.equal(buildClientVisitSummary({ ...input, tripId: second.id }).counts.unvisited, 1);
+  await assertFails(updateDoc(ref(db, "sales", "sale-open"), { tripName: "Other label" }));
+});
+
+test("visit rules deny other users, malformed scope, identity changes, deletions and forged bought", async () => {
+  const db = ownerDb();
+  const trip = await createClientTrip({ db, userId: USER_A, name: "Rota" });
+  await recordClientVisit({
+    db, userId: USER_A, clientId: "client-1", city: "Tucumã",
+    tripId: trip.id, tripName: trip.name, status: "not_purchased",
+  });
+  const snapshots = await getDocs(collection(db, "users", USER_A, "clientVisits"));
+  const document = snapshots.docs.find((document) => document.data().tripId === trip.id);
+  const visitRef = ref(db, "clientVisits", document.id);
+  for (const change of [
+    { status: "bought" }, { city: "Xinguara" }, { cityKey: "xinguara" },
+    { clientId: "client-b" }, { tripId: "legacy-number-4" },
+    { updatedAt: new Date(0) }, { amount: 50 },
+  ]) {
+    await assertFails(updateDoc(visitRef, { ...change, ...(change.updatedAt ? {} : { updatedAt: serverTimestamp() }) }));
+  }
+  await assertFails(deleteDoc(visitRef));
+  await assertFails(setDoc(ref(db, "clientVisits", "missing-client"), {
+    ...document.data(), clientId: "missing", createdAt: serverTimestamp(), updatedAt: serverTimestamp(),
+  }));
+  for (const context of [testEnv.authenticatedContext(USER_B), testEnv.unauthenticatedContext()]) {
+    const foreign = ref(context.firestore(), "clientVisits", document.id);
+    await assertFails(getDoc(foreign));
+    await assertFails(getDocs(collection(context.firestore(), "users", USER_A, "clientVisits")));
+    await assertFails(setDoc(foreign, { ...document.data(), createdAt: serverTimestamp(), updatedAt: serverTimestamp() }));
+    await assertFails(updateDoc(foreign, { status: "unvisited", updatedAt: serverTimestamp() }));
+    await assertFails(deleteDoc(foreign));
+    await assertFails(setDoc(ref(context.firestore(), "trips", `trip-${crypto.randomUUID()}`), {
+      name: "Foreign", createdAt: serverTimestamp(),
+    }));
+  }
+  await assertFails(updateDoc(ref(db, "trips", trip.id), { name: "Renamed" }));
+  await assertFails(deleteDoc(ref(db, "trips", trip.id)));
+});
+
+test("legacy labels allow canonical visit writes without modifying old visits or sales", async () => {
+  const db = ownerDb();
+  await assertSucceeds(recordClientVisit({
+    db, userId: USER_A, clientId: "client-1", city: "Tucumã",
+    tripId: "legacy-number-3", tripName: "3ª viagem", status: "not_purchased",
+  }));
+  assert.equal((await getDoc(ref(db, "clientVisits", "visit-1"))).data().tripId, undefined);
+  assert.equal((await getDoc(ref(db, "sales", "sale-open"))).data().tripId, undefined);
 });

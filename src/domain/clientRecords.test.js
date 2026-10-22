@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   calculateGiftCost,
+  buildClientVisitSummary,
   createVisitRecordId,
   hasGiftForTrip,
   resolveClientTripVisitStatus,
@@ -9,8 +10,10 @@ import {
 } from "./clientRecords.js";
 
 test("visit record identifiers use the stable client ID and trip key", () => {
-  assert.equal(createVisitRecordId("client-123", "Viagem Araguaia 2026"), "viagem-araguaia-2026_client-123");
-  assert.throws(() => createVisitRecordId("", "Viagem A"), /obrigatórios/);
+  assert.equal(createVisitRecordId("client-123", "trip-123", "Tucumã – PA"), "trip-123~tucuma~client-123");
+  assert.throws(() => createVisitRecordId("", "Viagem A", "Tucumã"), /obrigatórios/);
+  assert.notEqual(createVisitRecordId("client-123", "trip-123", "Tucumã"),
+    createVisitRecordId("client-123", "trip-123", "Xinguara"));
 });
 
 test("visit status is isolated by client, city and explicitly named trip", () => {
@@ -71,6 +74,48 @@ test("an explicitly linked sale takes precedence as purchased", () => {
     }),
     "bought"
   );
+});
+
+test("visit counts isolate cities, client IDs, equal-name trips and cancelled sales", () => {
+  const clients = [
+    { id: "a", name: "Maria", city: "Tucumã – PA" },
+    { id: "b", name: "Maria", city: "Tucumã – PA" },
+    { id: "c", city: "Xinguara – PA" },
+  ];
+  const records = [{ clientId: "a", city: "Tucumã", tripId: "trip-one", status: "not_purchased" }];
+  const input = {
+    clients, city: "Tucumã", tripId: "trip-one", visitRecords: records,
+    sales: [
+      { clientId: "b", tripId: "trip-one", tripCity: "Tucumã" },
+      { clientId: "a", tripId: "trip-other", tripCity: "Tucumã" },
+      { clientId: "a", tripId: "trip-one", tripCity: "Xinguara" },
+      { clientId: "a", tripId: "trip-one", status: "cancelled" },
+    ],
+  };
+  assert.deepEqual(buildClientVisitSummary(input).counts, { unvisited: 0, not_purchased: 1, bought: 1 });
+  assert.deepEqual(buildClientVisitSummary({ ...input, tripId: "trip-new", sales: [] }).counts,
+    { unvisited: 2, not_purchased: 0, bought: 0 });
+  assert.deepEqual(buildClientVisitSummary({ ...input, city: "Xinguara" }).counts,
+    { unvisited: 1, not_purchased: 0, bought: 0 });
+  assert.deepEqual(buildClientVisitSummary({ ...input, tripId: "" }).counts,
+    { unvisited: 0, not_purchased: 0, bought: 0 });
+});
+
+test("canonical undo overrides a legacy marker and ordinal labels match legacy sales", () => {
+  const client = { id: "a", city: "Tucumã" };
+  const visitRecords = [
+    { clientId: "a", city: "Tucumã", tripName: "3", status: "not_purchased" },
+    { clientId: "a", city: "Tucumã", tripId: "legacy-number-3", status: "unvisited" },
+  ];
+  const input = { client, city: "Tucumã", tripId: "legacy-number-3", visitRecords };
+  assert.equal(resolveClientTripVisitStatus(input), "unvisited");
+  assert.equal(resolveClientTripVisitStatus({
+    ...input, sales: [{ clientId: "a", tripName: "3ª viagem" }],
+  }), "bought");
+  assert.equal(resolveClientTripVisitStatus({
+    ...input, tripId: "trip-new-same-name", tripName: "3",
+    sales: [{ clientId: "a", tripName: "3ª viagem" }],
+  }), "unvisited");
 });
 
 test("gift quantities respect available stock and record separate cost", () => {

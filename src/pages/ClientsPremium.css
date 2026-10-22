@@ -237,11 +237,26 @@
 }
 
 .cl-visit-selectors label,
+.cl-trip-selector label,
 .cl-gift-form label {
   display: grid;
   gap: 6px;
   color: var(--rc-ink);
   font-weight: 700;
+}
+
+.cl-trip-selector select,
+.cl-trip-selector input,
+.cl-visit-selectors select {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 11px 12px;
+  border: 1px solid var(--rc-border, #d8dee8);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--rc-ink);
+  font: inherit;
 }
 
 .cl-visit-tabs {

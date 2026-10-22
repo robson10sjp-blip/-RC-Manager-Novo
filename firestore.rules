@@ -60,6 +60,41 @@ service cloud.firestore {
       ];
     }
 
+    function validTripReference(uid, data) {
+      return data.tripId is string
+        && data.tripId.size() <= 250
+        && data.tripName is string
+        && data.tripName.size() > 0
+        && data.tripName.size() <= 100
+        && (data.tripId.matches('^legacy-(number|name)-[a-z0-9-]+$')
+          || get(/databases/$(database)/documents/users/$(uid)/trips/$(data.tripId)).data.name == data.tripName);
+    }
+
+    function validOptionalSaleTrip(uid) {
+      return request.resource.data.get('tripId', '') == ''
+        || validTripReference(uid, request.resource.data);
+    }
+
+    function validVisit(uid) {
+      let data = request.resource.data;
+      return data.keys().hasOnly([
+          'clientId', 'city', 'cityKey', 'tripId', 'tripName', 'status',
+          'history', 'createdAt', 'updatedAt'
+        ])
+        && data.clientId is string
+        && data.city is string
+        && data.cityKey is string
+        && data.cityKey.size() > 0
+        && data.cityKey.size() <= 100
+        && data.city == get(/databases/$(database)/documents/users/$(uid)/clients/$(data.clientId)).data.city
+        && validTripReference(uid, data)
+        && data.status in ['not_purchased', 'unvisited']
+        && data.history is list
+        && data.history.size() > 0
+        && data.createdAt is timestamp
+        && data.updatedAt == request.time;
+    }
+
     match /users/{uid} {
       allow read, write: if false;
 
@@ -108,13 +143,16 @@ service cloud.firestore {
           && nonNegativeNumber(request.resource.data.total)
           && nonNegativeNumber(request.resource.data.amountPaid)
           && nonNegativeNumber(request.resource.data.pendingAmount)
-          && request.resource.data.pendingAmount <= request.resource.data.total;
+          && request.resource.data.pendingAmount <= request.resource.data.total
+          && validOptionalSaleTrip(uid);
         allow update: if owner(uid)
           && request.resource.data.get('clientId', null) == resource.data.get('clientId', null)
           && request.resource.data.get('items', []) is list
           && unchangedOrNumber('total')
           && unchangedOrNumber('amountPaid')
-          && unchangedOrNumber('pendingAmount');
+          && unchangedOrNumber('pendingAmount')
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['tripId', 'tripName'])
+            || validOptionalSaleTrip(uid));
         // Compras com recebimento nunca são excluídas, preservando o histórico.
         allow delete: if owner(uid)
           && resource.data.get('amountPaid', 0) == 0;
@@ -164,8 +202,19 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
-      // Escritas abaixo ficam bloqueadas de propósito: o app mantém
-      // CLIENT_RECORD_WRITES_ENABLED=false. Só leitura (dados legados/futuros).
+      match /trips/{tripId} {
+        allow read: if owner(uid);
+        allow create: if owner(uid)
+          && tripId.matches('^trip-[a-f0-9-]{36}$')
+          && request.resource.data.keys().hasOnly(['name', 'createdAt'])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.name.size() <= 100
+          && request.resource.data.createdAt == request.time;
+        allow update, delete: if false;
+      }
+
+      // Prego legado e brindes continuam somente leitura.
       match /pregoClients/{clientId} {
         allow read: if owner(uid);
         allow write: if false;
@@ -173,7 +222,14 @@ service cloud.firestore {
 
       match /clientVisits/{visitId} {
         allow read: if owner(uid);
-        allow write: if false;
+        allow create: if owner(uid) && validVisit(uid)
+          && request.resource.data.createdAt == request.time;
+        allow update: if owner(uid) && validVisit(uid)
+          && request.resource.data.clientId == resource.data.clientId
+          && request.resource.data.cityKey == resource.data.cityKey
+          && request.resource.data.tripId == resource.data.tripId
+          && request.resource.data.createdAt == resource.data.createdAt;
+        allow delete: if false;
       }
 
       match /clientGifts/{giftId} {
