@@ -710,6 +710,7 @@ test("legacy gift history without tripId remains readable and can be reversed wi
       giftDate: new Date("2026-10-01T12:00:00Z"),
       createdAt: new Date("2026-10-01T12:00:00Z"),
     });
+
   });
   const db = ownerDb();
   const before = (await getDoc(ref(db, "clientGifts", "legacy-complete"))).data();
@@ -720,6 +721,46 @@ test("legacy gift history without tripId remains readable and can be reversed wi
   assert.deepEqual(after.giftDate, before.giftDate);
   assert.equal(after.status, "cancelled");
   assert.equal((await getDoc(ref(db, "products", "product-1"))).data().quantity, 5);
+});
+
+test("calendar actions persist chosen dates without a trip, preserve client city and allow undo/cancellation", async () => {
+      const db = ownerDb();
+      const input = {
+        db, userId: USER_A, clientId: "client-1", city: "Tucumã",
+        actionDate: "2026-10-20", status: "not_purchased",
+      };
+      await assertSucceeds(recordClientVisit(input));
+      await assertSucceeds(recordClientVisit({ ...input, actionDate: "2026-10-21" }));
+      const reload = ownerDb();
+      const visits = (await getDocs(collection(reload, "users", USER_A, "clientVisits"))).docs.map((d) => d.data());
+      const dated = visits.filter((v) => v.actionDate);
+      assert.equal(dated.length, 2);
+      assert.ok(dated.every((v) => v.tripId === "" && v.city === "Tucumã – PA"));
+      await assertSucceeds(recordClientVisit({ ...input, status: "unvisited" }));
+      const gift = {
+        db, userId: USER_A, operationId: crypto.randomUUID(), clientId: "client-1",
+        productId: "product-1", quantity: 1, tripCity: "Tucumã", actionDate: "2026-10-19",
+      };
+      const id = await assertSucceeds(recordClientGift(gift));
+      const saved = (await getDoc(ref(reload, "clientGifts", id))).data();
+      assert.equal(saved.actionDate, "2026-10-19");
+      assert.equal(saved.tripId, "");
+      assert.equal(saved.tripName, "");
+      assert.equal(saved.tripCity, "Tucumã – PA");
+      await assertSucceeds(recordClientGift(gift));
+      await assertSucceeds(cancelClientGift({ db, userId: USER_A, gift: { id } }));
+      assert.equal((await getDoc(ref(db, "products", "product-1"))).data().quantity, 5);
+      await assert.rejects(recordClientVisit({ ...input, actionDate: "2026-02-30" }), /data válida/);
+      await assert.rejects(recordClientGift({ ...gift, actionDate: "" }), /data válida/);
+      const invalid = { ...saved, actionDate: "not-a-date", createdAt: serverTimestamp(), giftDate: serverTimestamp() };
+      await assertFails(setDoc(ref(db, "clientGifts", "invalid-date"), invalid));
+      const visitSnapshot = await getDocs(collection(db, "users", USER_A, "clientVisits"));
+      const visit = visitSnapshot.docs.find((d) => d.data().actionDate === input.actionDate);
+      await assertFails(updateDoc(visit.ref, { actionDate: "2026-02-30", updatedAt: serverTimestamp() }));
+      await assertFails(getDoc(doc(testEnv.authenticatedContext(USER_B).firestore(),
+        "users", USER_A, "clientVisits", visit.id)));
+      await assertFails(getDoc(doc(testEnv.authenticatedContext(USER_B).firestore(),
+        "users", USER_A, "clientGifts", id)));
 });
 
 test("real visit service: mark, reload from another session, undo, counts and idempotent retry", async () => {

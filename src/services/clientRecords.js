@@ -7,6 +7,7 @@ import {
   calculateGiftCost,
   createVisitRecordId,
   validateGiftQuantity,
+  validateActionDate,
 } from "../domain/clientRecords.js";
 import { getClientCityKey } from "../domain/clientCities.js";
 
@@ -36,17 +37,19 @@ export async function recordClientVisit({
   userId,
   clientId,
   city,
-  tripId,
-  tripName,
+  tripId = "",
+  tripName = "",
+  actionDate,
   status,
 }) {
   if (!["not_purchased", "unvisited"].includes(status)) {
     throw new Error("Situação de visita inválida.");
   }
-  if (!userId || !tripName?.trim() || !tripId) {
-    throw new Error("Selecione uma viagem confirmada e entre no sistema.");
+  if (actionDate !== undefined) validateActionDate(actionDate);
+  if (!userId || (!actionDate && (!tripName?.trim() || !tripId))) {
+    throw new Error("Selecione uma viagem confirmada ou uma data no calendário e entre no sistema.");
   }
-  const recordId = createVisitRecordId(clientId, tripId, city);
+  const recordId = createVisitRecordId(clientId, tripId, city, actionDate);
   const reference = doc(db, "users", userId, "clientVisits", recordId);
 
   return runTransaction(db, async (transaction) => {
@@ -67,10 +70,11 @@ export async function recordClientVisit({
         cityKey: getClientCityKey(city),
         tripId,
         tripName: tripName.trim(),
+        ...(actionDate ? { actionDate } : {}),
         status,
         history: [
           ...(Array.isArray(saved.history) ? saved.history : []),
-          { status, changedAt: new Date().toISOString() },
+          { status, changedAt: new Date().toISOString(), ...(actionDate ? { actionDate } : {}) },
         ],
         createdAt: saved.createdAt || serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -88,14 +92,16 @@ export async function recordClientGift({
   clientId,
   productId,
   quantity,
-  tripId,
-  tripName,
+  tripId = "",
+  tripName = "",
+  actionDate,
   tripCity,
 }) {
   if (!userId || !clientId || !productId || !operationId) {
     throw new Error("Cliente, produto, usuário e identificador da entrega são obrigatórios.");
   }
-  if (!tripId || !tripName?.trim() || !getClientCityKey(tripCity)) {
+  if (actionDate !== undefined) validateActionDate(actionDate);
+  if ((!actionDate && (!tripId || !tripName?.trim())) || !getClientCityKey(tripCity)) {
     throw new Error("Selecione a cidade e uma viagem confirmada antes de registrar o brinde.");
   }
   const giftReference = doc(db, "users", userId, "clientGifts", `gift-${operationId}`);
@@ -122,6 +128,7 @@ export async function recordClientGift({
         Number(savedGift.quantity) !== Number(quantity) ||
         savedGift.tripId !== tripId ||
         savedGift.tripName !== tripName ||
+        (actionDate && savedGift.actionDate !== actionDate) ||
         getClientCityKey(savedGift.tripCity) !== getClientCityKey(tripCity)
       ) {
         throw new Error("Identificador de entrega já utilizado com outros dados.");
@@ -172,6 +179,7 @@ export async function recordClientGift({
       giftDate: serverTimestamp(),
       tripId,
       tripName: tripName.trim(),
+      ...(actionDate ? { actionDate } : {}),
       tripCity: clientSnapshot.data().city,
       cityKey: getClientCityKey(tripCity),
       unitCost,

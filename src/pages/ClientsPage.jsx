@@ -40,7 +40,7 @@ import {
   CLIENT_CLASSIFICATIONS,
   resolveClientClassification,
 } from "../domain/clientClassification.js";
-import { toDate } from "../utils/dates";
+import { toDate, toDateInputValue } from "../utils/dates";
 import {
   buildClientVisitSummary,
   hasGiftForTrip,
@@ -112,6 +112,7 @@ export default function ClientsPage() {
   const [visitCity, setVisitCity] = useState("");
   const [visitTripName, setVisitTripName] = useState("");
   const [visitTripId, setVisitTripId] = useState("");
+  const [actionDate, setActionDate] = useState(() => toDateInputValue(new Date()));
   const [visitStatusFilter, setVisitStatusFilter] = useState("unvisited");
   const { trips, visits: visitRecords, loading: loadingTrips, error: tripLoadError } = useClientTrips(userId);
   const [visitError, setVisitError] = useState("");
@@ -609,12 +610,12 @@ export default function ClientsPage() {
 
   async function handleVisitStatus(client, status) {
     if (clientRecordLock.current || visitWritesBlocked) return;
-    if (!visitCity || !visitTripId) {
-      alert("Selecione uma cidade e uma viagem antes de marcar a visita.");
+    if (!actionDate) {
+      alert("Selecione a data da visita.");
       return;
     }
-    if (getClientCityKey(client.city) !== getClientCityKey(visitCity)) {
-      alert("A cliente não pertence à cidade selecionada para esta visita.");
+    if (!client.city) {
+      alert("Cadastre a cidade desta cliente antes de registrar a visita.");
       return;
     }
     if (!userId) {
@@ -630,7 +631,8 @@ export default function ClientsPage() {
         db,
         userId,
         clientId: client.id,
-        city: visitCity,
+        city: client.city,
+        actionDate,
         tripId: visitTripId,
         tripName: visitTripName.trim(),
         status,
@@ -647,19 +649,15 @@ export default function ClientsPage() {
   }
 
   function handleOpenGift(client) {
-    if (!visitCity || !visitTripId || !visitTripName.trim()) {
-      alert("Selecione manualmente a cidade e a viagem antes de registrar um brinde.");
-      return;
-    }
-    if (getClientCityKey(client.city) !== getClientCityKey(visitCity)) {
-      alert("Selecione a cidade da cliente no controle de visitas antes de registrar o brinde.");
+    if (!actionDate || !client.city) {
+      alert("Selecione uma data e cadastre a cidade da cliente antes de registrar um brinde.");
       return;
     }
     setGiftError("");
     setGiftRecords([]);
     setGiftProducts([]);
     setGiftDataReady({ products: false, gifts: false });
-    setGiftTrip({ id: visitTripId, name: visitTripName, city: visitCity });
+    setGiftTrip({ id: visitTripId, name: visitTripName, city: client.city, actionDate });
     setGiftProductId("");
     setGiftQuantity("1");
     giftOperationId.current = null;
@@ -722,6 +720,7 @@ export default function ClientsPage() {
         tripId: giftTrip.id,
         tripName: giftTrip.name,
         tripCity: giftTrip.city,
+        actionDate: giftTrip.actionDate,
       });
       setGiftProductId("");
       setGiftQuantity("1");
@@ -1554,8 +1553,9 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                 .join(", ");
               const clientVisitStatus = resolveClientTripVisitStatus({
                 client,
-                city: visitCity,
+                city: client.city,
                 tripId: visitTripId,
+                actionDate,
                 visitRecords,
                 sales,
               });
@@ -1780,21 +1780,36 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                       )}
 
                       <section aria-label={`Visita e brinde de ${client.name}`}>
-                        <h4>Cidade e viagem para visita ou brinde</h4>
-                        {renderVisitScope()}
+                        <h4>Data da visita ou brinde</h4>
+                        <p>Cidade: {getClientCityDisplay(client.city) || "Cadastre a cidade da cliente"}</p>
+                        <div className="cl-visit-selectors">
+                          <label>
+                            Data da ação
+                            <input type="date" value={actionDate} required
+                              disabled={savingClientRecord}
+                              onChange={(event) => setActionDate(event.target.value)} />
+                          </label>
+                          <label>
+                            Viagem (opcional)
+                            <select value={visitTripId} disabled={savingClientRecord}
+                              onChange={(event) => {
+                                const trip = knownTrips.find((entry) => entry.id === event.target.value);
+                                setVisitTripId(trip?.id || "");
+                                setVisitTripName(trip?.name || "");
+                              }}>
+                              <option value="">Sem viagem vinculada</option>
+                              {knownTrips.map((trip) => <option key={trip.id} value={trip.id}>{trip.name} · {trip.id}</option>)}
+                            </select>
+                          </label>
+                        </div>
                         {tripLoadError ? (
                           <p className="cl-record-error" role="alert">{tripLoadError}</p>
                         ) : loadingTrips ? (
                           <p role="status">Carregando viagens e visitas...</p>
                         ) : isFirestoreReadOnly() ? (
                           <p role="status">Prévia somente leitura: gravações desabilitadas.</p>
-                        ) : !visitCity || !visitTripId ? (
-                          <p role="status">
-                            Selecione a cidade e a viagem aqui para habilitar Não comprou e Dar brinde.
-                            Os filtros de pesquisa acima não definem a viagem da visita.
-                          </p>
-                        ) : getClientCityKey(client.city) !== getClientCityKey(visitCity) ? (
-                          <p role="status">Selecione a cidade desta cliente: {getClientCityDisplay(client.city)}.</p>
+                        ) : !actionDate || !client.city ? (
+                          <p role="status">Informe uma data válida e a cidade cadastral da cliente.</p>
                         ) : null}
                         {visitError && <p className="cl-record-error" role="alert">{visitError}</p>}
                       <div className="cl-actions">
@@ -1815,10 +1830,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                             disabled={
                               savingClientRecord ||
                               visitWritesBlocked ||
-                              !visitCity ||
-                              !visitTripId ||
-                              getClientCityKey(client.city) !==
-                                getClientCityKey(visitCity)
+                              !client.city || !actionDate
                             }
                           >
                             {clientVisitStatus === "not_purchased"
@@ -1833,10 +1845,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                           disabled={
                             savingClientRecord ||
                             clientRecordWritesBlocked ||
-                            !visitCity ||
-                            !visitTripId ||
-                            getClientCityKey(client.city) !==
-                              getClientCityKey(visitCity)
+                            !client.city || !actionDate
                           }
                         >
                           Dar brinde
@@ -1850,6 +1859,21 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                         <button type="button" className="cl-btn cl-btn-danger" onClick={() => handleDelete(client)}>
                           Excluir
                         </button>
+                      </div>
+                      <div className="cl-visit-history">
+                        <h4>Histórico de visitas</h4>
+                        {visitRecords.filter((record) => record.clientId === client.id).map((record) => (
+                          <article key={record.id}>
+                            {(record.history?.length ? record.history : [record]).map((entry, index) => (
+                              <p key={index}>
+                                {toDate(entry.actionDate || entry.changedAt || record.actionDate || record.updatedAt)?.toLocaleDateString("pt-BR") || "Data não informada"}
+                                {" · "}{entry.status === "not_purchased" ? "Não comprou" : "Marcação desfeita"}
+                                {" · "}{record.city}
+                                {" · "}{record.tripName || "Sem viagem vinculada"}
+                              </p>
+                            ))}
+                          </article>
+                        ))}
                       </div>
                       </section>
                     </div>
@@ -2008,7 +2032,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
             <header>
               <div>
                 <h2>Dar brinde</h2>
-                <p>{giftClient.name} · {giftTrip.name} · {getClientCityDisplay(giftTrip.city)}</p>
+                <p>{giftClient.name} · {giftTrip.name || "Sem viagem vinculada"} · {getClientCityDisplay(giftTrip.city)}</p>
               </div>
               <button type="button" className="cl-btn cl-btn-soft" disabled={savingClientRecord} onClick={() => setGiftClient(null)}>
                 Fechar
@@ -2029,6 +2053,18 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
             )}
 
             <form onSubmit={handleGiftSubmit} className="cl-gift-form">
+              <label>
+                Data da entrega
+                <input type="date" value={giftTrip.actionDate} required
+                  disabled={savingClientRecord}
+                  onChange={(event) => {
+                    if (giftOperationId.current) {
+                      setGiftError("Confira o histórico e conclua a tentativa anterior antes de alterar a data.");
+                      return;
+                    }
+                    setGiftTrip((current) => ({ ...current, actionDate: event.target.value }));
+                  }} />
+              </label>
               <label>
                 Produto cadastrado no estoque
                 <select
@@ -2107,10 +2143,10 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                     <div>
                       <strong>{gift.productName || "Produto"}</strong>
                       <span>
-                        {gift.quantity} unidade(s) · {gift.tripName} · {gift.tripCity}
+                        {gift.quantity} unidade(s) · {gift.tripName || "Sem viagem vinculada"} · {gift.tripCity}
                       </span>
                       <span>
-                        Data: {toDate(gift.giftDate)?.toLocaleDateString("pt-BR") || "Não informada"}
+                        Data: {toDate(gift.actionDate || gift.giftDate)?.toLocaleDateString("pt-BR") || "Não informada"}
                       </span>
                       <span>
                         Custo registrado:{" "}

@@ -7,7 +7,21 @@ import {
   hasGiftForTrip,
   resolveClientTripVisitStatus,
   validateGiftQuantity,
+  validateActionDate,
 } from "./clientRecords.js";
+
+test("calendar visit status separates dates and never infers travel or purchases by date", () => {
+  const client = { id: "a", city: "Tucumã" };
+  const input = { client, city: client.city, actionDate: "2026-10-20",
+    visitRecords: [{ clientId: "a", city: "Tucumã", actionDate: "2026-10-20", status: "not_purchased" }],
+    sales: [{ clientId: "a", tripName: "3ª viagem", saleDate: "2026-10-20" }] };
+  assert.equal(resolveClientTripVisitStatus(input), "not_purchased");
+  assert.equal(resolveClientTripVisitStatus({ ...input, actionDate: "2026-10-21" }), "unvisited");
+  assert.equal(validateActionDate("2028-02-29"), "2028-02-29");
+  for (const value of ["2026-02-29", "2026-13-01", "", "20/10/2026"]) {
+    assert.throws(() => validateActionDate(value), /data válida/);
+  }
+});
 
 test("visit record identifiers use the stable client ID and trip key", () => {
   assert.equal(createVisitRecordId("client-123", "trip-123", "Tucumã – PA"), "trip-123~tucuma~client-123");

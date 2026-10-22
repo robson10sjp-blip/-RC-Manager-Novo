@@ -1,5 +1,11 @@
 # React + Vite
 
+## Calendario nas acoes da cliente
+
+- Na ficha, "Nao comprou" e "Dar brinde" usam a data local de hoje, alteravel por calendario. ID e cidade vem automaticamente do cadastro da cliente. A viagem e opcional e nunca e inferida da data.
+- Novos registros guardam `actionDate` no formato ISO (YYYY-MM-DD); os historicos mostram DD/MM/AAAA. Sem viagem, visitas de dias diferentes tem documentos separados. Ao vincular uma viagem explicitamente, o historico existente dessa viagem permanece reconhecido.
+- Documentos antigos sem `actionDate` permanecem legiveis e cancelaveis, com suas datas e viagens originais. Publique o arquivo completo [firestore.rules](./firestore.rules) para aceitar o novo campo e registros sem viagem. As validacoes atomicas de estoque e o isolamento por UID permanecem ativos.
+
 ## Firebase no build de producao
 
 - No Netlify, cadastre as seis variaveis `VITE_FIREBASE_*` exigidas em `src/firebase/configValidation.js`, no contexto **Production**, disponiveis para **Builds**, usando a configuracao web do projeto Firebase existente. No plano gratuito, use todos os escopos (o plano nao permite restringir a um escopo especifico). `VITE_FIREBASE_MEASUREMENT_ID` e opcional.

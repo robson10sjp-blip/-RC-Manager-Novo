@@ -1,12 +1,22 @@
 import { getClientCityKey } from "./clientCities.js";
 import { getRecordTripId } from "./tripIdentity.js";
 
-export function createVisitRecordId(clientId, tripId, city) {
+export function validateActionDate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+    !Number.isFinite(new Date(`${value}T12:00:00Z`).getTime()) ||
+    new Date(`${value}T12:00:00Z`).toISOString().slice(0, 10) !== value) {
+    throw new Error("Selecione uma data válida no calendário.");
+  }
+  return value;
+}
+
+export function createVisitRecordId(clientId, tripId, city, actionDate) {
   const cityKey = getClientCityKey(city);
-  if (!tripId || !clientId || !cityKey) {
+  const scope = tripId || (actionDate ? `date-${validateActionDate(actionDate)}` : "");
+  if (!scope || !clientId || !cityKey) {
     throw new Error("Cliente, cidade e identificador da viagem são obrigatórios.");
   }
-  return [tripId, cityKey, clientId].map(encodeURIComponent).join("~");
+  return [scope, cityKey, clientId].map(encodeURIComponent).join("~");
 }
 
 export function resolveClientTripVisitStatus({
@@ -14,18 +24,19 @@ export function resolveClientTripVisitStatus({
   city,
   tripId,
   tripName,
+  actionDate,
   visitRecords = [],
   sales = [],
 }) {
   const tripKey = getRecordTripId({ tripId, tripName });
   const cityKey = getClientCityKey(city);
-  if (!client?.id || !tripKey || !cityKey ||
+  if (!client?.id || (!tripKey && !actionDate) || !cityKey ||
     getClientCityKey(client.city) !== cityKey) return "unvisited";
 
   const bought = sales.some(
     (sale) =>
       sale.clientId === client.id &&
-      getRecordTripId(sale) === tripKey &&
+      Boolean(tripKey) && getRecordTripId(sale) === tripKey &&
       !["cancelled", "canceled"].includes(sale.status) &&
       getClientCityKey(sale.tripCity || client.city) === cityKey
   );
@@ -34,7 +45,8 @@ export function resolveClientTripVisitStatus({
   const matchingVisits = visitRecords.filter(
     (record) =>
       record.clientId === client.id &&
-      getRecordTripId(record) === tripKey &&
+      (tripKey ? getRecordTripId(record) === tripKey :
+        !getRecordTripId(record) && record.actionDate === actionDate) &&
       getClientCityKey(record.city) === cityKey
   );
   // A new canonical record (including undo) overrides a read-only legacy marker.
@@ -80,6 +92,7 @@ export function calculateGiftCost(unitCost, quantity) {
 
 export function hasGiftForTrip(gifts = [], tripName, city, tripId) {
   const tripKey = getRecordTripId({ tripId, tripName });
+  if (!tripKey) return false;
   const cityKey = getClientCityKey(city);
   return gifts.some(
     (gift) =>

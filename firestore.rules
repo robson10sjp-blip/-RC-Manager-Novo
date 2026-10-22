@@ -75,11 +75,29 @@ service cloud.firestore {
         || validTripReference(uid, request.resource.data);
     }
 
+    function validCalendarDate(value) {
+      let parts = value.split('-');
+      let year = int(parts[0]);
+      let month = int(parts[1]);
+      let day = int(parts[2]);
+      let leap = year % 400 == 0 || (year % 4 == 0 && year % 100 != 0);
+      return value.matches('^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$')
+        && day <= (month == 2 ? (leap ? 29 : 28) : (month in [4, 6, 9, 11] ? 30 : 31));
+    }
+
+    function validActionScope(uid, data) {
+      return (data.get('actionDate', '') == '' && validTripReference(uid, data))
+        || (data.actionDate is string
+          && validCalendarDate(data.actionDate)
+          && ((data.get('tripId', '') == '' && data.get('tripName', '') == '')
+            || validTripReference(uid, data)));
+    }
+
     function validVisit(uid) {
       let data = request.resource.data;
       return data.keys().hasOnly([
           'clientId', 'city', 'cityKey', 'tripId', 'tripName', 'status',
-          'history', 'createdAt', 'updatedAt'
+          'history', 'createdAt', 'updatedAt', 'actionDate'
         ])
         && data.clientId is string
         && data.city is string
@@ -87,7 +105,7 @@ service cloud.firestore {
         && data.cityKey.size() > 0
         && data.cityKey.size() <= 100
         && data.city == get(/databases/$(database)/documents/users/$(uid)/clients/$(data.clientId)).data.city
-        && validTripReference(uid, data)
+        && validActionScope(uid, data)
         && data.status in ['not_purchased', 'unvisited']
         && data.history is list
         && data.history.size() > 0
@@ -129,13 +147,13 @@ service cloud.firestore {
       return gift.keys().hasOnly([
           'clientId', 'productId', 'productName', 'quantity', 'giftDate',
           'tripId', 'tripName', 'tripCity', 'cityKey', 'unitCost', 'totalCost',
-          'status', 'stockMovementId', 'createdAt'
+          'status', 'stockMovementId', 'createdAt', 'actionDate'
         ])
         && gift.clientId is string && gift.productId is string
         && gift.productName == product.get('name', '')
         && gift.tripCity == get(/databases/$(database)/documents/users/$(uid)/clients/$(gift.clientId)).data.city
         && gift.cityKey is string && gift.cityKey.size() > 0
-        && validTripReference(uid, gift)
+        && validActionScope(uid, gift)
         && nonNegativeInt(gift.quantity) && gift.quantity > 0
         && nonNegativeNumber(gift.unitCost)
         && gift.unitCost == float(product.costPrice)
@@ -314,6 +332,8 @@ service cloud.firestore {
           && request.resource.data.clientId == resource.data.clientId
           && request.resource.data.cityKey == resource.data.cityKey
           && request.resource.data.tripId == resource.data.tripId
+          && (resource.data.tripId != ''
+            || request.resource.data.get('actionDate', '') == resource.data.get('actionDate', ''))
           && request.resource.data.createdAt == resource.data.createdAt;
         allow delete: if false;
       }
