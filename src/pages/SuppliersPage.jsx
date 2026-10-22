@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LuTruck } from "react-icons/lu";
 import PageHeader from "../components/PageHeader.jsx";
+import FinancialValue from "../components/FinancialValue.jsx";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -580,11 +581,11 @@ export default function SuppliersPage() {
       {notice && <div className="suppliers-notice" role="status">{notice}</div>}
 
       <section className="supplier-payables-metrics" aria-label="Resumo de contas a pagar">
-        <article><span>Total devido a fornecedores</span><strong>{formatCurrency(payableSummary.totalToPay)}</strong></article>
-        <article><span>Contas vencidas</span><strong>{payableSummary.overdueCount} · {formatCurrency(payableSummary.overdueTotal)}</strong></article>
-        <article><span>Contas a vencer (30 dias)</span><strong>{upcomingAccountCount} · {formatCurrency(payableSummary.upcomingTotal)}</strong></article>
+        <article><span>Total devido a fornecedores</span><strong><FinancialValue>{formatCurrency(payableSummary.totalToPay)}</FinancialValue></strong></article>
+        <article><span>Contas vencidas</span><strong>{payableSummary.overdueCount} · <FinancialValue>{formatCurrency(payableSummary.overdueTotal)}</FinancialValue></strong></article>
+        <article><span>Contas a vencer (30 dias)</span><strong>{upcomingAccountCount} · <FinancialValue>{formatCurrency(payableSummary.upcomingTotal)}</FinancialValue></strong></article>
         <article><span>Contas quitadas</span><strong>{paidPayableCount}</strong></article>
-        <article><span>Total já pago</span><strong>{formatCurrency(payableSummary.totalPaid)}</strong></article>
+        <article><span>Total já pago</span><strong><FinancialValue>{formatCurrency(payableSummary.totalPaid)}</FinancialValue></strong></article>
       </section>
 
       <section className="suppliers-grid">
@@ -671,9 +672,14 @@ export default function SuppliersPage() {
                     {supplier.notes && <p className="supplier-notes">{supplier.notes}</p>}
                     <small>
                       {payables.filter((item) => item.supplierId === supplier.id).length} compra(s) ·{" "}
-                      {formatCurrency(payables
-                        .filter((item) => item.supplierId === supplier.id)
-                        .reduce((sum, item) => sum + getPayableBalance(item), 0))} em aberto
+                      <FinancialValue>
+                        {formatCurrency(
+                          payables
+                            .filter((item) => item.supplierId === supplier.id)
+                            .reduce((sum, item) => sum + getPayableBalance(item), 0)
+                        )}{" "}
+                        em aberto
+                      </FinancialValue>
                     </small>
                   </div>
                   <div className="supplier-actions">
@@ -705,24 +711,24 @@ export default function SuppliersPage() {
                                   </div>
                                   <b className={getPayableBalance(item) > 0 ? "supplier-balance-open" : "supplier-balance-paid"}>
                                     {getPayableBalance(item) > 0
-                                      ? `${formatCurrency(getPayableBalance(item))} em aberto`
+                                      ? <><FinancialValue>{formatCurrency(getPayableBalance(item))}</FinancialValue> em aberto</>
                                       : "Quitada"}
                                   </b>
                                 </div>
                                 <div className="supplier-purchase-meta">
-                                  <span>Total: {formatCurrency(item.totalAmount)}</span>
-                                  <span>Pago: {formatCurrency(item.paidAmount)}</span>
+                                  <span>Total: <FinancialValue>{formatCurrency(item.totalAmount)}</FinancialValue></span>
+                                  <span>Pago: <FinancialValue>{formatCurrency(item.paidAmount)}</FinancialValue></span>
                                   <span>Parcelas: {(item.installments || []).length}</span>
                                 </div>
                                 {(item.installments || []).map((installment, index) => (
                                   <div className="supplier-installment" key={installment.id || index}>
                                     <span>Parcela {index + 1} · vence {formatDate(installment.dueDate)}</span>
                                     <span>
-                                      {formatCurrency(installment.paidAmount || 0)} de{" "}
-                                      {formatCurrency(installment.amount)}
+                                      <FinancialValue>{formatCurrency(installment.paidAmount || 0)}</FinancialValue> de{" "}
+                                      <FinancialValue>{formatCurrency(installment.amount)}</FinancialValue>
                                     </span>
                                     <strong>
-                                      Saldo {formatCurrency(Math.max(Number(installment.amount || 0) - Number(installment.paidAmount || 0), 0))}
+                                      Saldo <FinancialValue>{formatCurrency(Math.max(Number(installment.amount || 0) - Number(installment.paidAmount || 0), 0))}</FinancialValue>
                                     </strong>
                                   </div>
                                 ))}
@@ -731,7 +737,7 @@ export default function SuppliersPage() {
                                     <summary>Histórico de pagamentos ({paymentsByPayable[item.id].length})</summary>
                                     {paymentsByPayable[item.id].map((entry) => (
                                       <p key={entry.id}>
-                                        {formatDate(entry.date)} · {formatCurrency(entry.amount)} ·{" "}
+                                        {formatDate(entry.date)} · <FinancialValue>{formatCurrency(entry.amount)}</FinancialValue> ·{" "}
                                         {entry.method || entry.type || "Pagamento"}
                                         {entry.identification ? ` · ${entry.identification}` : ""}
                                       </p>
@@ -1019,7 +1025,7 @@ export default function SuppliersPage() {
                 .map((item) => (
                   <option key={item.id} value={item.id}>
                     {item.supplierName} · {item.description} · saldo{" "}
-                    {formatCurrency(getPayableBalance(item))}
+                    <FinancialValue>{formatCurrency(getPayableBalance(item))}</FinancialValue>
                   </option>
                 ))}
             </select>

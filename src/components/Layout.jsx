@@ -10,11 +10,14 @@ import {
   LuBuilding2,
   LuSparkles,
   LuClipboardList,
+  LuEye,
+  LuEyeOff,
 } from "react-icons/lu";
 import { auth } from "../firebase/config";
 import { isFirestoreReadOnly } from "../firebase/writePolicy";
 import { resolveAccess } from "../services/session";
 import LogoutButton from "./LogoutButton.jsx";
+import { useFinancialPrivacy } from "../context/financialPrivacy.js";
 
 const menuItems = [
   { path: "/dashboard", icon: LuLayoutDashboard, label: "Dashboard" },
@@ -30,6 +33,7 @@ const menuItems = [
 export default function Layout() {
   const readOnly = isFirestoreReadOnly();
   const navigate = useNavigate();
+  const { hidden, setHidden } = useFinancialPrivacy();
   const [session, setSession] = useState({ checking: true, user: null });
 
   useEffect(
@@ -77,6 +81,21 @@ export default function Layout() {
               <span className="sidebar-label">{item.label}</span>
             </NavLink>
           ))}
+          <button
+            type="button"
+            className="sidebar-link privacy-toggle"
+            onClick={() => setHidden((current) => !current)}
+            aria-pressed={!hidden}
+            aria-label={hidden ? "Mostrar totais financeiros" : "Ocultar totais financeiros"}
+            title={hidden ? "Mostrar totais financeiros" : "Ocultar totais financeiros"}
+          >
+            <span className="sidebar-icon">
+              {hidden ? <LuEye aria-hidden="true" /> : <LuEyeOff aria-hidden="true" />}
+            </span>
+            <span className="sidebar-label">
+              {hidden ? "Mostrar valores" : "Ocultar valores"}
+            </span>
+          </button>
         </nav>
 
         <div className="sidebar-footer">

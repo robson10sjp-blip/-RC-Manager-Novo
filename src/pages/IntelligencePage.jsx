@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LuBot } from "react-icons/lu";
 import PageHeader from "../components/PageHeader.jsx";
+import FinancialValue from "../components/FinancialValue.jsx";
+import { maskFinancialText, useFinancialPrivacy } from "../context/financialPrivacy.js";
 import { onAuthStateChanged, signInWithEmailAndPassword } from "firebase/auth";
 import { collection, doc, onSnapshot, serverTimestamp } from "firebase/firestore";
 
@@ -81,7 +83,7 @@ function CollectionsCards({ collections }) {
             <header>
               <h3>{title}</h3>
               <span>
-                {group.count} cobrança(s) · {currencyFormat(group.total)}
+                {group.count} cobrança(s) · <FinancialValue>{currencyFormat(group.total)}</FinancialValue>
               </span>
             </header>
             {group.count === 0 ? (
@@ -95,7 +97,7 @@ function CollectionsCards({ collections }) {
                       <span>{item.city}</span>
                     </div>
                     <div className="secretary-collections-amount">
-                      {currencyFormat(item.pending)}
+                      <FinancialValue>{currencyFormat(item.pending)}</FinancialValue>
                     </div>
                     <div className="secretary-collections-due">
                       <span>
@@ -129,6 +131,7 @@ function CollectionsCards({ collections }) {
 }
 
 export default function IntelligencePage() {
+  const { hidden: financialValuesHidden } = useFinancialPrivacy();
   const [clients, setClients] = useState([]);
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
@@ -1136,20 +1139,20 @@ export default function IntelligencePage() {
                   <span>Vendas de hoje</span>
                   <strong>
                     {secretarySnapshot.salesToday.length} ·{" "}
-                    {formatCurrency(secretarySnapshot.salesTodayTotal)}
+                    <FinancialValue>{formatCurrency(secretarySnapshot.salesTodayTotal)}</FinancialValue>
                   </strong>
                 </div>
                 <div>
                   <span>Recebido hoje</span>
-                  <strong>{formatCurrency(secretarySnapshot.receivedToday)}</strong>
+                  <strong><FinancialValue>{formatCurrency(secretarySnapshot.receivedToday)}</FinancialValue></strong>
                 </div>
                 <div>
                   <span>Despesas de hoje</span>
-                  <strong>{formatCurrency(secretarySnapshot.expensesTodayTotal)}</strong>
+                  <strong><FinancialValue>{formatCurrency(secretarySnapshot.expensesTodayTotal)}</FinancialValue></strong>
                 </div>
                 <div>
                   <span>Total pendente</span>
-                  <strong>{formatCurrency(secretarySnapshot.totalPending)}</strong>
+                  <strong><FinancialValue>{formatCurrency(secretarySnapshot.totalPending)}</FinancialValue></strong>
                 </div>
               </div>
 
@@ -1164,7 +1167,7 @@ export default function IntelligencePage() {
                     return (
                       <div key={tripNumber}>
                         <span>{tripNumber}ª viagem</span>
-                        <strong>{formatCurrency(trip?.amount)}</strong>
+                        <strong><FinancialValue>{formatCurrency(trip?.amount)}</FinancialValue></strong>
                         <small>{trip?.salesCount || 0} venda(s) em aberto</small>
                       </div>
                     );
@@ -1186,7 +1189,7 @@ export default function IntelligencePage() {
                       <li key={`overdue-${sale.id}`} className="priority-overdue">
                         <span>🔴 Cobrança vencida · {sale.clientName}</span>
                         <strong>
-                          {formatCurrency(sale.value)} ·{" "}
+                          <FinancialValue>{formatCurrency(sale.value)}</FinancialValue> ·{" "}
                           {sale.dueDate.toLocaleDateString("pt-BR")}
                         </strong>
                       </li>
@@ -1195,7 +1198,7 @@ export default function IntelligencePage() {
                       <li key={`due-${sale.id}`}>
                         <span>📅 Vencimento próximo · {sale.clientName}</span>
                         <strong>
-                          {formatCurrency(sale.value)} ·{" "}
+                          <FinancialValue>{formatCurrency(sale.value)}</FinancialValue> ·{" "}
                           {sale.dueDate.toLocaleDateString("pt-BR")}
                         </strong>
                       </li>
@@ -1255,7 +1258,7 @@ export default function IntelligencePage() {
                   <CollectionsCards collections={message.collections} />
                 ) : (
                   <div className="secretary-message-body">
-                    <p>{message.text}</p>
+                    <p>{maskFinancialText(message.text, financialValuesHidden)}</p>
                     {message.collections && (
                       <CollectionsCards collections={message.collections} />
                     )}
@@ -1462,14 +1465,14 @@ export default function IntelligencePage() {
             <div style={styles.summaryCard}>
               <span style={styles.summaryLabel}>Faturamento do mês</span>
               <strong style={styles.summaryValue}>
-                {formatCurrency(intelligence.monthSales)}
+                <FinancialValue>{formatCurrency(intelligence.monthSales)}</FinancialValue>
               </strong>
             </div>
 
             <div style={styles.summaryCard}>
               <span style={styles.summaryLabel}>Recebido no mês</span>
               <strong style={styles.greenValue}>
-                {formatCurrency(intelligence.monthReceived)}
+                <FinancialValue>{formatCurrency(intelligence.monthReceived)}</FinancialValue>
               </strong>
             </div>
 
@@ -1482,28 +1485,28 @@ export default function IntelligencePage() {
                     : styles.redValue
                 }
               >
-                {formatCurrency(intelligence.netProfit)}
+                <FinancialValue>{formatCurrency(intelligence.netProfit)}</FinancialValue>
               </strong>
             </div>
 
             <div style={styles.summaryCard}>
               <span style={styles.summaryLabel}>Ticket médio</span>
               <strong style={styles.summaryValue}>
-                {formatCurrency(intelligence.averageTicket)}
+                <FinancialValue>{formatCurrency(intelligence.averageTicket)}</FinancialValue>
               </strong>
             </div>
 
             <div style={styles.summaryCard}>
               <span style={styles.summaryLabel}>Previsão do mês</span>
               <strong style={styles.blueValue}>
-                {formatCurrency(intelligence.forecastMonth)}
+                <FinancialValue>{formatCurrency(intelligence.forecastMonth)}</FinancialValue>
               </strong>
             </div>
 
             <div style={styles.summaryCard}>
               <span style={styles.summaryLabel}>Pendente para receber</span>
               <strong style={styles.redValue}>
-                {formatCurrency(intelligence.totalPending)}
+                <FinancialValue>{formatCurrency(intelligence.totalPending)}</FinancialValue>
               </strong>
             </div>
           </section>
@@ -1513,8 +1516,8 @@ export default function IntelligencePage() {
               <div>
                 <h2 style={styles.cardTitle}>Meta mensal</h2>
                 <p style={styles.helperText}>
-                  {formatCurrency(intelligence.monthSales)} de{" "}
-                  {formatCurrency(monthlyGoal)}
+                  <FinancialValue>{formatCurrency(intelligence.monthSales)}</FinancialValue> de{" "}
+                  <FinancialValue>{formatCurrency(monthlyGoal)}</FinancialValue>
                 </p>
               </div>
 
@@ -1536,14 +1539,14 @@ export default function IntelligencePage() {
               <span>
                 Falta:{" "}
                 <strong>
-                  {formatCurrency(intelligence.remainingGoal)}
+                  <FinancialValue>{formatCurrency(intelligence.remainingGoal)}</FinancialValue>
                 </strong>
               </span>
 
               <span>
                 Necessário por dia:{" "}
                 <strong>
-                  {formatCurrency(intelligence.dailyGoalNeeded)}
+                  <FinancialValue>{formatCurrency(intelligence.dailyGoalNeeded)}</FinancialValue>
                 </strong>
               </span>
             </div>
@@ -1601,9 +1604,9 @@ export default function IntelligencePage() {
                 <div style={styles.bossItem}>
                   <span>Valor do melhor cliente</span>
                   <strong>
-                    {formatCurrency(
+                    <FinancialValue>{formatCurrency(
                       intelligence.bestClients[0]?.totalBought
-                    )}
+                    )}</FinancialValue>
                   </strong>
                 </div>
 
@@ -1631,9 +1634,9 @@ export default function IntelligencePage() {
                 <div style={styles.bossItem}>
                   <span>Vendas da melhor cidade</span>
                   <strong>
-                    {formatCurrency(
+                    <FinancialValue>{formatCurrency(
                       intelligence.bestCities[0]?.totalSales
-                    )}
+                    )}</FinancialValue>
                   </strong>
                 </div>
               </div>
@@ -1718,7 +1721,7 @@ export default function IntelligencePage() {
                         </div>
 
                         <strong style={styles.redValue}>
-                          {formatCurrency(client.totalPending)}
+                          <FinancialValue>{formatCurrency(client.totalPending)}</FinancialValue>
                         </strong>
                       </article>
                     ))}
@@ -1791,7 +1794,7 @@ export default function IntelligencePage() {
                         </div>
 
                         <strong>
-                          {formatCurrency(product.stockValue)}
+                          <FinancialValue>{formatCurrency(product.stockValue)}</FinancialValue>
                         </strong>
                       </article>
                     ))}
@@ -1832,7 +1835,7 @@ export default function IntelligencePage() {
                         </div>
 
                         <strong style={styles.blueValue}>
-                          {formatCurrency(city.totalSales)}
+                          <FinancialValue>{formatCurrency(city.totalSales)}</FinancialValue>
                         </strong>
                       </article>
                     ))}

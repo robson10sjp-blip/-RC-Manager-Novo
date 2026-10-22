@@ -1,5 +1,23 @@
 const onlyDigits = (value) => String(value ?? "").replace(/\D/g, "");
 
+const nameParticles = new Set(["da", "das", "de", "do", "dos", "e"]);
+
+export function normalizePersonName(value) {
+  return String(value ?? "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .split(" ")
+    .map((part, index) => {
+      const normalized = part.toLocaleLowerCase("pt-BR");
+      if (index > 0 && nameParticles.has(normalized)) return normalized;
+      return normalized.replace(
+        /(^|[-'’])(\p{L})/gu,
+        (_, separator, letter) => `${separator}${letter.toLocaleUpperCase("pt-BR")}`
+      );
+    })
+    .join(" ");
+}
+
 export function formatCpf(value) {
   const d = onlyDigits(value).slice(0, 11);
   if (d.length <= 3) return d;

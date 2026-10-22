@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import PageHeader from "../components/PageHeader.jsx";
+import FinancialValue from "../components/FinancialValue.jsx";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -28,6 +29,8 @@ import {
   buildStockActivity,
   getStockThresholds,
   getSuggestedRestock,
+  isLowAlertStock,
+  isOutOfStock,
   summarizeStockSales,
 } from "../domain/stock";
 import { toDate } from "../utils/dates";
@@ -119,11 +122,10 @@ export default function StockPage() {
 
     return products.filter((product) => {
       const quantity = Number(product.quantity || 0);
-      const { minimum } = getStockThresholds(product);
       if (categoryFilter !== "all" && product.category !== categoryFilter) return false;
       if (sizeFilter !== "all" && String(product.size || "") !== sizeFilter) return false;
-      if (stockFilter === "out" && quantity > 0) return false;
-      if (stockFilter === "low" && !(quantity > 0 && quantity <= minimum)) return false;
+      if (stockFilter === "out" && !isOutOfStock(quantity)) return false;
+      if (stockFilter === "low" && !isLowAlertStock(quantity)) return false;
       const code = String(product.code || "").toLowerCase();
       const name = String(product.name || "").toLowerCase();
       const category = String(product.category || "").toLowerCase();
@@ -153,11 +155,11 @@ export default function StockPage() {
         result.totalCost += quantity * costPrice;
         result.totalSale += quantity * salePrice;
 
-        if (quantity <= getStockThresholds(product).minimum) {
+        if (isLowAlertStock(quantity)) {
           result.lowStock += 1;
         }
 
-        if (quantity <= 0) {
+        if (isOutOfStock(quantity)) {
           result.outOfStock += 1;
         }
 
@@ -206,10 +208,12 @@ export default function StockPage() {
   );
 
   const stockHealth = useMemo(() => {
-    const low = Math.max(0, summary.lowStock - summary.outOfStock);
     return {
-      available: Math.max(0, summary.totalProducts - summary.lowStock),
-      low,
+      available: Math.max(
+        0,
+        summary.totalProducts - summary.lowStock - summary.outOfStock
+      ),
+      low: summary.lowStock,
       out: summary.outOfStock,
     };
   }, [summary]);
@@ -378,11 +382,7 @@ export default function StockPage() {
         ? quantityValue.quantity || 0
         : quantityValue || 0
     );
-    const minimum = typeof quantityValue === "object"
-      ? getStockThresholds(quantityValue).minimum
-      : 3;
-
-    if (quantity <= 0) {
+    if (isOutOfStock(quantity)) {
       return {
         label: "Sem estoque",
         color: "#dc2626",
@@ -390,7 +390,7 @@ export default function StockPage() {
       };
     }
 
-    if (quantity <= minimum) {
+    if (isLowAlertStock(quantity)) {
       return {
         label: "Estoque baixo",
         color: "#ca8a04",
@@ -526,20 +526,39 @@ export default function StockPage() {
         {[
           { label: "Produtos cadastrados", value: summary.totalProducts, icon: LuBoxes, tone: "navy" },
           { label: "Peças em estoque", value: summary.totalPieces, icon: LuPackageCheck, tone: "navy" },
-          { label: "Valor investido", value: formatCurrency(summary.totalCost), icon: LuCircleDollarSign, tone: "gold" },
-          { label: "Valor potencial de venda", value: formatCurrency(summary.totalSale), icon: LuPackageMinus, tone: "gold" },
-          { label: "Lucro potencial", value: formatCurrency(summary.totalSale - summary.totalCost), icon: LuChartNoAxesCombined, tone: "green" },
-          { label: "Estoque baixo", value: summary.lowStock, icon: LuTriangleAlert, tone: "warning", detail: "Inclui itens sem estoque" },
-          { label: "Sem estoque", value: summary.outOfStock, icon: LuPackageMinus, tone: "danger" },
-        ].map(({ label, value, icon: Icon, tone, detail }) => (
-          <article className={`st-kpi st-kpi-${tone}`} key={label}>
-            <span className="st-kpi-icon"><Icon aria-hidden="true" /></span>
-            <span className="st-kpi-label">{label}</span>
-            <strong>{value}</strong>
-            {detail && <small>{detail}</small>}
-            {label === "Lucro potencial" && <small>Não representa lucro realizado nem dinheiro em caixa.</small>}
-          </article>
-        ))}
+          { label: "Valor investido", value: <FinancialValue>{formatCurrency(summary.totalCost)}</FinancialValue>, icon: LuCircleDollarSign, tone: "gold" },
+          { label: "Valor potencial de venda", value: <FinancialValue>{formatCurrency(summary.totalSale)}</FinancialValue>, icon: LuPackageMinus, tone: "gold" },
+          { label: "Lucro potencial", value: <FinancialValue>{formatCurrency(summary.totalSale - summary.totalCost)}</FinancialValue>, icon: LuChartNoAxesCombined, tone: "green" },
+          { label: "Estoque baixo", value: summary.lowStock, icon: LuTriangleAlert, tone: "warning", detail: "De 1 a 3 peças", filter: "low" },
+          { label: "Sem estoque", value: summary.outOfStock, icon: LuPackageMinus, tone: "danger", detail: "Quantidade igual a zero", filter: "out" },
+        ].map(({ label, value, icon: Icon, tone, detail, filter }) => {
+          const active = Boolean(filter && stockFilter === filter);
+          const content = (
+            <>
+              <span className="st-kpi-icon"><Icon aria-hidden="true" /></span>
+              <span className="st-kpi-label">{label}</span>
+              <strong>{value}</strong>
+              {detail && <small>{detail}</small>}
+              {label === "Lucro potencial" && <small>Não representa lucro realizado nem dinheiro em caixa.</small>}
+            </>
+          );
+
+          return filter ? (
+            <button
+              type="button"
+              className={`st-kpi st-kpi-${tone} st-kpi-button${active ? " is-active" : ""}`}
+              key={label}
+              aria-pressed={active}
+              onClick={() => setStockFilter(active ? "all" : filter)}
+            >
+              {content}
+            </button>
+          ) : (
+            <article className={`st-kpi st-kpi-${tone}`} key={label}>
+              {content}
+            </article>
+          );
+        })}
       </section>
 
       <section className="st-health" aria-label="Saúde do estoque">
@@ -569,6 +588,8 @@ export default function StockPage() {
             <h2 style={styles.cardTitle}>Produtos em estoque</h2>
             <p style={styles.helperText}>
               {filteredProducts.length} produto(s) encontrado(s).
+              {stockFilter === "low" && " · Estoque baixo: de 1 a 3 peças"}
+              {stockFilter === "out" && " · Sem estoque: quantidade zero"}
             </p>
           </div>
 
@@ -602,9 +623,18 @@ export default function StockPage() {
               <select value={stockFilter} onChange={(event) => setStockFilter(event.target.value)} aria-label="Filtrar por estoque">
                 <option value="all">Todas</option>
                 <option value="out">Sem estoque</option>
-                <option value="low">Estoque baixo</option>
+                <option value="low">Estoque baixo (1 a 3)</option>
               </select>
             </label>
+            {stockFilter !== "all" && (
+              <button
+                type="button"
+                className="st-filter-clear"
+                onClick={() => setStockFilter("all")}
+              >
+                Mostrar todos
+              </button>
+            )}
           </div>
         </div>
 
@@ -678,9 +708,9 @@ export default function StockPage() {
                       <div>
                         <span style={styles.smallLabel}>Total em venda</span>
                         <strong>
-                          {formatCurrency(
+                          <FinancialValue>{formatCurrency(
                             quantity * Number(product.salePrice || 0)
-                          )}
+                          )}</FinancialValue>
                         </strong>
                       </div>
                       <div>

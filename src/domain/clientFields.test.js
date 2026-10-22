@@ -7,6 +7,7 @@ import {
   formatPhone,
   isValidCpf,
   isValidPhone,
+  normalizePersonName,
 } from "./clientFields.js";
 
 test("formata CPF progressivamente e limita a 11 dígitos", () => {
@@ -45,4 +46,13 @@ test("valida tamanho do telefone", () => {
   assert.equal(isValidPhone(""), true);
   assert.equal(isValidPhone("(19) 3333-4444"), true);
   assert.equal(isValidPhone("(19) 3333"), false);
+});
+
+test("normaliza nomes sem remover acentos nem alterar partículas", () => {
+  assert.equal(
+    normalizePersonName("  maria   da   conceição  "),
+    "Maria da Conceição"
+  );
+  assert.equal(normalizePersonName("ana d'ávila"), "Ana D'Ávila");
+  assert.equal(normalizePersonName("JOÃO DOS SANTOS"), "João dos Santos");
 });

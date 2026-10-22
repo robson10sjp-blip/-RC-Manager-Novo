@@ -5,7 +5,7 @@ import {
   setDoc as firebaseSetDoc,
   updateDoc as firebaseUpdateDoc,
 } from "firebase/firestore";
-import { assertFirestoreWritable } from "./writePolicy";
+import { assertFirestoreWritable } from "./writePolicy.js";
 
 export function addDoc(...args) {
   assertFirestoreWritable();

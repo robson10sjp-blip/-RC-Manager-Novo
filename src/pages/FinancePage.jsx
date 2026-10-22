@@ -21,9 +21,9 @@ import {
   applyPaymentToSale,
   calculateConsolidatedReceivables,
   calculateTripFinancialSummary,
-  escapeReceiptText,
   isSaleOverdue,
   organizeSalesByTrip2026,
+  prepareSaleReceipt,
   reusePaymentOperation,
   selectSalesForTrip,
 } from "../domain/sales";
@@ -49,6 +49,9 @@ import {
   validatePayableSchedule,
 } from "../domain/payables";
 import { toDate } from "../utils/dates";
+import ReceiptViewer from "../components/receipts/ReceiptViewer.jsx";
+import FinancialValue from "../components/FinancialValue.jsx";
+import { useFinancialPrivacy } from "../context/financialPrivacy.js";
 import "./FinancePayables.css";
 import "./FinancePremium.css";
 
@@ -92,6 +95,8 @@ const tripOptions = [
 ];
 
 export default function FinancePage() {
+  const { hidden: financialValuesHidden } = useFinancialPrivacy();
+  const [selectedReceiptSale, setSelectedReceiptSale] = useState(null);
   const [clients, setClients] = useState([]);
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
@@ -1402,121 +1407,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
   }
 
   function handleReceipt(sale) {
-    const receiptWindow = window.open("", "_blank");
-
-    if (!receiptWindow) {
-      alert("O navegador bloqueou a abertura do recibo.");
-      return;
-    }
-
-    const itemsHtml = (sale.items || [])
-      .map(
-        (item) => `
-          <tr>
-            <td>${escapeReceiptText(item.quantity)}x ${escapeReceiptText(item.name)}</td>
-            <td>${formatCurrency(item.unitPrice)}</td>
-            <td>${formatCurrency(item.subtotal)}</td>
-          </tr>
-        `
-      )
-      .join("");
-
-    receiptWindow.document.write(`
-      <!DOCTYPE html>
-      <html lang="pt-BR">
-        <head>
-          <meta charset="UTF-8" />
-          <title>Recibo RC Confecções</title>
-          <style>
-            body {
-              font-family: Arial, sans-serif;
-              color: #0f172a;
-              padding: 35px;
-            }
-
-            table {
-              width: 100%;
-              border-collapse: collapse;
-              margin: 24px 0;
-            }
-
-            th, td {
-              padding: 10px;
-              text-align: left;
-              border-bottom: 1px solid #dddddd;
-            }
-
-            .total {
-              font-size: 20px;
-              font-weight: bold;
-            }
-
-            .footer {
-              margin-top: 50px;
-              text-align: center;
-            }
-          </style>
-        </head>
-
-        <body>
-          <h1>RC Confecções</h1>
-          <p>Comprovante da compra #${escapeReceiptText(sale.id)}</p>
-
-          <p><strong>Cliente:</strong> ${
-            escapeReceiptText(sale.clientName || "Não informado")
-          }</p>
-
-          <p><strong>Data:</strong> ${formatDate(
-            toDate(sale.saleDate) || toDate(sale.createdAt)
-          )}</p>
-          ${
-            sale.tripName || sale.tripCity
-              ? `<p><strong>Viagem:</strong> ${escapeReceiptText(sale.tripName || "Sem nome")}${sale.tripCity ? ` • ${escapeReceiptText(sale.tripCity)}` : ""}</p>`
-              : ""
-          }
-
-          <table>
-            <thead>
-              <tr>
-                <th>Produto</th>
-                <th>Preço</th>
-                <th>Subtotal</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${itemsHtml}
-            </tbody>
-          </table>
-
-          <p class="total">
-            Total: ${formatCurrency(sale.total)}
-          </p>
-
-          <p>
-            Recebido: ${formatCurrency(sale.amountPaid)}
-          </p>
-
-          <p>
-            Saldo pendente: ${formatCurrency(
-              sale.pendingAmount
-            )}
-          </p>
-
-          <div class="footer">
-            ______________________________________
-            <p>RC Confecções</p>
-          </div>
-
-          <script>
-            window.onload = function () {
-              window.print();
-            };
-          </script>
-        </body>
-      </html>
-    `);
-
-    receiptWindow.document.close();
+    setSelectedReceiptSale(prepareSaleReceipt(sale));
   }
 
   return (
@@ -1620,7 +1511,11 @@ Qualquer dúvida estou à disposição. Obrigado!`;
               style={styles.tripSummaryCard}
             >
               <span style={styles.summaryLabel}>{label}</span>
-              <strong style={styles.summaryValue}>{value}</strong>
+              <strong style={styles.summaryValue}>
+                {typeof value === "string" && value.startsWith("R$")
+                  ? <FinancialValue>{value}</FinancialValue>
+                  : value}
+              </strong>
               {label === "Lucro estimado" && (
                 <small className="fin-profit-note">
                   Estimativa contábil: não representa dinheiro disponível em caixa.
@@ -1677,7 +1572,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
               ) : (
                 <>
                   <strong>{dueDateSummary[key].count} venda(s)</strong>
-                  <b>{formatCurrency(dueDateSummary[key].amount)}</b>
+                  <b><FinancialValue>{formatCurrency(dueDateSummary[key].amount)}</FinancialValue></b>
                 </>
               )}
             </article>
@@ -1720,10 +1615,10 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                     {city.clientsWithPending} cliente(s) com saldo pendente
                   </span>
                   <span>
-                    A receber <b>{formatCurrency(city.totalToReceive)}</b>
+                    A receber <b><FinancialValue>{formatCurrency(city.totalToReceive)}</FinancialValue></b>
                   </span>
                   <span>
-                    Já recebido <b>{formatCurrency(city.received)}</b>
+                    Já recebido <b><FinancialValue>{formatCurrency(city.received)}</FinancialValue></b>
                   </span>
                   <small>
                     {selectedReceivablesCity === city.city
@@ -1753,13 +1648,13 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                       <div className="fin-city-client-heading">
                         <strong>{client.clientName}</strong>
                         <span>
-                          Saldo total: {formatCurrency(client.totalPending)}
+                          Saldo total: <FinancialValue>{formatCurrency(client.totalPending)}</FinancialValue>
                         </span>
                       </div>
                       {client.legacyBalance > 0 && (
                         <p>
                           Saldo histórico sem venda vinculada:{" "}
-                          {formatCurrency(client.legacyBalance)}
+                          <FinancialValue>{formatCurrency(client.legacyBalance)}</FinancialValue>
                         </p>
                       )}
                       {client.sales.map((openSale) => {
@@ -1780,14 +1675,14 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                                 : "Vencimento não informado"}
                             </span>
                             <span>
-                              Recebido {formatCurrency(
+                              Recebido <FinancialValue>{formatCurrency(
                                 openSale.amountPaid || openSale.received
-                              )}
+                              )}</FinancialValue>
                             </span>
                             <strong>
-                              Pendente {formatCurrency(
+                              Pendente <FinancialValue>{formatCurrency(
                                 getSalePendingAmount(openSale)
-                              )}
+                              )}</FinancialValue>
                             </strong>
                           </div>
                         );
@@ -1825,16 +1720,16 @@ Qualquer dúvida estou à disposição. Obrigado!`;
         )}
 
         <div className="payables-metrics">
-          <article><span>Total a pagar</span><strong>{formatCurrency(payableSummary.totalToPay)}</strong></article>
-          <article><span>Contas vencidas</span><strong>{payableSummary.overdueCount} · {formatCurrency(payableSummary.overdueTotal)}</strong></article>
-          <article><span>A vencer (30 dias)</span><strong>{payableSummary.upcomingCount} · {formatCurrency(payableSummary.upcomingTotal)}</strong></article>
-          <article><span>Total já pago</span><strong>{formatCurrency(payableSummary.totalPaid)}</strong></article>
+          <article><span>Total a pagar</span><strong><FinancialValue>{formatCurrency(payableSummary.totalToPay)}</FinancialValue></strong></article>
+          <article><span>Contas vencidas</span><strong>{payableSummary.overdueCount} · <FinancialValue>{formatCurrency(payableSummary.overdueTotal)}</FinancialValue></strong></article>
+          <article><span>A vencer (30 dias)</span><strong>{payableSummary.upcomingCount} · <FinancialValue>{formatCurrency(payableSummary.upcomingTotal)}</FinancialValue></strong></article>
+          <article><span>Total já pago</span><strong><FinancialValue>{formatCurrency(payableSummary.totalPaid)}</FinancialValue></strong></article>
         </div>
         <div className="check-forecast" aria-label="Cheques previstos para compensação">
           {checkSummary.upcomingTotals.map(({ days, total }) => (
             <article key={days}>
               <span>Compensação em até {days} dias</span>
-              <strong>{formatCurrency(total)}</strong>
+              <strong><FinancialValue>{formatCurrency(total)}</FinancialValue></strong>
             </article>
           ))}
         </div>
@@ -1992,7 +1887,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                   <option value="">Selecione uma conta em aberto</option>
                   {payables.filter((item) => getPayableBalance(item) > 0).map((item) => (
                     <option key={item.id} value={item.id}>
-                      {item.supplierName} · {item.description} · saldo {formatCurrency(getPayableBalance(item))}
+                      {item.supplierName} · {item.description} · saldo {financialValuesHidden ? "••••••" : formatCurrency(getPayableBalance(item))}
                     </option>
                   ))}
                 </select>
@@ -2007,7 +1902,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                     <option value="">Abater automaticamente dos vencimentos mais próximos</option>
                     {selectedPaymentPayable.installments.filter((item) => Number(item.amount) > Number(item.paidAmount || 0) && getCheckStatus(item) !== CHECK_STATUSES.ISSUED).map((item) => (
                       <option key={item.id} value={item.id}>
-                        {item.method === "cheque" ? "Cheque" : "Parcela"} {item.identification ? `#${item.identification}` : ""} · {formatDate(item.dueDate)} · saldo {formatCurrency(Number(item.amount) - Number(item.paidAmount || 0))}
+                        {item.method === "cheque" ? "Cheque" : "Parcela"} {item.identification ? `#${item.identification}` : ""} · {formatDate(item.dueDate)} · saldo {financialValuesHidden ? "••••••" : formatCurrency(Number(item.amount) - Number(item.paidAmount || 0))}
                       </option>
                     ))}
                   </select>
@@ -2113,9 +2008,9 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                       <span>{accountLabels[check.bankAccount] || "Conta não informada (cadastro antigo)"}</span>
                       <span>Apresentação: {formatDate(check.dueDate)}</span>
                       <span>Compra: {formatDate(payables.find((item) => item.id === check.payableId)?.purchaseDate)}</span>
-                      <strong>Valor: {formatCurrency(check.installment.amount)}</strong>
+                      <strong>Valor: <FinancialValue>{formatCurrency(check.installment.amount)}</FinancialValue></strong>
                       {check.status !== CHECK_STATUSES.COMPENSATED && (
-                        <strong>Obrigação em aberto: {formatCurrency(check.amount)}</strong>
+                        <strong>Obrigação em aberto: <FinancialValue>{formatCurrency(check.amount)}</FinancialValue></strong>
                       )}
                     </div>
                     <details className="check-history">
@@ -2163,13 +2058,13 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                   </div>
                   <strong className={getPayableBalance(payable) > 0 ? "" : "payable-paid-status"}>
                     {getPayableBalance(payable) > 0
-                      ? `${formatCurrency(getPayableBalance(payable))} em aberto`
+                      ? `${financialValuesHidden ? "••••••" : formatCurrency(getPayableBalance(payable))} em aberto`
                       : "Quitada"}
                   </strong>
                 </div>
                 <div className="payable-card-meta">
-                  <span>Total: {formatCurrency(payable.totalAmount)}</span>
-                  <span>Pago: {formatCurrency(payable.paidAmount)}</span>
+                  <span>Total: <FinancialValue>{formatCurrency(payable.totalAmount)}</FinancialValue></span>
+                  <span>Pago: <FinancialValue>{formatCurrency(payable.paidAmount)}</FinancialValue></span>
                   <span>{payable.tripNumber ? `${payable.tripNumber}ª viagem` : "Sem viagem"}</span>
                   <span>{payable.purchaseType === "operational" ? "Despesa operacional" : "Estoque / mercadorias"}</span>
                   <span>{(payable.installments || []).length} parcela(s)/título(s)</span>
@@ -2184,7 +2079,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                         <div key={item.id} className={overdue ? "payable-installment overdue" : "payable-installment"}>
                           <span>{item.method === "cheque" ? "Cheque" : "Parcela"} {item.identification ? `#${item.identification}` : ""}</span>
                           <span>{formatDate(item.dueDate)}</span>
-                          <strong>{formatCurrency(outstanding)} {overdue ? "· vencido" : ""}</strong>
+                          <strong><FinancialValue>{formatCurrency(outstanding)}</FinancialValue> {overdue ? "· vencido" : ""}</strong>
                         </div>
                       );
                     })}
@@ -2202,7 +2097,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                       )
                       .map((payment) => (
                         <p key={payment.id}>
-                          <strong>{formatDate(payment.date)}</strong> · {formatCurrency(payment.amount)} · {payment.method || "Forma não informada"} {payment.identification && `· ${payment.identification}`}
+                          <strong>{formatDate(payment.date)}</strong> · <FinancialValue>{formatCurrency(payment.amount)}</FinancialValue> · {payment.method || "Forma não informada"} {payment.identification && `· ${payment.identification}`}
                         </p>
                       ))}
                   </details>
@@ -2231,7 +2126,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
             <h3>Próximos vencimentos</h3>
             {payableSummary.upcomingItems.slice(0, 5).map((item) => (
               <p key={`${item.payableId}-${item.identification}-${item.dueDate.getTime()}`}>
-                <strong>{formatDate(item.dueDate)}</strong> · {item.supplierName} · {item.method === "cheque" ? "Cheque" : "Parcela"} {item.identification && `#${item.identification}`} · {formatCurrency(item.amount)}
+                <strong>{formatDate(item.dueDate)}</strong> · {item.supplierName} · {item.method === "cheque" ? "Cheque" : "Parcela"} {item.identification && `#${item.identification}`} · <FinancialValue>{formatCurrency(item.amount)}</FinancialValue>
               </p>
             ))}
           </div>
@@ -2404,11 +2299,11 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                     </span>
 
                     <strong style={styles.pendingValue}>
-                      {formatCurrency(debtor.totalPending)}
+                      <FinancialValue>{formatCurrency(debtor.totalPending)}</FinancialValue>
                     </strong>
                     {debtor.legacyBalance > 0 && (
                       <p style={styles.saleDebtMeta}>
-                        Saldo histórico: {formatCurrency(debtor.legacyBalance)}
+                        Saldo histórico: <FinancialValue>{formatCurrency(debtor.legacyBalance)}</FinancialValue>
                       </p>
                     )}
 
@@ -2468,13 +2363,13 @@ Qualquer dúvida estou à disposição. Obrigado!`;
 
                             <div style={styles.saleDebtValues}>
                               <span>
-                                Total: {formatCurrency(openSale.total)}
+                                Total: <FinancialValue>{formatCurrency(openSale.total)}</FinancialValue>
                               </span>
                               <span>
-                                Recebido: {formatCurrency(openSale.amountPaid)}
+                                Recebido: <FinancialValue>{formatCurrency(openSale.amountPaid)}</FinancialValue>
                               </span>
                               <strong>
-                                Saldo: {formatCurrency(openSale.pendingAmount)}
+                                Saldo: <FinancialValue>{formatCurrency(openSale.pendingAmount)}</FinancialValue>
                               </strong>
                             </div>
 
@@ -2574,12 +2469,12 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                     }
                   >
                     {entry.type === "sale" ? "+" : "-"}{" "}
-                    {formatCurrency(entry.value)}
+                    <FinancialValue>{formatCurrency(entry.value)}</FinancialValue>
                   </strong>
 
                   {entry.type === "sale" && (
                     <span style={styles.historyReceived}>
-                      Recebido: {formatCurrency(entry.received)}
+                      Recebido: <FinancialValue>{formatCurrency(entry.received)}</FinancialValue>
                     </span>
                   )}
 
@@ -2607,6 +2502,12 @@ Qualquer dúvida estou à disposição. Obrigado!`;
           </div>
         )}
       </section>
+      {selectedReceiptSale && (
+        <ReceiptViewer
+          sale={selectedReceiptSale}
+          onClose={() => setSelectedReceiptSale(null)}
+        />
+      )}
     </div>
   );
 }

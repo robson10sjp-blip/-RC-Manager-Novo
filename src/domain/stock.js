@@ -5,6 +5,15 @@ const amount = (value) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+export function isLowAlertStock(quantity) {
+  const value = amount(quantity);
+  return value >= 1 && value <= 3;
+}
+
+export function isOutOfStock(quantity) {
+  return amount(quantity) === 0;
+}
+
 export function getStockThresholds(product) {
   const minimum = Math.max(0, Math.floor(amount(product.minimumStock ?? 3)));
   const target = Math.max(

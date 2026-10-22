@@ -26,6 +26,7 @@ import {
   formatPhone,
   isValidCpf,
   isValidPhone,
+  normalizePersonName,
 } from "../domain/clientFields";
 import {
   CLIENT_CITIES,
@@ -34,7 +35,24 @@ import {
   getClientCityKey,
   normalizeSearchText,
 } from "../domain/clientCities";
+import {
+  CLIENT_CLASSIFICATIONS,
+  resolveClientClassification,
+} from "../domain/clientClassification.js";
 import { toDate } from "../utils/dates";
+import {
+  hasGiftForTrip,
+  resolveClientTripVisitStatus,
+  validateGiftQuantity,
+  calculateGiftCost,
+} from "../domain/clientRecords";
+import {
+  CLIENT_RECORD_WRITES_ENABLED,
+  cancelClientGift,
+  recordClientGift,
+  recordClientVisit,
+} from "../services/clientRecords";
+import { isFirestoreReadOnly } from "../firebase/writePolicy";
 import {
   LuBanknote,
   LuChevronDown,
@@ -55,7 +73,11 @@ import {
   calculateConsolidatedReceivables,
   isSaleOverdue,
   organizeSalesByTrip2026,
+  prepareSaleReceipt,
 } from "../domain/sales";
+import { getSalePendingAmount } from "../domain/financeReceivables";
+import ReceiptViewer from "../components/receipts/ReceiptViewer.jsx";
+import FinancialValue from "../components/FinancialValue.jsx";
 import "./ClientsPremium.css";
 
 const emptyForm = {
@@ -72,8 +94,31 @@ const emptyForm = {
 };
 
 export default function ClientsPage() {
+  const [userId, setUserId] = useState("");
   const [clients, setClients] = useState([]);
   const [sales, setSales] = useState([]);
+  const [clientViewMode, setClientViewMode] = useState("all");
+  const [pregoClientIds, setPregoClientIds] = useState(new Set());
+  const [pregoError, setPregoError] = useState("");
+  const [classificationFilter, setClassificationFilter] = useState("all");
+  const [classificationEditorId, setClassificationEditorId] = useState(null);
+  const [classificationError, setClassificationError] = useState("");
+  const [visitCity, setVisitCity] = useState("");
+  const [visitTripName, setVisitTripName] = useState("");
+  const [manualVisitTrip, setManualVisitTrip] = useState(false);
+  const [visitStatusFilter, setVisitStatusFilter] = useState("unvisited");
+  const [visitRecords, setVisitRecords] = useState([]);
+  const [visitError, setVisitError] = useState("");
+  const [giftClient, setGiftClient] = useState(null);
+  const [giftProducts, setGiftProducts] = useState([]);
+  const [giftRecords, setGiftRecords] = useState([]);
+  const [giftProductId, setGiftProductId] = useState("");
+  const [giftQuantity, setGiftQuantity] = useState("1");
+  const [giftError, setGiftError] = useState("");
+  const [savingClientRecord, setSavingClientRecord] = useState(false);
+  const clientRecordLock = useRef(false);
+  const giftLock = useRef(false);
+  const giftOperationId = useRef(null);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
   const [searchText, setSearchText] = useState("");
@@ -82,6 +127,7 @@ export default function ClientsPage() {
   const [tripFilter, setTripFilter] = useState("all");
   const [showForm, setShowForm] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
+  const [selectedReceiptSale, setSelectedReceiptSale] = useState(null);
   const navigate = useNavigate();
   const [loadingClients, setLoadingClients] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -104,6 +150,10 @@ export default function ClientsPage() {
 
       setClients([]);
       setSales([]);
+      setUserId(user?.uid || "");
+      setPregoClientIds(new Set());
+      setVisitRecords([]);
+      setGiftClient(null);
 
       if (!user) {
         setLoadingClients(false);
@@ -173,6 +223,106 @@ export default function ClientsPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!userId) {
+      return undefined;
+    }
+
+    return onSnapshot(
+      collection(db, "users", userId, "pregoClients"),
+      (snapshot) => {
+        setPregoClientIds(
+          new Set(
+            snapshot.docs
+              .filter((document) => document.data().active)
+              .map((document) => document.id)
+          )
+        );
+        setPregoError("");
+      },
+      (error) => {
+        console.error("Erro ao carregar Clientes Prego:", error);
+        setPregoError(
+          `Não foi possível carregar Clientes Prego: ${error.message}`
+        );
+      }
+    );
+  }, [userId]);
+
+  useEffect(() => {
+    if (!userId || !visitCity || !visitTripName.trim()) {
+      return undefined;
+    }
+
+    return onSnapshot(
+      collection(db, "users", userId, "clientVisits"),
+      (snapshot) => {
+        setVisitRecords(
+          snapshot.docs.map((document) => ({
+            id: document.id,
+            ...document.data(),
+          }))
+        );
+        setVisitError("");
+      },
+      (error) => {
+        console.error("Erro ao carregar visitas:", error);
+        setVisitError(`Não foi possível carregar as visitas: ${error.message}`);
+      }
+    );
+  }, [userId, visitCity, visitTripName]);
+
+  useEffect(() => {
+    if (!userId || !giftClient) {
+      return undefined;
+    }
+
+    let unsubscribeProducts = () => {};
+    let unsubscribeGifts = () => {};
+    unsubscribeProducts = onSnapshot(
+      collection(db, "users", userId, "products"),
+      (snapshot) => {
+        setGiftProducts(
+          snapshot.docs.map((document) => ({
+            id: document.id,
+            ...document.data(),
+          }))
+        );
+      },
+      (error) => {
+        console.error("Erro ao carregar produtos para brindes:", error);
+        setGiftError(`Não foi possível carregar o estoque: ${error.message}`);
+      }
+    );
+    unsubscribeGifts = onSnapshot(
+      collection(db, "users", userId, "clientGifts"),
+      (snapshot) => {
+        setGiftRecords(
+          snapshot.docs
+            .map((document) => ({
+              id: document.id,
+              ...document.data(),
+            }))
+            .filter((gift) => gift.clientId === giftClient.id)
+            .sort(
+              (first, second) =>
+                (toDate(second.giftDate)?.getTime() || 0) -
+                (toDate(first.giftDate)?.getTime() || 0)
+            )
+        );
+      },
+      (error) => {
+        console.error("Erro ao carregar brindes da cliente:", error);
+        setGiftError(`Não foi possível carregar o histórico de brindes: ${error.message}`);
+      }
+    );
+
+    return () => {
+      unsubscribeProducts();
+      unsubscribeGifts();
+    };
+  }, [giftClient, userId]);
+
   const salesByClient = useMemo(() => {
     const byClient = new Map();
 
@@ -182,11 +332,21 @@ export default function ClientsPage() {
       const current = byClient.get(sale.clientId) || {
         count: 0,
         pending: 0,
+        sales: [],
       };
 
       current.count += 1;
-      current.pending += Number(sale.pendingAmount || 0);
+      current.pending += getSalePendingAmount(sale);
+      current.sales.push(sale);
       byClient.set(sale.clientId, current);
+    }
+
+    for (const purchases of byClient.values()) {
+      purchases.sales.sort((first, second) => {
+        const firstDate = toDate(first.saleDate || first.createdAt)?.getTime() || 0;
+        const secondDate = toDate(second.saleDate || second.createdAt)?.getTime() || 0;
+        return secondDate - firstDate;
+      });
     }
 
     return byClient;
@@ -287,6 +447,7 @@ export default function ClientsPage() {
     const searchDigits = search.replace(/\D/g, "");
 
     return clientRows.filter(({ client, status, trips }) => {
+      const classification = resolveClientClassification(client, pregoClientIds);
       if (
         cityFilter !== "all" &&
         getClientCityKey(client.city) !== getClientCityKey(cityFilter)
@@ -295,6 +456,12 @@ export default function ClientsPage() {
       }
       if (statusFilter !== "all" && status !== statusFilter) return false;
       if (tripFilter !== "all" && !trips.has(tripFilter)) return false;
+      if (
+        classificationFilter !== "all" &&
+        classification !== classificationFilter
+      ) {
+        return false;
+      }
       if (!search) return true;
 
       const textMatch = [
@@ -319,19 +486,265 @@ export default function ClientsPage() {
 
       return textMatch || digitMatch;
     });
-  }, [clientRows, searchText, cityFilter, statusFilter, tripFilter]);
+  }, [
+    clientRows,
+    searchText,
+    cityFilter,
+    statusFilter,
+    tripFilter,
+    classificationFilter,
+    pregoClientIds,
+  ]);
+
+  const displayedRows = useMemo(() => {
+    return clientViewMode === "prego"
+      ? filteredRows.filter(
+          ({ client }) =>
+            resolveClientClassification(client, pregoClientIds) === "prego"
+        )
+      : filteredRows;
+  }, [clientViewMode, filteredRows, pregoClientIds]);
+
+  const pregoClassificationCount = clients.filter(
+    (client) => resolveClientClassification(client, pregoClientIds) === "prego"
+  ).length;
+
+  const visitRows = useMemo(
+    () =>
+      clients
+        .filter(
+          (client) =>
+            getClientCityKey(client.city) === getClientCityKey(visitCity)
+        )
+        .map((client) => ({
+          client,
+          status: resolveClientTripVisitStatus({
+            client,
+            city: visitCity,
+            tripName: visitTripName,
+            visitRecords,
+            sales,
+          }),
+        })),
+    [clients, sales, visitCity, visitRecords, visitTripName]
+  );
+
+  const visitCounts = useMemo(
+    () => ({
+      unvisited: visitRows.filter((entry) => entry.status === "unvisited").length,
+      not_purchased: visitRows.filter((entry) => entry.status === "not_purchased").length,
+      bought: visitRows.filter((entry) => entry.status === "bought").length,
+    }),
+    [visitRows]
+  );
+
+  const visibleVisitRows = visitRows.filter(
+    (entry) => entry.status === visitStatusFilter
+  );
+
+  const knownTripNames = useMemo(() => {
+    const trips = new Map();
+    for (const tripName of [
+      ...sales.map((sale) => sale.tripName),
+      ...visitRecords.map((record) => record.tripName),
+    ]) {
+      const name = String(tripName || "").trim();
+      const key = normalizeSearchText(name);
+      if (key) trips.set(key, name);
+    }
+    return Array.from(trips.values()).sort((first, second) =>
+      first.localeCompare(second, "pt-BR")
+    );
+  }, [sales, visitRecords]);
+
+  const clientRecordWritesBlocked =
+    !CLIENT_RECORD_WRITES_ENABLED || isFirestoreReadOnly();
+  const selectedClientGifts = giftRecords.filter(
+    (gift) => gift.clientId === giftClient?.id
+  );
 
   const hasActiveFilters =
     searchText.trim() !== "" ||
     cityFilter !== "all" ||
     statusFilter !== "all" ||
-    tripFilter !== "all";
+    tripFilter !== "all" ||
+    classificationFilter !== "all";
 
   function clearFilters() {
     setSearchText("");
     setCityFilter("all");
     setStatusFilter("all");
     setTripFilter("all");
+    setClassificationFilter("all");
+  }
+
+  async function handleSaveClassification(client, classification) {
+    if (clientRecordLock.current || isFirestoreReadOnly()) return;
+    if (!userId) {
+      alert("Entre novamente no sistema para classificar a cliente.");
+      return;
+    }
+
+    clientRecordLock.current = true;
+    setSavingClientRecord(true);
+    setClassificationError("");
+    try {
+      await updateDoc(doc(db, "users", userId, "clients", client.id), {
+        classification,
+        classificationUpdatedAt: serverTimestamp(),
+      });
+      setClassificationEditorId(null);
+    } catch (error) {
+      console.error("Erro ao classificar cliente:", error);
+      setClassificationError(
+        `Não foi possível salvar a classificação: ${error.message}`
+      );
+    } finally {
+      clientRecordLock.current = false;
+      setSavingClientRecord(false);
+    }
+  }
+
+  async function handleVisitStatus(client, status) {
+    if (clientRecordLock.current || clientRecordWritesBlocked) return;
+    if (!visitCity || !visitTripName.trim()) {
+      alert("Selecione uma cidade e uma viagem antes de marcar a visita.");
+      return;
+    }
+    if (getClientCityKey(client.city) !== getClientCityKey(visitCity)) {
+      alert("A cliente não pertence à cidade selecionada para esta visita.");
+      return;
+    }
+    if (!userId) {
+      alert("Entre novamente no sistema para registrar a visita.");
+      return;
+    }
+
+    clientRecordLock.current = true;
+    setSavingClientRecord(true);
+    setVisitError("");
+    try {
+      await recordClientVisit({
+        db,
+        userId,
+        clientId: client.id,
+        city: visitCity,
+        tripName: visitTripName.trim(),
+        status,
+      });
+    } catch (error) {
+      console.error("Erro ao atualizar visita:", error);
+      setVisitError(error.message);
+    } finally {
+      clientRecordLock.current = false;
+      setSavingClientRecord(false);
+    }
+  }
+
+  function handleOpenGift(client) {
+    if (!visitCity || !visitTripName.trim()) {
+      alert("Selecione manualmente a cidade e a viagem antes de registrar um brinde.");
+      return;
+    }
+    if (getClientCityKey(client.city) !== getClientCityKey(visitCity)) {
+      alert("Selecione a cidade da cliente no controle de visitas antes de registrar o brinde.");
+      return;
+    }
+    setGiftError("");
+    setGiftProductId("");
+    setGiftQuantity("1");
+    giftOperationId.current = null;
+    setGiftClient(client);
+  }
+
+  async function handleGiftSubmit(event) {
+    event.preventDefault();
+    if (giftLock.current || clientRecordWritesBlocked) return;
+    const product = giftProducts.find((entry) => entry.id === giftProductId);
+    if (!giftClient || !product || !userId) {
+      setGiftError("Selecione uma cliente e um produto cadastrado no estoque.");
+      return;
+    }
+
+    try {
+      validateGiftQuantity(giftQuantity, Number(product.quantity || 0));
+    } catch (error) {
+      setGiftError(error.message);
+      return;
+    }
+
+    const alreadyGifted = hasGiftForTrip(
+      giftRecords,
+      visitTripName,
+      visitCity
+    );
+    const duplicateWarning = alreadyGifted
+      ? "Esta cliente já recebeu um brinde nesta viagem. Deseja registrar outro mesmo assim?\n\n"
+      : "";
+    if (
+      !window.confirm(
+        `${duplicateWarning}Confirmar a entrega de ${giftQuantity} unidade(s) de ${product.name || "produto"} para ${giftClient.name}?`
+      )
+    ) {
+      return;
+    }
+
+    if (!giftOperationId.current) {
+      if (!globalThis.crypto?.randomUUID) {
+        setGiftError("Este dispositivo não oferece um identificador seguro para registrar o brinde.");
+        return;
+      }
+      giftOperationId.current = globalThis.crypto.randomUUID();
+    }
+
+    giftLock.current = true;
+    setSavingClientRecord(true);
+    setGiftError("");
+    try {
+      await recordClientGift({
+        db,
+        userId,
+        operationId: giftOperationId.current,
+        clientId: giftClient.id,
+        productId: product.id,
+        quantity: giftQuantity,
+        tripName: visitTripName.trim(),
+        tripCity: visitCity,
+      });
+      setGiftProductId("");
+      setGiftQuantity("1");
+      giftOperationId.current = null;
+    } catch (error) {
+      console.error("Erro ao registrar brinde:", error);
+      setGiftError(error.message);
+    } finally {
+      giftLock.current = false;
+      setSavingClientRecord(false);
+    }
+  }
+
+  async function handleCancelGift(gift) {
+    if (giftLock.current || clientRecordWritesBlocked) return;
+    if (
+      !window.confirm(
+        "Cancelar este brinde e devolver a quantidade ao estoque?"
+      )
+    ) {
+      return;
+    }
+
+    giftLock.current = true;
+    setSavingClientRecord(true);
+    setGiftError("");
+    try {
+      await cancelClientGift({ db, userId, gift });
+    } catch (error) {
+      console.error("Erro ao cancelar brinde:", error);
+      setGiftError(error.message);
+    } finally {
+      giftLock.current = false;
+      setSavingClientRecord(false);
+    }
   }
 
   function openNewClientForm() {
@@ -354,10 +767,14 @@ export default function ClientsPage() {
 
   function handleChange(event) {
     const { name, value } = event.target;
+    const isPersonName = name === "name" || name === "nickname";
+    const hasTrailingSpace = isPersonName && /\s$/.test(value);
 
     const masked =
       name === "cpf" ? formatCpf(value)
       : name === "phone" ? formatPhone(value)
+      : isPersonName
+        ? `${normalizePersonName(value)}${hasTrailingSpace ? " " : ""}`
       : value;
 
     setForm((current) => ({
@@ -592,8 +1009,14 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
       setSaving(true);
 
       const clientData = {
-        name: form.name.trim(),
-        nickname: form.nickname.trim(),
+        name:
+          original?.name === form.name
+            ? original.name
+            : normalizePersonName(form.name),
+        nickname:
+          original?.nickname === form.nickname
+            ? original.nickname
+            : normalizePersonName(form.nickname),
         phone: form.phone.trim(),
         cpf: form.cpf.trim(),
         city:
@@ -606,6 +1029,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
         district: form.district.trim(),
         totalDebt: Number(form.totalDebt || 0),
         notes: form.notes.trim(),
+        ...(editingId ? {} : { classification: "unclassified" }),
         updatedAt: serverTimestamp(),
       };
 
@@ -781,6 +1205,9 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
             value={form.name}
             onChange={handleChange}
             placeholder="Digite o nome do cliente"
+            lang="pt-BR"
+            spellCheck="true"
+            autoCorrect="on"
             required
             disabled={saving}
           />
@@ -794,6 +1221,9 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
             value={form.nickname}
             onChange={handleChange}
             placeholder="Apelido ou nome conhecido"
+            lang="pt-BR"
+            spellCheck="true"
+            autoCorrect="on"
             disabled={saving}
           />
         </label>
@@ -839,7 +1269,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
             <option value="" disabled>
               Selecione a cidade
             </option>
-            {CLIENT_CITIES.map((city) => (
+            {cities.map((city) => (
               <option key={city} value={city}>
                 {city}
               </option>
@@ -942,12 +1372,44 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
       >
         <button
           type="button"
+          className="cl-btn cl-btn-soft"
+          onClick={() => {
+            const openingPrego = clientViewMode !== "prego";
+            setPregoError("");
+            setClientViewMode(openingPrego ? "prego" : "all");
+            setClassificationFilter(openingPrego ? "prego" : "all");
+          }}
+          aria-pressed={clientViewMode === "prego"}
+        >
+          {clientViewMode === "prego" ? "Lista geral" : "Clientes Prego"}
+        </button>
+        <button
+          type="button"
           className="cl-btn cl-btn-primary cl-new"
           onClick={openNewClientForm}
         >
           <LuPlus aria-hidden="true" /> Novo cliente
         </button>
       </PageHeader>
+
+      {clientViewMode === "prego" && (
+        <section className="cl-panel cl-prego-panel">
+          <div>
+            <h2>Clientes Prego</h2>
+            <p>
+              Lista automática das clientes cuja classificação atual é Prego.
+              Altere a classificação diretamente na ficha da cliente.
+            </p>
+          </div>
+          <strong>{pregoClassificationCount} cliente(s) na lista</strong>
+          {pregoError && <p className="cl-record-error" role="alert">{pregoError}</p>}
+          {isFirestoreReadOnly() && (
+            <p className="cl-record-pending" role="status">
+              A prévia está em modo somente leitura; classificações não podem ser salvas nela.
+            </p>
+          )}
+        </section>
+      )}
 
       <div className="cl-kpis">
         <article className="cl-kpi cl-kpi-navy">
@@ -959,7 +1421,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
         <article className="cl-kpi cl-kpi-gold">
           <span className="cl-kpi-icon"><LuWallet aria-hidden="true" /></span>
           <span className="cl-kpi-label">Total a receber</span>
-          <strong>{formatCurrency(receivables.totalPending)}</strong>
+          <strong><FinancialValue>{formatCurrency(receivables.totalPending)}</FinancialValue></strong>
           <small>Mesmo cálculo do Dashboard, sem somar a mesma dívida duas vezes.</small>
         </article>
 
@@ -1027,6 +1489,20 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
             </select>
           </label>
 
+          <label>
+            Classificação
+            <select
+              value={classificationFilter}
+              onChange={(event) => setClassificationFilter(event.target.value)}
+              aria-label="Filtrar por classificação"
+            >
+              <option value="all">Todas as classificações</option>
+              {CLIENT_CLASSIFICATIONS.map(({ id, label }) => (
+                <option key={id} value={id}>{label}</option>
+              ))}
+            </select>
+          </label>
+
           {hasActiveFilters && (
             <button type="button" className="cl-btn cl-btn-ghost" onClick={clearFilters}>
               Limpar filtros
@@ -1035,27 +1511,45 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
         </div>
 
         <p className="cl-count">
-          {filteredRows.length} de {clients.length} cliente(s)
+          {clientViewMode === "prego" ? `${pregoClassificationCount} cliente(s) Prego · ` : ""}
+          {displayedRows.length} de {clients.length} cliente(s)
           {tripFilter !== "all" &&
             " — viagem conforme classificação proposta das vendas"}
         </p>
+        {classificationError && (
+          <p className="cl-record-error" role="alert">{classificationError}</p>
+        )}
 
         {loadingClients ? (
           <div className="cl-empty"><strong>Carregando clientes...</strong></div>
-        ) : filteredRows.length === 0 ? (
+        ) : displayedRows.length === 0 ? (
           <div className="cl-empty">
             <strong>Nenhum cliente encontrado</strong>
             <p>Cadastre um cliente ou altere a pesquisa e os filtros.</p>
           </div>
         ) : (
           <div className="cl-list">
-            {filteredRows.map((row) => {
+            {displayedRows.map((row) => {
               const { client } = row;
               const purchases = salesByClient.get(client.id);
               const expanded = expandedId === client.id;
               const address = [client.street, client.number, client.district]
                 .filter(Boolean)
                 .join(", ");
+              const clientVisitStatus = resolveClientTripVisitStatus({
+                client,
+                city: visitCity,
+                tripName: visitTripName,
+                visitRecords,
+                sales,
+              });
+              const classification = resolveClientClassification(
+                client,
+                pregoClientIds
+              );
+              const classificationInfo = CLIENT_CLASSIFICATIONS.find(
+                ({ id }) => id === classification
+              );
 
               return (
                 <article key={client.id} className={`cl-row cl-row-${row.status}`}>
@@ -1067,6 +1561,11 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                     <div className="cl-identity">
                       <h3>{client.name}</h3>
                       {client.nickname && <p>“{client.nickname}”</p>}
+                      <span
+                        className={`cl-classification-chip cl-classification-${classification}`}
+                      >
+                        {classificationInfo?.label || "Não classificado"}
+                      </span>
                     </div>
 
                     <div className="cl-contact">
@@ -1076,7 +1575,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
 
                     <div className="cl-balance">
                       <span>Saldo</span>
-                      <strong>{formatCurrency(row.totalPending)}</strong>
+                      <strong><FinancialValue>{formatCurrency(row.totalPending)}</FinancialValue></strong>
                     </div>
 
                     <span className={`cl-status cl-status-${row.status}`}>
@@ -1088,11 +1587,32 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                     <button
                       type="button"
                       className="cl-btn cl-btn-soft"
+                      onClick={() => {
+                        setClassificationError("");
+                        setClassificationEditorId((current) =>
+                          current === client.id ? null : client.id
+                        );
+                      }}
+                      aria-expanded={classificationEditorId === client.id}
+                      disabled={savingClientRecord}
+                    >
+                      Classificar cliente
+                    </button>
+                    <button
+                      type="button"
+                      className="cl-btn cl-btn-soft"
                       onClick={() => setExpandedId(expanded ? null : client.id)}
                       aria-expanded={expanded}
                     >
                       <LuChevronDown aria-hidden="true" className={expanded ? "cl-flip" : ""} />
                       {expanded ? "Ocultar detalhes" : "Ver detalhes"}
+                    </button>
+                    <button
+                      type="button"
+                      className="cl-btn cl-btn-soft"
+                      onClick={() => setExpandedId(expanded ? null : client.id)}
+                    >
+                      <LuShoppingBag aria-hidden="true" /> Compras e Recibos
                     </button>
                     <button type="button" className="cl-btn cl-btn-soft" onClick={() => handleEdit(client)}>
                       <LuPencil aria-hidden="true" /> Editar
@@ -1116,6 +1636,33 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                     </button>
                   </div>
 
+                  {classificationEditorId === client.id && (
+                    <div
+                      className="cl-classification-options"
+                      role="group"
+                      aria-label={`Classificação de ${client.name}`}
+                    >
+                      {isFirestoreReadOnly() && (
+                        <small role="status">
+                          Prévia somente leitura: as opções podem ser consultadas,
+                          mas não salvas.
+                        </small>
+                      )}
+                      {CLIENT_CLASSIFICATIONS.map(({ id, label }) => (
+                        <button
+                          key={id}
+                          type="button"
+                          className={`cl-classification-option cl-classification-${id}${classification === id ? " is-selected" : ""}`}
+                          aria-pressed={classification === id}
+                          disabled={savingClientRecord || isFirestoreReadOnly()}
+                          onClick={() => handleSaveClassification(client, id)}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
                   {expanded && (
                     <div className="cl-details">
                       <dl>
@@ -1123,11 +1670,11 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                         <div><dt>Endereço</dt><dd>{address || "Não informado"}</dd></div>
                         <div>
                           <dt>Saldo histórico agregado</dt>
-                          <dd>{formatCurrency(client.totalDebt)}</dd>
+                          <dd><FinancialValue>{formatCurrency(client.totalDebt)}</FinancialValue></dd>
                         </div>
                         <div>
                           <dt>Compras{purchases ? ` (${purchases.count})` : ""}</dt>
-                          <dd>{formatCurrency(purchases?.pending || 0)} em aberto</dd>
+                          <dd><FinancialValue>{formatCurrency(purchases?.pending || 0)}</FinancialValue> em aberto</dd>
                         </div>
                         {row.overdueCount > 0 && (
                           <div><dt>Vencidas</dt><dd>{row.overdueCount} compra(s)</dd></div>
@@ -1151,7 +1698,114 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                         </p>
                       )}
 
+                      {purchases?.sales.length > 0 && (
+                        <section className="cl-purchases" aria-label={`Compras de ${client.name}`}>
+                          <h4>Compras e Recibos</h4>
+                          {purchases.sales.map((purchase) => {
+                            const received = Number(
+                              purchase.amountPaid ??
+                                purchase.received ??
+                                purchase.valorRecebido ??
+                                0
+                            );
+                            const pending = getSalePendingAmount(purchase);
+                            const total = Number(
+                              purchase.total ??
+                                purchase.totalValue ??
+                                purchase.amount ??
+                                purchase.valorTotal ??
+                                received + pending
+                            );
+                            const purchaseDate = toDate(
+                              purchase.saleDate || purchase.createdAt
+                            );
+                            const financeStatus =
+                              pending <= 0 ? "Pago" : received > 0 ? "Parcial" : "Pendente";
+                            const tripLabel =
+                              purchase.tripName ||
+                              (purchase.tripNumber
+                                ? `${purchase.tripNumber}ª viagem`
+                                : purchase.tripCity || "Viagem não informada");
+
+                            return (
+                              <article className="cl-purchase" key={purchase.id}>
+                                <div>
+                                  <strong>Compra #{purchase.id}</strong>
+                                  <span>
+                                    Data: {purchaseDate?.toLocaleDateString("pt-BR") || "Não informada"}
+                                  </span>
+                                  <span>Viagem: {tripLabel}</span>
+                                  <span>Situação financeira: {financeStatus}</span>
+                                </div>
+                                <dl>
+                                  <div><dt>Total</dt><dd><FinancialValue>{formatCurrency(total)}</FinancialValue></dd></div>
+                                  <div><dt>Recebido</dt><dd><FinancialValue>{formatCurrency(received)}</FinancialValue></dd></div>
+                                  <div><dt>Saldo</dt><dd><FinancialValue>{formatCurrency(pending)}</FinancialValue></dd></div>
+                                </dl>
+                                <button
+                                  type="button"
+                                  className="cl-btn cl-btn-gold"
+                                  onClick={() => setSelectedReceiptSale(prepareSaleReceipt({
+                                    ...purchase,
+                                    clientName: client.name,
+                                  }))}
+                                >
+                                  Ver recibo
+                                </button>
+                              </article>
+                            );
+                          })}
+                        </section>
+                      )}
+                      {(!purchases || purchases.sales.length === 0) && (
+                        <p className="cl-empty-purchases">
+                          Nenhuma compra vinculada ao ID desta cliente.
+                        </p>
+                      )}
+
                       <div className="cl-actions">
+                        {clientVisitStatus === "bought" ? (
+                          <span className="cl-visit-bought">Comprou nesta viagem</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="cl-btn cl-btn-soft"
+                            onClick={() =>
+                              handleVisitStatus(
+                                client,
+                                clientVisitStatus === "not_purchased"
+                                  ? "unvisited"
+                                  : "not_purchased"
+                              )
+                            }
+                            disabled={
+                              savingClientRecord ||
+                              clientRecordWritesBlocked ||
+                              !visitCity ||
+                              !visitTripName.trim() ||
+                              getClientCityKey(client.city) !==
+                                getClientCityKey(visitCity)
+                            }
+                          >
+                            {clientVisitStatus === "not_purchased"
+                              ? "Desfazer Não comprou"
+                              : "Não comprou"}
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="cl-btn cl-btn-gold"
+                          onClick={() => handleOpenGift(client)}
+                          disabled={
+                            savingClientRecord ||
+                            !visitCity ||
+                            !visitTripName.trim() ||
+                            getClientCityKey(client.city) !==
+                              getClientCityKey(visitCity)
+                          }
+                        >
+                          Dar brinde
+                        </button>
                         <button type="button" className="cl-btn cl-btn-soft" onClick={() => handleShowHistory(client)}>
                           <LuHistory aria-hidden="true" /> Histórico
                         </button>
@@ -1167,6 +1821,144 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                 </article>
               );
             })}
+          </div>
+        )}
+      </section>
+
+      <section className="cl-panel cl-visits">
+        <header>
+          <div>
+            <h2>Visitas por cidade e viagem</h2>
+            <p>
+              Escolha a cidade e a viagem manualmente. Uma nova viagem começa
+              sem herdar as marcações anteriores. “Comprou” exige uma venda
+              vinculada ao mesmo ID de cliente e ao mesmo nome explícito de viagem.
+            </p>
+          </div>
+        </header>
+        <div className="cl-visit-selectors">
+          <label>
+            Cidade da visita
+            <select
+              value={visitCity}
+              onChange={(event) => {
+                setVisitError("");
+                setVisitCity(event.target.value);
+              }}
+            >
+              <option value="">Selecione uma cidade</option>
+              {CLIENT_CITIES.map((city) => (
+                <option key={city} value={city}>{city}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Viagem
+            <select
+              value={manualVisitTrip ? "__manual__" : visitTripName}
+              onChange={(event) => {
+                if (event.target.value === "__manual__") {
+                  setVisitError("");
+                  setManualVisitTrip(true);
+                  setVisitTripName("");
+                  return;
+                }
+                setVisitError("");
+                setManualVisitTrip(false);
+                setVisitTripName(event.target.value);
+              }}
+            >
+              <option value="">Selecione uma viagem</option>
+              {knownTripNames.map((name) => (
+                <option key={normalizeSearchText(name)} value={name}>{name}</option>
+              ))}
+              <option value="__manual__">Outra viagem (digitar nome)</option>
+            </select>
+          </label>
+          {manualVisitTrip && (
+            <label>
+              Nome/identificador único da viagem
+              <input
+                value={visitTripName}
+                onChange={(event) => {
+                  setVisitError("");
+                  setVisitTripName(event.target.value);
+                }}
+                placeholder="Ex.: Rota Sul 2026"
+                maxLength={100}
+                required
+              />
+            </label>
+          )}
+        </div>
+
+        {clientRecordWritesBlocked && (
+          <p className="cl-record-pending" role="status">
+            A consulta pode ser preparada, mas novas marcações estão pausadas
+            até a revisão das regras Firestore para a coleção de visitas.
+          </p>
+        )}
+        {visitError && <p className="cl-record-error" role="alert">{visitError}</p>}
+
+        <div className="cl-visit-tabs" role="tablist" aria-label="Situação da visita">
+          {[
+            ["unvisited", "Falta visitar"],
+            ["not_purchased", "Não comprou"],
+            ["bought", "Comprou"],
+          ].map(([status, label]) => (
+            <button
+              key={status}
+              type="button"
+              role="tab"
+              aria-selected={visitStatusFilter === status}
+              className={visitStatusFilter === status ? "is-active" : ""}
+              onClick={() => setVisitStatusFilter(status)}
+            >
+              {label} <span>{visitCounts[status]}</span>
+            </button>
+          ))}
+        </div>
+
+        {!visitCity || !visitTripName.trim() ? (
+          <p className="cl-empty-purchases">
+            Selecione uma cidade e uma viagem para consultar ou marcar visitas.
+          </p>
+        ) : visibleVisitRows.length === 0 ? (
+          <p className="cl-empty-purchases">
+            Nenhuma cliente nesta situação para a cidade e viagem selecionadas.
+          </p>
+        ) : (
+          <div className="cl-visit-list">
+            {visibleVisitRows.map(({ client, status }) => (
+              <article key={client.id} className="cl-visit-row">
+                <div>
+                  <strong>{client.name}</strong>
+                  <span>{getClientCityDisplay(client.city)}</span>
+                  <small>ID: {client.id}</small>
+                </div>
+                {status === "not_purchased" ? (
+                  <button
+                    type="button"
+                    className="cl-btn cl-btn-soft"
+                    onClick={() => handleVisitStatus(client, "unvisited")}
+                    disabled={savingClientRecord || clientRecordWritesBlocked}
+                  >
+                    Desfazer marcação
+                  </button>
+                ) : status === "unvisited" ? (
+                  <button
+                    type="button"
+                    className="cl-btn cl-btn-soft"
+                    onClick={() => handleVisitStatus(client, "not_purchased")}
+                    disabled={savingClientRecord || clientRecordWritesBlocked}
+                  >
+                    Não comprou
+                  </button>
+                ) : (
+                  <span className="cl-visit-bought">Venda registrada</span>
+                )}
+              </article>
+            ))}
           </div>
         )}
       </section>
@@ -1207,11 +1999,11 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
             {reconciliationCandidates.map((entry) => (
               <div key={entry.clientId} className="cl-check-item">
                 <strong>{entry.clientName}</strong>
-                <span>Saldo legado: {formatCurrency(entry.legacyBalance)}</span>
-                <span>Compras abertas: {formatCurrency(entry.purchaseBalance)}</span>
+                <span>Saldo legado: <FinancialValue>{formatCurrency(entry.legacyBalance)}</FinancialValue></span>
+                <span>Compras abertas: <FinancialValue>{formatCurrency(entry.purchaseBalance)}</FinancialValue></span>
                 <span>
                   Diferença matemática (não é valor para migração):{" "}
-                  {formatCurrency(entry.difference)}
+                  <FinancialValue>{formatCurrency(entry.difference)}</FinancialValue>
                 </span>
                 <small>
                   Conferir histórico de compras e recebimentos antes de qualquer
@@ -1222,6 +2014,141 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
           </div>
         )}
       </details>
+      {selectedReceiptSale && (
+        <ReceiptViewer
+          sale={selectedReceiptSale}
+          onClose={() => setSelectedReceiptSale(null)}
+        />
+      )}
+      {giftClient && (
+        <div className="cl-record-overlay">
+          <section className="cl-gift-dialog" role="dialog" aria-modal="true" aria-label="Dar brinde">
+            <header>
+              <div>
+                <h2>Dar brinde</h2>
+                <p>{giftClient.name} · {visitTripName} · {getClientCityDisplay(visitCity)}</p>
+              </div>
+              <button type="button" className="cl-btn cl-btn-soft" onClick={() => setGiftClient(null)}>
+                Fechar
+              </button>
+            </header>
+
+            {clientRecordWritesBlocked && (
+              <p className="cl-record-pending" role="status">
+                A entrega e o cancelamento estão pausados até a revisão das regras
+                Firestore para brindes, produtos e movimentações de estoque.
+              </p>
+            )}
+            {giftError && <p className="cl-record-error" role="alert">{giftError}</p>}
+
+            {hasGiftForTrip(selectedClientGifts, visitTripName, visitCity) && (
+              <p className="cl-gift-warning" role="status">
+                Esta cliente já recebeu brinde nesta viagem. Outra entrega exige confirmação.
+              </p>
+            )}
+
+            <form onSubmit={handleGiftSubmit} className="cl-gift-form">
+              <label>
+                Produto cadastrado no estoque
+                <select
+                  value={giftProductId}
+                  onChange={(event) => setGiftProductId(event.target.value)}
+                  required
+                >
+                  <option value="">Selecione um produto disponível</option>
+                  {giftProducts
+                    .filter((product) => Number(product.quantity || 0) > 0)
+                    .map((product) => (
+                      <option key={product.id} value={product.id}>
+                        {product.name || "Produto"} · estoque {product.quantity}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label>
+                Quantidade
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  max={giftProducts.find((product) => product.id === giftProductId)?.quantity || 1}
+                  value={giftQuantity}
+                  onChange={(event) => setGiftQuantity(event.target.value)}
+                  required
+                />
+              </label>
+              {giftProducts
+                .filter((product) => product.id === giftProductId)
+                .map((product) => {
+                  const quantity = Number(giftQuantity);
+                  const canEstimateCost =
+                    Number.isFinite(Number(product.costPrice)) &&
+                    Number(product.costPrice) >= 0 &&
+                    Number.isInteger(quantity) &&
+                    quantity > 0;
+                  const estimatedCost = canEstimateCost
+                    ? formatCurrency(
+                        calculateGiftCost(product.costPrice, quantity)
+                      )
+                    : "Informe uma quantidade válida";
+                  return (
+                    <p key={product.id} className="cl-gift-cost">
+                      Custo estimado separado:{" "}
+                      <FinancialValue>{estimatedCost}</FinancialValue>
+                    </p>
+                  );
+                })}
+              <button
+                type="submit"
+                className="cl-btn cl-btn-primary"
+                disabled={
+                  savingClientRecord ||
+                  clientRecordWritesBlocked ||
+                  !giftProductId
+                }
+              >
+                {savingClientRecord ? "Registrando..." : "Confirmar entrega"}
+              </button>
+            </form>
+
+            <div className="cl-gift-history">
+              <h3>Histórico de brindes</h3>
+              {selectedClientGifts.length === 0 ? (
+                <p>Nenhum brinde registrado para esta cliente.</p>
+              ) : (
+                selectedClientGifts.map((gift) => (
+                  <article key={gift.id}>
+                    <div>
+                      <strong>{gift.productName || "Produto"}</strong>
+                      <span>
+                        {gift.quantity} unidade(s) · {gift.tripName} · {gift.tripCity}
+                      </span>
+                      <span>
+                        Data: {toDate(gift.giftDate)?.toLocaleDateString("pt-BR") || "Não informada"}
+                      </span>
+                      <span>
+                        Custo registrado:{" "}
+                        <FinancialValue>{formatCurrency(gift.totalCost)}</FinancialValue>
+                      </span>
+                      <span>{gift.status === "cancelled" ? "Cancelado" : "Entregue"}</span>
+                    </div>
+                    {gift.status === "active" && (
+                      <button
+                        type="button"
+                        className="cl-btn cl-btn-danger"
+                        onClick={() => handleCancelGift(gift)}
+                        disabled={savingClientRecord || clientRecordWritesBlocked}
+                      >
+                        Cancelar e devolver ao estoque
+                      </button>
+                    )}
+                  </article>
+                ))
+              )}
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

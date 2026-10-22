@@ -11,28 +11,31 @@ import IntelligencePage from "./pages/IntelligencePage";
 import SuppliersPage from "./pages/SuppliersPage";
 
 import Layout from "./components/Layout";
+import FinancialPrivacyProvider from "./context/FinancialPrivacyContext.jsx";
 
 function App() {
   return (
-    <Routes>
-      {/* Login */}
-      <Route path="/" element={<LoginPage />} />
+    <FinancialPrivacyProvider>
+      <Routes>
+        {/* Login */}
+        <Route path="/" element={<LoginPage />} />
 
-      {/* Área interna */}
-      <Route element={<Layout />}>
-        <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/clientes" element={<ClientsPage />} />
-        <Route path="/produtos" element={<ProductsPage />} />
-        <Route path="/vendas" element={<SalesPage />} />
-        <Route path="/estoque" element={<StockPage />} />
-        <Route path="/financeiro" element={<FinancePage />} />
-        <Route path="/fornecedores" element={<SuppliersPage />} />
-        <Route path="/inteligencia" element={<IntelligencePage />} />
-      </Route>
+        {/* Área interna */}
+        <Route element={<Layout />}>
+          <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/clientes" element={<ClientsPage />} />
+          <Route path="/produtos" element={<ProductsPage />} />
+          <Route path="/vendas" element={<SalesPage />} />
+          <Route path="/estoque" element={<StockPage />} />
+          <Route path="/financeiro" element={<FinancePage />} />
+          <Route path="/fornecedores" element={<SuppliersPage />} />
+          <Route path="/inteligencia" element={<IntelligencePage />} />
+        </Route>
 
-      {/* Qualquer outra rota */}
-      <Route path="*" element={<Navigate to="/dashboard" replace />} />
-    </Routes>
+        {/* Qualquer outra rota */}
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
+      </Routes>
+    </FinancialPrivacyProvider>
   );
 }
 

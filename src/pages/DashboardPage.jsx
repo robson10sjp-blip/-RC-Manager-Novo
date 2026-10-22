@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { LuLayoutDashboard } from "react-icons/lu";
 import PageHeader from "../components/PageHeader.jsx";
+import FinancialValue from "../components/FinancialValue.jsx";
+import { useFinancialPrivacy } from "../context/financialPrivacy.js";
 import { onAuthStateChanged } from "firebase/auth";
 import { collection, onSnapshot } from "firebase/firestore";
 
@@ -39,6 +41,7 @@ import "./DashboardPayables.css";
 import "./DashboardPremium.css";
 
 export default function DashboardPage() {
+  const { hidden: financialValuesHidden } = useFinancialPrivacy();
   const [clients, setClients] = useState([]);
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
@@ -496,7 +499,9 @@ export default function DashboardPage() {
                 <article key={label} className={`dash-kpi dash-kpi-${tone}`}>
                   <span className="dash-kpi-icon"><Icon aria-hidden="true" /></span>
                   <span className="dash-kpi-label">{label}</span>
-                  <strong>{value}</strong>
+                  <strong>
+                    {label === "Vendas" ? value : <FinancialValue>{value}</FinancialValue>}
+                  </strong>
                 </article>
               ))}
             </div>
@@ -505,7 +510,7 @@ export default function DashboardPage() {
               {secondaryMetrics.map(({ label, value }) => (
                 <div key={label}>
                   <span>{label}</span>
-                  <strong>{value}</strong>
+                  <strong><FinancialValue>{value}</FinancialValue></strong>
                 </div>
               ))}
             </div>
@@ -526,8 +531,17 @@ export default function DashboardPage() {
                   <BarChart data={tripComparison} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e5e7ee" />
                     <XAxis dataKey="name" tickLine={false} axisLine={false} />
-                    <YAxis tickFormatter={compactCurrency} tickLine={false} axisLine={false} width={64} />
-                    <Tooltip formatter={(value) => formatCurrency(value)} />
+                    <YAxis
+                      tickFormatter={financialValuesHidden ? () => "••••" : compactCurrency}
+                      tickLine={false}
+                      axisLine={false}
+                      width={64}
+                    />
+                    <Tooltip
+                      formatter={(value) =>
+                        financialValuesHidden ? "••••••" : formatCurrency(value)
+                      }
+                    />
                     <Bar dataKey="Vendido" fill="#0f1b33" isAnimationActive={false} radius={[6, 6, 0, 0]} />
                     <Bar dataKey="Recebido" fill="#15803d" isAnimationActive={false} radius={[6, 6, 0, 0]} />
                     <Bar dataKey="Pendente" fill="#b8892f" isAnimationActive={false} radius={[6, 6, 0, 0]} />
@@ -559,13 +573,19 @@ export default function DashboardPage() {
                         <Cell key={entry.name} fill={entry.color} />
                       ))}
                     </Pie>
-                    <Tooltip formatter={(value) => formatCurrency(value)} />
+                    <Tooltip
+                      formatter={(value) =>
+                        financialValuesHidden ? "••••••" : formatCurrency(value)
+                      }
+                    />
                   </PieChart>
                 </ResponsiveContainer>
                 <div className="dash-donut-center">
                   <span>Recebido</span>
                   <strong>
-                    {dashboard.sold > 0
+                    {financialValuesHidden
+                      ? "••••••"
+                      : dashboard.sold > 0
                       ? `${Math.round((dashboard.received / dashboard.sold) * 100)}%`
                       : "—"}
                   </strong>
@@ -605,17 +625,17 @@ export default function DashboardPage() {
               <a href="/financeiro">Abrir Financeiro</a>
             </div>
             <div className="dashboard-payables-metrics">
-              <article><span>Total a pagar</span><strong>{formatCurrency(payableSummary.totalToPay)}</strong></article>
-              <article><span>Contas vencidas</span><strong>{payableSummary.overdueCount} · {formatCurrency(payableSummary.overdueTotal)}</strong></article>
-              <article><span>A vencer em 30 dias</span><strong>{payableSummary.upcomingCount} · {formatCurrency(payableSummary.upcomingTotal)}</strong></article>
-              <article><span>Total pago</span><strong>{formatCurrency(payableSummary.totalPaid)}</strong></article>
+              <article><span>Total a pagar</span><strong><FinancialValue>{formatCurrency(payableSummary.totalToPay)}</FinancialValue></strong></article>
+              <article><span>Contas vencidas</span><strong>{payableSummary.overdueCount} · <FinancialValue>{formatCurrency(payableSummary.overdueTotal)}</FinancialValue></strong></article>
+              <article><span>A vencer em 30 dias</span><strong>{payableSummary.upcomingCount} · <FinancialValue>{formatCurrency(payableSummary.upcomingTotal)}</FinancialValue></strong></article>
+              <article><span>Total pago</span><strong><FinancialValue>{formatCurrency(payableSummary.totalPaid)}</FinancialValue></strong></article>
             </div>
             <div className="dashboard-payables-upcoming">
               <h3>Próximos vencimentos</h3>
               {payableSummary.upcomingItems.length ? (
                 payableSummary.upcomingItems.slice(0, 5).map((item) => (
                   <p key={`${item.payableId}-${item.identification}-${item.dueDate.getTime()}`}>
-                    <strong>{item.dueDate.toLocaleDateString("pt-BR")}</strong> · {item.supplierName} · {item.method === "cheque" ? "Cheque" : "Parcela"} {item.identification ? `#${item.identification}` : ""} · {formatCurrency(item.amount)}
+                    <strong>{item.dueDate.toLocaleDateString("pt-BR")}</strong> · {item.supplierName} · {item.method === "cheque" ? "Cheque" : "Parcela"} {item.identification ? `#${item.identification}` : ""} · <FinancialValue>{formatCurrency(item.amount)}</FinancialValue>
                   </p>
                 ))
               ) : (

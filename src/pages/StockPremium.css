@@ -46,6 +46,25 @@
   box-shadow: 0 8px 20px rgba(20, 33, 61, 0.08);
 }
 
+.st-kpi-button {
+  width: 100%;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.st-kpi-button:focus-visible {
+  outline: 3px solid rgba(201, 162, 77, 0.55);
+  outline-offset: 2px;
+}
+
+.st-kpi-button.is-active {
+  border-color: var(--st-gold);
+  box-shadow: 0 0 0 2px rgba(201, 162, 77, 0.22), 0 8px 20px rgba(20, 33, 61, 0.08);
+  transform: translateY(-1px);
+}
+
 .st-kpi-icon {
   display: grid;
   grid-row: 1;
@@ -302,6 +321,25 @@
   color: var(--st-ink);
   font: inherit;
   font-size: 12px;
+}
+
+.st-filter-clear {
+  min-height: 42px;
+  padding: 0 12px;
+  border: 1px solid rgba(201, 162, 77, 0.6);
+  border-radius: 10px;
+  background: var(--st-gold-soft);
+  color: var(--st-navy);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.st-filter-clear:hover,
+.st-filter-clear:focus-visible {
+  border-color: var(--st-gold);
+  outline: 2px solid rgba(201, 162, 77, 0.25);
 }
 
 .st-product-card {

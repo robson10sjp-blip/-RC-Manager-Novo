@@ -5,8 +5,20 @@ import {
   buildStockActivity,
   getStockThresholds,
   getSuggestedRestock,
+  isLowAlertStock,
+  isOutOfStock,
   summarizeStockSales,
 } from "./stock.js";
+
+test("separates low alert quantities from zero-stock products", () => {
+  assert.equal(isLowAlertStock(0), false);
+  assert.equal(isLowAlertStock(1), true);
+  assert.equal(isLowAlertStock(3), true);
+  assert.equal(isLowAlertStock(4), false);
+  assert.equal(isOutOfStock(0), true);
+  assert.equal(isOutOfStock(1), false);
+  assert.equal(isOutOfStock(-1), false);
+});
 
 test("uses per-product stock targets and does not recommend excess restocking", () => {
   assert.deepEqual(getStockThresholds({}), { minimum: 3, target: 6 });

@@ -17,6 +17,7 @@ import {
   LuX,
 } from "react-icons/lu";
 import ReceiptTemplate from "../components/receipts/ReceiptTemplate";
+import FinancialValue from "../components/FinancialValue.jsx";
 import {
   buildReceiptImageFile,
   buildReceiptPdfFile,
@@ -1669,9 +1670,9 @@ export default function SalesPage() {
       };
 
   const kpis = [
-    { label: "Total vendido", value: formatCurrency(scopeTotals.sold), icon: LuShoppingBag, tone: "navy" },
-    { label: "Total recebido", value: formatCurrency(scopeTotals.received), icon: LuCircleCheck, tone: "green" },
-    { label: "Total pendente", value: formatCurrency(scopeTotals.pending), icon: LuClock, tone: "red" },
+    { label: "Total vendido", value: <FinancialValue>{formatCurrency(scopeTotals.sold)}</FinancialValue>, icon: LuShoppingBag, tone: "navy" },
+    { label: "Total recebido", value: <FinancialValue>{formatCurrency(scopeTotals.received)}</FinancialValue>, icon: LuCircleCheck, tone: "green" },
+    { label: "Total pendente", value: <FinancialValue>{formatCurrency(scopeTotals.pending)}</FinancialValue>, icon: LuClock, tone: "red" },
     { label: "Quantidade de vendas", value: scopeTotals.count, icon: LuReceipt, tone: "gold" },
   ];
 
@@ -2035,14 +2036,14 @@ export default function SalesPage() {
                   <div style={styles.itemFooter}>
                     <strong>
                       Subtotal:{" "}
-                      {formatCurrency(
+                      <FinancialValue>{formatCurrency(
                         Number(
                           item.quantity || 0
                         ) *
                           Number(
                             item.price || 0
                           )
-                      )}
+                      )}</FinancialValue>
                     </strong>
 
                     <button
@@ -2065,7 +2066,7 @@ export default function SalesPage() {
             <span>Total da venda</span>
 
             <strong>
-              {formatCurrency(total)}
+              <FinancialValue>{formatCurrency(total)}</FinancialValue>
             </strong>
           </div>
 
@@ -2118,9 +2119,9 @@ export default function SalesPage() {
               </span>
 
               <strong style={styles.receivedValue}>
-                {formatCurrency(
+                <FinancialValue>{formatCurrency(
                   amountPaid
-                )}
+                )}</FinancialValue>
               </strong>
             </div>
 
@@ -2130,9 +2131,9 @@ export default function SalesPage() {
               </span>
 
               <strong style={styles.pendingValue}>
-                {formatCurrency(
+                <FinancialValue>{formatCurrency(
                   pendingAmount
-                )}
+                )}</FinancialValue>
               </strong>
             </div>
           </div>
@@ -2303,15 +2304,15 @@ export default function SalesPage() {
                     {(currentSale.items || []).map((item, index) => (
                       <li key={`${currentSale.id}-${index}`}>
                         <span>{item.quantity}x {formatItemLabel(item)}</span>
-                        <strong>{formatCurrency(item.subtotal)}</strong>
+                        <strong><FinancialValue>{formatCurrency(item.subtotal)}</FinancialValue></strong>
                       </li>
                     ))}
                   </ul>
 
                   <dl className="sl-values">
-                    <div><dt>Total</dt><dd>{formatSaleAmount(currentSale.total)}</dd></div>
-                    <div><dt>Recebido</dt><dd className="sl-green">{formatSaleAmount(currentSale.amountPaid)}</dd></div>
-                    <div><dt>Pendente</dt><dd className="sl-red">{formatSaleAmount(currentSale.pendingAmount)}</dd></div>
+                    <div><dt>Total</dt><dd><FinancialValue>{formatSaleAmount(currentSale.total)}</FinancialValue></dd></div>
+                    <div><dt>Recebido</dt><dd className="sl-green"><FinancialValue>{formatSaleAmount(currentSale.amountPaid)}</FinancialValue></dd></div>
+                    <div><dt>Pendente</dt><dd className="sl-red"><FinancialValue>{formatSaleAmount(currentSale.pendingAmount)}</FinancialValue></dd></div>
                   </dl>
 
                   <div className="sl-actions">
@@ -2456,9 +2457,9 @@ function TripSummaryCard({ title, period, summary, review = false }) {
         <span className="sl-trip-count">{summary.count} venda(s)</span>
       </div>
       <dl className="sl-trip-values">
-        <div><dt>Vendido</dt><dd>{formatBRL(summary.sold)}</dd></div>
-        <div><dt>Recebido</dt><dd className="sl-green">{formatBRL(summary.received)}</dd></div>
-        <div><dt>Pendente</dt><dd className="sl-red">{formatBRL(summary.pending)}</dd></div>
+        <div><dt>Vendido</dt><dd><FinancialValue>{formatBRL(summary.sold)}</FinancialValue></dd></div>
+        <div><dt>Recebido</dt><dd className="sl-green"><FinancialValue>{formatBRL(summary.received)}</FinancialValue></dd></div>
+        <div><dt>Pendente</dt><dd className="sl-red"><FinancialValue>{formatBRL(summary.pending)}</FinancialValue></dd></div>
       </dl>
       {summary.incompleteValues > 0 && (
         <p className="sl-review-note">
