@@ -30,7 +30,10 @@ Currently, two official plugins are available:
 - A classificação RC Premium é manual e permanente, armazenada no próprio documento da cliente como `classification`; novas clientes começam como `unclassified`. “Clientes Prego” é um filtro da mesma classificação. Registros antigos ativos em `pregoClients` continuam sendo reconhecidos como Prego até que uma classificação explícita seja escolhida, sem migração automática dos dados.
 - O controle de visitas exige seleção manual de cidade e viagem; nomes já usados são opções, e uma nova viagem pode ser identificada manualmente. “Comprou” só é inferido por uma venda com o mesmo ID de cliente e nome explícito da viagem; cada novo escopo inicia como “Falta visitar” e marcações “Não comprou” podem ser desfeitas.
 - As telas e serviços de visitas e brindes usam coleções próprias (`users/{uid}/clientVisits` e `clientGifts`). Essas gravações permanecem bloqueadas até revisar as regras Firestore. Brindes usam transações para validar estoque, registrar custo separado e devolver estoque uma única vez ao cancelar; não são lançados em despesas, vendas, dívidas nem lucro.
-- Não há regras Firestore nem `firebase.json` versionados neste projeto. A revisão precisa confirmar leitura/gravação do usuário autenticado nas coleções novas de visitas e brindes, atualização de `products/{productId}.quantity` e criação de `stockMovements/{movementId}` para brindes. A classificação usa a coleção existente de clientes e não requer nova coleção, migração ou alteração de regras; as regras atuais ainda não puderam ser inspecionadas. Nenhuma regra foi alterada e nenhuma gravação de teste foi realizada.
+- As regras versionadas de segurança estão em `firestore.rules`, com configuração local em `firebase.json`. O escopo padrão é por proprietário (`users/{uid}`), negando acesso cruzado entre contas e negando por padrão caminhos não mapeados.
+- `clientVisits`, `clientGifts` e `pregoClients` seguem com escrita bloqueada nas rules, alinhado ao bloqueio do app até revisão final de habilitação.
+- Pagamentos (`sales/*/payments`, `clients/*/payments`, `payables/*/payments`) e `stockMovements` são imutáveis após criação nas rules atuais.
+- Para validar as rules sem produção: `npm run test:rules` (usa emulador Firestore com dados fictícios). Esse teste não grava nem lê dados reais.
 
 ## Fornecedores e contas a pagar
 

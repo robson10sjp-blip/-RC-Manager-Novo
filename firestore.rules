@@ -1,0 +1,168 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function owner(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    function nonNegativeNumber(value) {
+      return (value is int || value is float) && value >= 0;
+    }
+
+    function nonNegativeInt(value) {
+      return value is int && value >= 0;
+    }
+
+    function validClientClassification(data) {
+      return !('classification' in data) || data.classification in [
+        'unclassified',
+        'excellent',
+        'good',
+        'regular',
+        'poor',
+        'prego',
+      ];
+    }
+
+    match /users/{uid} {
+      allow read, write: if false;
+
+      match /clients/{clientId} {
+        allow read: if owner(uid);
+        allow create: if owner(uid)
+          && request.resource.data.name is string
+          && request.resource.data.city is string
+          && nonNegativeNumber(request.resource.data.totalDebt)
+          && validClientClassification(request.resource.data);
+        allow update: if owner(uid)
+          && request.resource.data.name is string
+          && request.resource.data.city is string
+          && nonNegativeNumber(request.resource.data.totalDebt)
+          && validClientClassification(request.resource.data);
+        allow delete: if owner(uid);
+      }
+
+      match /clients/{clientId}/payments/{paymentId} {
+        allow read: if owner(uid);
+        allow create: if owner(uid)
+          && nonNegativeNumber(request.resource.data.value)
+          && nonNegativeNumber(request.resource.data.previousBalance)
+          && nonNegativeNumber(request.resource.data.remainingBalance)
+          && request.resource.data.remainingBalance <= request.resource.data.previousBalance;
+        allow update, delete: if false;
+      }
+
+      match /products/{productId} {
+        allow read: if owner(uid);
+        allow create: if owner(uid)
+          && request.resource.data.code is string
+          && request.resource.data.name is string
+          && nonNegativeInt(request.resource.data.quantity)
+          && nonNegativeNumber(request.resource.data.costPrice)
+          && nonNegativeNumber(request.resource.data.salePrice);
+        allow update: if owner(uid)
+          && request.resource.data.code is string
+          && request.resource.data.name is string
+          && nonNegativeInt(request.resource.data.quantity)
+          && nonNegativeNumber(request.resource.data.costPrice)
+          && nonNegativeNumber(request.resource.data.salePrice);
+        allow delete: if owner(uid);
+      }
+
+      match /sales/{saleId} {
+        allow read: if owner(uid);
+        allow create: if owner(uid)
+          && request.resource.data.clientId is string
+          && request.resource.data.items is list
+          && nonNegativeNumber(request.resource.data.total)
+          && nonNegativeNumber(request.resource.data.amountPaid)
+          && nonNegativeNumber(request.resource.data.pendingAmount)
+          && request.resource.data.pendingAmount <= request.resource.data.total;
+        allow update: if owner(uid)
+          && request.resource.data.clientId == resource.data.clientId
+          && request.resource.data.items is list
+          && nonNegativeNumber(request.resource.data.total)
+          && nonNegativeNumber(request.resource.data.amountPaid)
+          && nonNegativeNumber(request.resource.data.pendingAmount)
+          && request.resource.data.pendingAmount <= request.resource.data.total;
+        allow delete: if owner(uid)
+          && nonNegativeNumber(resource.data.amountPaid)
+          && resource.data.amountPaid == 0;
+      }
+
+      match /sales/{saleId}/payments/{paymentId} {
+        allow read: if owner(uid);
+        allow create: if owner(uid)
+          && nonNegativeNumber(request.resource.data.value)
+          && nonNegativeNumber(request.resource.data.previousBalance)
+          && nonNegativeNumber(request.resource.data.remainingBalance)
+          && request.resource.data.remainingBalance <= request.resource.data.previousBalance;
+        allow update, delete: if false;
+      }
+
+      match /expenses/{expenseId} {
+        allow read, create, update, delete: if owner(uid);
+      }
+
+      match /suppliers/{supplierId} {
+        allow read, create, update, delete: if owner(uid);
+      }
+
+      match /payables/{payableId} {
+        allow read: if owner(uid);
+        allow create, update: if owner(uid)
+          && request.resource.data.supplierId is string
+          && nonNegativeNumber(request.resource.data.totalAmount)
+          && nonNegativeNumber(request.resource.data.paidAmount)
+          && nonNegativeNumber(request.resource.data.balance);
+        allow delete: if owner(uid);
+      }
+
+      match /payables/{payableId}/payments/{paymentId} {
+        allow read: if owner(uid);
+        allow create: if owner(uid)
+          && nonNegativeNumber(request.resource.data.amount);
+        allow update, delete: if false;
+      }
+
+      match /stockMovements/{movementId} {
+        allow read: if owner(uid);
+        allow create: if owner(uid)
+          && request.resource.data.productId is string
+          && request.resource.data.type is string
+          && nonNegativeNumber(request.resource.data.quantity)
+          && nonNegativeNumber(request.resource.data.previousQuantity)
+          && nonNegativeNumber(request.resource.data.newQuantity);
+        allow update, delete: if false;
+      }
+
+      match /pregoClients/{clientId} {
+        allow read: if owner(uid);
+        allow write: if false;
+      }
+
+      match /clientVisits/{visitId} {
+        allow read: if owner(uid);
+        allow write: if false;
+      }
+
+      match /clientGifts/{giftId} {
+        allow read: if owner(uid);
+        allow write: if false;
+      }
+
+      match /{document=**} {
+        allow read, write: if false;
+      }
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
