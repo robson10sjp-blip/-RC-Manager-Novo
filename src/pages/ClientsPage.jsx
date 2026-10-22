@@ -531,6 +531,40 @@ export default function ClientsPage() {
     (gift) => gift.clientId === giftClient?.id
   );
 
+  function renderVisitScope() {
+    return (
+      <div className="cl-visit-selectors">
+        <label>
+          Cidade da visita
+          <select
+            value={visitCity}
+            disabled={savingClientRecord}
+            onChange={(event) => {
+              setVisitError("");
+              setVisitCity(event.target.value);
+            }}
+          >
+            <option value="">Selecione uma cidade</option>
+            {cities.map((city) => (
+              <option key={city} value={city}>{city}</option>
+            ))}
+          </select>
+        </label>
+        <TripSelector
+          userId={userId}
+          options={knownTrips}
+          value={visitTripId}
+          disabled={savingClientRecord || loadingTrips || Boolean(tripLoadError)}
+          onChange={(trip) => {
+            setVisitError("");
+            setVisitTripId(trip.id);
+            setVisitTripName(trip.name);
+          }}
+        />
+      </div>
+    );
+  }
+
   const hasActiveFilters =
     searchText.trim() !== "" ||
     cityFilter !== "all" ||
@@ -1459,7 +1493,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
           </label>
 
           <label>
-            Viagem
+            Histórico de compras por viagem
             <select
               value={tripFilter}
               onChange={(event) => setTripFilter(event.target.value)}
@@ -1745,6 +1779,24 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                         </p>
                       )}
 
+                      <section aria-label={`Visita e brinde de ${client.name}`}>
+                        <h4>Cidade e viagem para visita ou brinde</h4>
+                        {renderVisitScope()}
+                        {tripLoadError ? (
+                          <p className="cl-record-error" role="alert">{tripLoadError}</p>
+                        ) : loadingTrips ? (
+                          <p role="status">Carregando viagens e visitas...</p>
+                        ) : isFirestoreReadOnly() ? (
+                          <p role="status">Prévia somente leitura: gravações desabilitadas.</p>
+                        ) : !visitCity || !visitTripId ? (
+                          <p role="status">
+                            Selecione a cidade e a viagem aqui para habilitar Não comprou e Dar brinde.
+                            Os filtros de pesquisa acima não definem a viagem da visita.
+                          </p>
+                        ) : getClientCityKey(client.city) !== getClientCityKey(visitCity) ? (
+                          <p role="status">Selecione a cidade desta cliente: {getClientCityDisplay(client.city)}.</p>
+                        ) : null}
+                        {visitError && <p className="cl-record-error" role="alert">{visitError}</p>}
                       <div className="cl-actions">
                         {clientVisitStatus === "bought" ? (
                           <span className="cl-visit-bought">Comprou nesta viagem</span>
@@ -1764,7 +1816,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                               savingClientRecord ||
                               visitWritesBlocked ||
                               !visitCity ||
-                              !visitTripName.trim() ||
+                              !visitTripId ||
                               getClientCityKey(client.city) !==
                                 getClientCityKey(visitCity)
                             }
@@ -1780,8 +1832,9 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                           onClick={() => handleOpenGift(client)}
                           disabled={
                             savingClientRecord ||
+                            clientRecordWritesBlocked ||
                             !visitCity ||
-                            !visitTripName.trim() ||
+                            !visitTripId ||
                             getClientCityKey(client.city) !==
                               getClientCityKey(visitCity)
                           }
@@ -1798,6 +1851,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                           Excluir
                         </button>
                       </div>
+                      </section>
                     </div>
                   )}
                 </article>
@@ -1818,34 +1872,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
             </p>
           </div>
         </header>
-        <div className="cl-visit-selectors">
-          <label>
-            Cidade da visita
-            <select
-              value={visitCity}
-              onChange={(event) => {
-                setVisitError("");
-                setVisitCity(event.target.value);
-              }}
-            >
-              <option value="">Selecione uma cidade</option>
-              {cities.map((city) => (
-                <option key={city} value={city}>{city}</option>
-              ))}
-            </select>
-          </label>
-          <TripSelector
-            userId={userId}
-            options={knownTrips}
-            value={visitTripId}
-            disabled={savingClientRecord || loadingTrips || Boolean(tripLoadError)}
-            onChange={(trip) => {
-              setVisitError("");
-              setVisitTripId(trip.id);
-              setVisitTripName(trip.name);
-            }}
-          />
-        </div>
+        {renderVisitScope()}
 
         {isFirestoreReadOnly() && (
           <p className="cl-record-pending" role="status">
