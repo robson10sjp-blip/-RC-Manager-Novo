@@ -18,6 +18,37 @@ service cloud.firestore {
       return value is int && value >= 0;
     }
 
+    // Criação: campo ausente é aceito; se existir, precisa ser número >= 0.
+    function optionalNumber(field) {
+      return !(field in request.resource.data)
+        || nonNegativeNumber(request.resource.data[field]);
+    }
+
+    // Edição: campo inalterado (inclusive valores antigos fora do padrão) é aceito;
+    // se foi alterado, precisa ser número >= 0.
+    function unchangedOrNumber(field) {
+      return request.resource.data.get(field, null) == resource.data.get(field, null)
+        || nonNegativeNumber(request.resource.data.get(field, null));
+    }
+
+    function unchangedOrInt(field) {
+      return request.resource.data.get(field, null) == resource.data.get(field, null)
+        || nonNegativeInt(request.resource.data.get(field, null));
+    }
+
+    function unchangedOrString(field) {
+      return request.resource.data.get(field, null) == resource.data.get(field, null)
+        || request.resource.data.get(field, null) is string;
+    }
+
+    function optionalPaymentBalances() {
+      return optionalNumber('value')
+        && optionalNumber('previousBalance')
+        && optionalNumber('remainingBalance')
+        && request.resource.data.get('remainingBalance', 0)
+          <= request.resource.data.get('previousBalance', 0);
+    }
+
     function validClientClassification(data) {
       return !('classification' in data) || data.classification in [
         'unclassified',
@@ -37,40 +68,35 @@ service cloud.firestore {
         allow create: if owner(uid)
           && request.resource.data.name is string
           && request.resource.data.city is string
-          && nonNegativeNumber(request.resource.data.totalDebt)
+          && optionalNumber('totalDebt')
           && validClientClassification(request.resource.data);
         allow update: if owner(uid)
-          && request.resource.data.name is string
-          && request.resource.data.city is string
-          && nonNegativeNumber(request.resource.data.totalDebt)
+          && unchangedOrString('name')
+          && unchangedOrString('city')
+          && unchangedOrNumber('totalDebt')
+          && unchangedOrNumber('totalReceived')
           && validClientClassification(request.resource.data);
         allow delete: if owner(uid);
       }
 
       match /clients/{clientId}/payments/{paymentId} {
         allow read: if owner(uid);
-        allow create: if owner(uid)
-          && nonNegativeNumber(request.resource.data.value)
-          && nonNegativeNumber(request.resource.data.previousBalance)
-          && nonNegativeNumber(request.resource.data.remainingBalance)
-          && request.resource.data.remainingBalance <= request.resource.data.previousBalance;
+        allow create: if owner(uid) && optionalPaymentBalances();
         allow update, delete: if false;
       }
 
       match /products/{productId} {
         allow read: if owner(uid);
         allow create: if owner(uid)
-          && request.resource.data.code is string
           && request.resource.data.name is string
-          && nonNegativeInt(request.resource.data.quantity)
-          && nonNegativeNumber(request.resource.data.costPrice)
-          && nonNegativeNumber(request.resource.data.salePrice);
+          && optionalNumber('quantity')
+          && optionalNumber('costPrice')
+          && optionalNumber('salePrice');
         allow update: if owner(uid)
-          && request.resource.data.code is string
-          && request.resource.data.name is string
-          && nonNegativeInt(request.resource.data.quantity)
-          && nonNegativeNumber(request.resource.data.costPrice)
-          && nonNegativeNumber(request.resource.data.salePrice);
+          && unchangedOrString('name')
+          && unchangedOrInt('quantity')
+          && unchangedOrNumber('costPrice')
+          && unchangedOrNumber('salePrice');
         allow delete: if owner(uid);
       }
 
@@ -84,24 +110,19 @@ service cloud.firestore {
           && nonNegativeNumber(request.resource.data.pendingAmount)
           && request.resource.data.pendingAmount <= request.resource.data.total;
         allow update: if owner(uid)
-          && request.resource.data.clientId == resource.data.clientId
-          && request.resource.data.items is list
-          && nonNegativeNumber(request.resource.data.total)
-          && nonNegativeNumber(request.resource.data.amountPaid)
-          && nonNegativeNumber(request.resource.data.pendingAmount)
-          && request.resource.data.pendingAmount <= request.resource.data.total;
+          && request.resource.data.get('clientId', null) == resource.data.get('clientId', null)
+          && request.resource.data.get('items', []) is list
+          && unchangedOrNumber('total')
+          && unchangedOrNumber('amountPaid')
+          && unchangedOrNumber('pendingAmount');
+        // Compras com recebimento nunca são excluídas, preservando o histórico.
         allow delete: if owner(uid)
-          && nonNegativeNumber(resource.data.amountPaid)
-          && resource.data.amountPaid == 0;
+          && resource.data.get('amountPaid', 0) == 0;
       }
 
       match /sales/{saleId}/payments/{paymentId} {
         allow read: if owner(uid);
-        allow create: if owner(uid)
-          && nonNegativeNumber(request.resource.data.value)
-          && nonNegativeNumber(request.resource.data.previousBalance)
-          && nonNegativeNumber(request.resource.data.remainingBalance)
-          && request.resource.data.remainingBalance <= request.resource.data.previousBalance;
+        allow create: if owner(uid) && optionalPaymentBalances();
         allow update, delete: if false;
       }
 
@@ -115,18 +136,20 @@ service cloud.firestore {
 
       match /payables/{payableId} {
         allow read: if owner(uid);
-        allow create, update: if owner(uid)
-          && request.resource.data.supplierId is string
-          && nonNegativeNumber(request.resource.data.totalAmount)
-          && nonNegativeNumber(request.resource.data.paidAmount)
-          && nonNegativeNumber(request.resource.data.balance);
+        allow create: if owner(uid)
+          && optionalNumber('totalAmount')
+          && optionalNumber('paidAmount')
+          && optionalNumber('balance');
+        allow update: if owner(uid)
+          && unchangedOrNumber('totalAmount')
+          && unchangedOrNumber('paidAmount')
+          && unchangedOrNumber('balance');
         allow delete: if owner(uid);
       }
 
       match /payables/{payableId}/payments/{paymentId} {
         allow read: if owner(uid);
-        allow create: if owner(uid)
-          && nonNegativeNumber(request.resource.data.amount);
+        allow create: if owner(uid) && optionalNumber('amount');
         allow update, delete: if false;
       }
 
@@ -141,6 +164,8 @@ service cloud.firestore {
         allow update, delete: if false;
       }
 
+      // Escritas abaixo ficam bloqueadas de propósito: o app mantém
+      // CLIENT_RECORD_WRITES_ENABLED=false. Só leitura (dados legados/futuros).
       match /pregoClients/{clientId} {
         allow read: if owner(uid);
         allow write: if false;
