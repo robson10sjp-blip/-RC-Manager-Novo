@@ -374,6 +374,7 @@ export default function DashboardPage() {
       received,
       salesCount: selectedSales.length,
       tripExpenses: tripFinancials.expenses,
+      tripPersonalWithdrawals: tripFinancials.personalWithdrawals,
       tripEstimatedProfit: tripFinancials.estimatedProfit,
       tripCostDataComplete: tripFinancials.hasCompleteCostData,
       tripCashFlow: tripFinancials.cashFlow,
@@ -417,6 +418,7 @@ export default function DashboardPage() {
         : "Dados de custo incompletos",
     },
     { label: "Fluxo de caixa", value: formatCurrency(dashboard.tripCashFlow) },
+    { label: "Retirada pessoal", value: formatCurrency(dashboard.tripPersonalWithdrawals) },
     { label: "Pagamentos a fornecedores", value: formatCurrency(dashboard.supplierPayments) },
     {
       label: "Compras operacionais de fornecedores",

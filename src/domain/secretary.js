@@ -13,6 +13,7 @@ import {
 import { toDate } from "../utils/dates.js";
 import { buildCollectionsReport } from "./secretaryCollections.js";
 import { getSalePendingAmount } from "./financeReceivables.js";
+import { isPersonalWithdrawal } from "./expenses.js";
 
 function startOfDay(date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -96,11 +97,17 @@ function expenseCategoryLabel(category) {
   const labels = {
     combustivel: "combustível",
     alimentacao: "alimentação",
+    merenda: "merenda",
+    almoco: "almoço",
+    janta: "janta",
     hotel: "hospedagem",
     manutencao: "manutenção",
+    mecanico: "mecânico",
+    carro: "carro",
     transporte: "transporte",
     mercadoria: "compra de mercadoria",
     outros: "outras categorias",
+    pessoal: "retirada pessoal",
   };
   return labels[category] || "despesa";
 }
@@ -108,9 +115,12 @@ function expenseCategoryLabel(category) {
 function expensesTotalByCategory(snapshot, selectedCategory) {
   return (snapshot.allExpenses || [])
     .filter(
-      (expense) =>
-        !selectedCategory ||
-        String(expense.category || "outros") === selectedCategory
+      (expense) => {
+        if (selectedCategory === "pessoal") return isPersonalWithdrawal(expense);
+        if (isPersonalWithdrawal(expense)) return false;
+        return !selectedCategory ||
+          String(expense.category || "outros") === selectedCategory;
+      }
     )
     .reduce((total, expense) => total + Number(expense.value || 0), 0);
 }
@@ -282,20 +292,24 @@ export function createSecretarySnapshot(
       ...sale,
       clientName: nameForSale(sale, clientsById),
     }));
-  const expensesToday = expenses.filter((expense) =>
+  const todaysExpenses = expenses.filter((expense) =>
     isBetween(
       expense.expenseDate || expense.createdAt,
       today,
       tomorrow
     )
   );
-  const expensesThisMonth = expenses.filter((expense) =>
+  const monthlyExpenses = expenses.filter((expense) =>
     isBetween(
       expense.expenseDate || expense.createdAt,
       monthStart,
       nextMonthStart
     )
   );
+  const expensesToday = todaysExpenses.filter((expense) => !isPersonalWithdrawal(expense));
+  const personalWithdrawalsToday = todaysExpenses.filter(isPersonalWithdrawal);
+  const expensesThisMonth = monthlyExpenses.filter((expense) => !isPersonalWithdrawal(expense));
+  const personalWithdrawalsThisMonth = monthlyExpenses.filter(isPersonalWithdrawal);
 
   const pendingSales = sales
     .filter((sale) => Number(sale.pendingAmount || 0) > 0)
@@ -412,13 +426,29 @@ export function createSecretarySnapshot(
     [1, 2, 3, 4].map((tripNumber) => [
       tripNumber,
       expenses
-        .filter((expense) => Number(expense.tripNumber) === tripNumber)
+        .filter(
+          (expense) =>
+            Number(expense.tripNumber) === tripNumber &&
+            !isPersonalWithdrawal(expense)
+        )
         .reduce((categories, expense) => {
           const category = String(expense.category || "outros");
           categories[category] =
             (categories[category] || 0) + Number(expense.value || 0);
           return categories;
         }, {}),
+    ])
+  );
+  const tripPersonalWithdrawals = Object.fromEntries(
+    [1, 2, 3, 4].map((tripNumber) => [
+      tripNumber,
+      expenses
+        .filter(
+          (expense) =>
+            Number(expense.tripNumber) === tripNumber &&
+            isPersonalWithdrawal(expense)
+        )
+        .reduce((total, expense) => total + Number(expense.value || 0), 0),
     ])
   );
   const allTripFinancials = calculateTripFinancialSummary(
@@ -448,8 +478,18 @@ export function createSecretarySnapshot(
       (sum, expense) => sum + Number(expense.value || 0),
       0
     ),
+    personalWithdrawalsToday,
+    personalWithdrawalsTodayTotal: personalWithdrawalsToday.reduce(
+      (sum, expense) => sum + Number(expense.value || 0),
+      0
+    ),
     expensesThisMonth,
     expensesThisMonthTotal: expensesThisMonth.reduce(
+      (sum, expense) => sum + Number(expense.value || 0),
+      0
+    ),
+    personalWithdrawalsThisMonth,
+    personalWithdrawalsThisMonthTotal: personalWithdrawalsThisMonth.reduce(
       (sum, expense) => sum + Number(expense.value || 0),
       0
     ),
@@ -468,6 +508,7 @@ export function createSecretarySnapshot(
     tripPending,
     tripDebtors,
     tripExpenseCategories,
+    tripPersonalWithdrawals,
     allTripFinancials,
     clientsCount: clients.length,
     productsCount: products.length,
@@ -620,19 +661,26 @@ export function answerSecretaryQuery(
     query
   );
   const asksFood = /\b(alimentacao|comida|refeicao)\b/.test(query);
+  const asksMerenda = /\b(merenda)\b/.test(query);
+  const asksLunch = /\b(almoco)\b/.test(query);
+  const asksDinner = /\b(janta|jantar)\b/.test(query);
   const asksLodging = /\b(hospedagem|hotel|pousada)\b/.test(query);
   const asksMaintenance = /\b(manutencao|conserto|oficina)\b/.test(query);
-  const asksExpenseCategory =
-    asksFuel || asksFood || asksLodging || asksMaintenance;
-  const expenseCategory = asksFuel
-    ? "combustivel"
-    : asksFood
-      ? "alimentacao"
-      : asksLodging
-        ? "hotel"
-        : asksMaintenance
-          ? "manutencao"
-          : null;
+  const asksMechanic = /\b(mecanico)\b/.test(query);
+  const asksCar = /\b(carro|veiculo)\b/.test(query);
+  const asksPersonalWithdrawal = /\b(pessoal|retirada pessoal)\b/.test(query);
+  let expenseCategory = null;
+  if (asksPersonalWithdrawal) expenseCategory = "pessoal";
+  else if (asksFuel) expenseCategory = "combustivel";
+  else if (asksMerenda) expenseCategory = "merenda";
+  else if (asksLunch) expenseCategory = "almoco";
+  else if (asksDinner) expenseCategory = "janta";
+  else if (asksFood) expenseCategory = "alimentacao";
+  else if (asksLodging) expenseCategory = "hotel";
+  else if (asksMechanic) expenseCategory = "mecanico";
+  else if (asksMaintenance) expenseCategory = "manutencao";
+  else if (asksCar) expenseCategory = "carro";
+  const asksExpenseCategory = expenseCategory !== null;
   const asksTripProfit =
     /\b(lucro|lucrei|lucramos|lucrativo|lucrativa)\b/.test(query);
   const asksTripSales =
@@ -834,7 +882,8 @@ export function answerSecretaryQuery(
     hasTripFinancialQuestion &&
     !allTrips &&
     !tripNumber &&
-    !hasDatedFinancialRequest
+    !hasDatedFinancialRequest &&
+    !asksPersonalWithdrawal
   ) {
     return "Quer consultar uma viagem específica ou o total geral de todas as viagens? Você pode dizer, por exemplo, “3ª viagem”, “4ª viagem” ou “todas as viagens”.";
   }
@@ -880,21 +929,32 @@ export function answerSecretaryQuery(
       );
     }
     if (asksExpenseTotal || asksExpenseCategory || asksTripProfit) {
-      const categoryTotals =
-        allTrips
-          ? expensesTotalByCategory(snapshot, expenseCategory)
-          : expenseCategory
-            ? Number(
-                snapshot.tripExpenseCategories?.[tripNumber]?.[
-                  expenseCategory
-                ] || 0
-              )
-            : financials.expenses;
+      let categoryTotals = financials.expenses;
+      if (allTrips) {
+        categoryTotals = expensesTotalByCategory(snapshot, expenseCategory);
+      } else if (expenseCategory === "pessoal") {
+        categoryTotals = Number(snapshot.tripPersonalWithdrawals?.[tripNumber] || 0);
+      } else if (expenseCategory) {
+        categoryTotals = Number(
+          snapshot.tripExpenseCategories?.[tripNumber]?.[expenseCategory] || 0
+        );
+      }
       answers.push(
-        asksExpenseCategory
+        asksPersonalWithdrawal
+          ? `${tripLabel}: retirada pessoal ${allTrips ? "em todos os registros" : "vinculada à viagem"}: ${currency(categoryTotals)}.`
+          : asksExpenseCategory
           ? `${tripLabel}: despesas de ${expenseCategoryLabel(expenseCategory)} ${allTrips ? "em todos os registros" : "vinculadas à viagem"}: ${currency(categoryTotals)}.`
           : `${tripLabel}: total de despesas vinculadas ${allTrips ? "às viagens" : "à viagem"}: ${currency(categoryTotals)}.`
       );
+      if (!asksExpenseCategory && !allTrips) {
+        answers.push(
+          `Retirada pessoal vinculada à viagem: ${currency(financials.personalWithdrawals)}.`
+        );
+      } else if (!asksExpenseCategory && allTrips) {
+        answers.push(
+          `Retirada pessoal: ${currency(financials.personalWithdrawals)}.`
+        );
+      }
     }
     if (asksDebtorList) {
       const debtors = allTrips
@@ -912,8 +972,8 @@ export function answerSecretaryQuery(
     if (asksTripProfit) {
       answers.push(
         financials.hasCompleteCostData
-          ? `${resultLabel} (vendas menos custo estimado das mercadorias, despesas vinculadas e compras operacionais de fornecedores): ${currency(financials.estimatedProfit)}. Fluxo de caixa simplificado (recebimentos menos despesas e pagamentos a fornecedores): ${currency(financials.cashFlow)}.`
-          : `Não consigo calcular o lucro estimado de ${tripLabel}: faltam custos cadastrados das mercadorias. O fluxo de caixa simplificado é ${currency(financials.cashFlow)}.`
+          ? `${resultLabel} (vendas menos custo estimado das mercadorias, despesas operacionais vinculadas e compras operacionais de fornecedores): ${currency(financials.estimatedProfit)}. Retirada pessoal: ${currency(financials.personalWithdrawals)}. Fluxo de caixa simplificado (recebimentos menos despesas, retiradas e pagamentos a fornecedores): ${currency(financials.cashFlow)}.`
+          : `Não consigo calcular o lucro estimado de ${tripLabel}: faltam custos cadastrados das mercadorias. A retirada pessoal é ${currency(financials.personalWithdrawals)} e o fluxo de caixa simplificado é ${currency(financials.cashFlow)}.`
       );
     }
     const periodLine = allTrips
@@ -1111,7 +1171,8 @@ export function answerSecretaryQuery(
     return [
       `Resumo de hoje: ${snapshot.salesToday.length} venda(s), totalizando ${currency(snapshot.salesTodayTotal)}.`,
       `Recebimentos registrados hoje: ${currency(snapshot.receivedToday)}.`,
-      `Despesas de hoje: ${currency(snapshot.expensesTodayTotal)}.`,
+      `Despesas operacionais de hoje: ${currency(snapshot.expensesTodayTotal)}.`,
+      `Retirada pessoal de hoje: ${currency(snapshot.personalWithdrawalsTodayTotal)}.`,
       priorities.length
         ? `Prioridades: ${priorities.join("; ")}.`
         : "Nenhum vencimento próximo ou alerta de estoque baixo encontrado.",
@@ -1134,8 +1195,21 @@ export function answerSecretaryQuery(
 
   if (query.includes("despesa") || query.includes("gasto")) {
     return [
-      `Despesas de hoje: ${currency(snapshot.expensesTodayTotal)} (${snapshot.expensesToday.length} registro(s)).`,
-      `Despesas neste mês: ${currency(snapshot.expensesThisMonthTotal)} (${snapshot.expensesThisMonth.length} registro(s)).`,
+      `Despesas operacionais de hoje: ${currency(snapshot.expensesTodayTotal)} (${snapshot.expensesToday.length} registro(s)).`,
+      `Retirada pessoal de hoje: ${currency(snapshot.personalWithdrawalsTodayTotal)} (${snapshot.personalWithdrawalsToday.length} registro(s)).`,
+      `Despesas operacionais neste mês: ${currency(snapshot.expensesThisMonthTotal)} (${snapshot.expensesThisMonth.length} registro(s)).`,
+      `Retirada pessoal neste mês: ${currency(snapshot.personalWithdrawalsThisMonthTotal)} (${snapshot.personalWithdrawalsThisMonth.length} registro(s)).`,
+    ].join("\n");
+  }
+
+  if (asksPersonalWithdrawal) {
+    const total = (snapshot.allExpenses || [])
+      .filter(isPersonalWithdrawal)
+      .reduce((sum, expense) => sum + Number(expense.value || 0), 0);
+    return [
+      `Retirada pessoal de hoje: ${currency(snapshot.personalWithdrawalsTodayTotal)}.`,
+      `Retirada pessoal neste mês: ${currency(snapshot.personalWithdrawalsThisMonthTotal)}.`,
+      `Retirada pessoal no histórico: ${currency(total)}.`,
     ].join("\n");
   }
 

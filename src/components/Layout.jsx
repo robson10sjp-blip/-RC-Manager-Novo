@@ -12,6 +12,7 @@ import {
   LuClipboardList,
   LuEye,
   LuEyeOff,
+  LuReceipt,
 } from "react-icons/lu";
 import { auth } from "../firebase/config";
 import { isFirestoreReadOnly } from "../firebase/writePolicy";
@@ -25,6 +26,7 @@ const menuItems = [
   { path: "/produtos", icon: LuPackage, label: "Produtos" },
   { path: "/vendas", icon: LuShoppingBag, label: "Vendas" },
   { path: "/financeiro", icon: LuWallet, label: "Financeiro" },
+  { path: "/despesas", icon: LuReceipt, label: "Despesas" },
   { path: "/fornecedores", icon: LuBuilding2, label: "Fornecedores" },
   { path: "/inteligencia", icon: LuSparkles, label: "Secretária RC" },
   { path: "/estoque", icon: LuClipboardList, label: "Estoque" },

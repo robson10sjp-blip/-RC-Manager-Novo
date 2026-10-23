@@ -1,4 +1,5 @@
 import { toDate } from "../utils/dates.js";
+import { isPersonalWithdrawal } from "./expenses.js";
 
 function money(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -302,6 +303,7 @@ export function calculateTripFinancialSummary(
     received: 0,
     pending: 0,
     expenses: 0,
+    personalWithdrawals: 0,
     supplierPayments: 0,
     supplierOperationalPurchases: 0,
     costOfGoodsSold: 0,
@@ -341,7 +343,13 @@ export function calculateTripFinancialSummary(
   }
 
   summary.expenses = expenses.reduce(
-    (total, expense) => total + Number(expense.value || 0),
+    (total, expense) =>
+      total + (isPersonalWithdrawal(expense) ? 0 : Number(expense.value || 0)),
+    0
+  );
+  summary.personalWithdrawals = expenses.reduce(
+    (total, expense) =>
+      total + (isPersonalWithdrawal(expense) ? Number(expense.value || 0) : 0),
     0
   );
   summary.supplierPayments = payables.reduce(
@@ -365,7 +373,10 @@ export function calculateTripFinancialSummary(
       )
     : null;
   summary.cashFlow = money(
-    summary.received - summary.expenses - summary.supplierPayments
+    summary.received -
+      summary.expenses -
+      summary.personalWithdrawals -
+      summary.supplierPayments
   );
 
   return {
@@ -374,6 +385,7 @@ export function calculateTripFinancialSummary(
     received: money(summary.received),
     pending: money(summary.pending),
     expenses: money(summary.expenses),
+    personalWithdrawals: money(summary.personalWithdrawals),
     supplierPayments: money(summary.supplierPayments),
     supplierOperationalPurchases: money(summary.supplierOperationalPurchases),
     costOfGoodsSold: money(summary.costOfGoodsSold),

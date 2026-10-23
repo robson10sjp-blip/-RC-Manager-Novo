@@ -23,6 +23,7 @@ import {
 } from "../domain/adminCommands";
 import { AdminOperationError, executeAdminOperation } from "../services/adminOperationsService";
 import { toDate } from "../utils/dates";
+import { isPersonalWithdrawal } from "../domain/expenses.js";
 import { askSecretaryAi } from "../services/secretaryAi";
 import { useSpeechRecognition, useSpeechSynthesis } from "../hooks/useSecretaryVoice";
 import {
@@ -863,7 +864,7 @@ export default function IntelligencePage() {
       }
     }
 
-    const monthExpenses = expenses.reduce((sum, expense) => {
+    const monthExpenseTotals = expenses.reduce((totals, expense) => {
       const expenseDate =
         expense.expenseDate?.toDate?.() ||
         expense.createdAt?.toDate?.();
@@ -873,11 +874,14 @@ export default function IntelligencePage() {
         expenseDate >= monthStart &&
         expenseDate < nextMonthStart
       ) {
-        return sum + Number(expense.value || 0);
+        const key = isPersonalWithdrawal(expense) ? "personal" : "operational";
+        totals[key] += Number(expense.value || 0);
       }
 
-      return sum;
-    }, 0);
+      return totals;
+    }, { operational: 0, personal: 0 });
+    const monthExpenses = monthExpenseTotals.operational;
+    const monthPersonalWithdrawals = monthExpenseTotals.personal;
 
     const grossProfit = monthSales - monthEstimatedCost;
     const netProfit = monthReceived - monthEstimatedCost - monthExpenses;
@@ -1046,6 +1050,7 @@ export default function IntelligencePage() {
       monthReceived,
       monthEstimatedCost,
       monthExpenses,
+      monthPersonalWithdrawals,
       grossProfit,
       netProfit,
       averageTicket,
@@ -1147,8 +1152,12 @@ export default function IntelligencePage() {
                   <strong><FinancialValue>{formatCurrency(secretarySnapshot.receivedToday)}</FinancialValue></strong>
                 </div>
                 <div>
-                  <span>Despesas de hoje</span>
+                  <span>Despesas operacionais de hoje</span>
                   <strong><FinancialValue>{formatCurrency(secretarySnapshot.expensesTodayTotal)}</FinancialValue></strong>
+                </div>
+                <div>
+                  <span>Retirada pessoal de hoje</span>
+                  <strong><FinancialValue>{formatCurrency(secretarySnapshot.personalWithdrawalsTodayTotal)}</FinancialValue></strong>
                 </div>
                 <div>
                   <span>Total pendente</span>
@@ -1477,7 +1486,7 @@ export default function IntelligencePage() {
             </div>
 
             <div style={styles.summaryCard}>
-              <span style={styles.summaryLabel}>Lucro líquido estimado</span>
+              <span style={styles.summaryLabel}>Lucro operacional estimado</span>
               <strong
                 style={
                   intelligence.netProfit >= 0
@@ -1486,6 +1495,13 @@ export default function IntelligencePage() {
                 }
               >
                 <FinancialValue>{formatCurrency(intelligence.netProfit)}</FinancialValue>
+              </strong>
+            </div>
+
+            <div style={styles.summaryCard}>
+              <span style={styles.summaryLabel}>Retirada pessoal no mês</span>
+              <strong style={styles.summaryValue}>
+                <FinancialValue>{formatCurrency(intelligence.monthPersonalWithdrawals)}</FinancialValue>
               </strong>
             </div>
 

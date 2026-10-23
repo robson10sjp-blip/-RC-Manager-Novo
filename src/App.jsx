@@ -9,6 +9,7 @@ import StockPage from "./pages/StockPage";
 import FinancePage from "./pages/FinancePage";
 import IntelligencePage from "./pages/IntelligencePage";
 import SuppliersPage from "./pages/SuppliersPage";
+import ExpensesPage from "./pages/ExpensesPage.jsx";
 
 import Layout from "./components/Layout";
 import FinancialPrivacyProvider from "./context/FinancialPrivacyContext.jsx";
@@ -28,6 +29,7 @@ function App() {
           <Route path="/vendas" element={<SalesPage />} />
           <Route path="/estoque" element={<StockPage />} />
           <Route path="/financeiro" element={<FinancePage />} />
+          <Route path="/despesas" element={<ExpensesPage />} />
           <Route path="/fornecedores" element={<SuppliersPage />} />
           <Route path="/inteligencia" element={<IntelligencePage />} />
         </Route>

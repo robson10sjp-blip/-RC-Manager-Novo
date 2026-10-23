@@ -49,6 +49,7 @@ import {
   validatePayableSchedule,
 } from "../domain/payables";
 import { toDate } from "../utils/dates";
+import { getExpenseCategoryLabel, isPersonalWithdrawal } from "../domain/expenses.js";
 import ReceiptViewer from "../components/receipts/ReceiptViewer.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
 import { useFinancialPrivacy } from "../context/financialPrivacy.js";
@@ -62,6 +63,8 @@ const emptyExpense = {
   value: "",
   date: todayInput(),
   tripNumber: "",
+  city: "",
+  paymentMethod: "",
 };
 
 const emptyPayable = {
@@ -590,14 +593,17 @@ export default function FinancePage() {
           expense.expenseDate?.toDate?.() ||
           expense.createdAt?.toDate?.() ||
           null,
-        title: formatExpenseCategory(expense.category),
+        title: getExpenseCategoryLabel(expense),
         description: [
           expense.description || "Despesa",
+          expense.city || "",
+          expense.paymentMethod || "",
           expense.tripNumber
             ? `${expense.tripNumber}ª viagem`
             : "Sem viagem",
-        ].join(" • "),
+        ].filter(Boolean).join(" • "),
         value: Number(expense.value || 0),
+        personalWithdrawal: isPersonalWithdrawal(expense),
         expenseId: expense.id,
         expense,
       });
@@ -621,20 +627,6 @@ export default function FinancePage() {
     const date = toDate(value);
 
     return date ? date.toLocaleDateString("pt-BR") : "Data não informada";
-  }
-
-  function formatExpenseCategory(category) {
-    const categories = {
-      combustivel: "Combustível",
-      hotel: "Hotel",
-      alimentacao: "Alimentação",
-      mercadoria: "Compra de mercadoria",
-      manutencao: "Manutenção",
-      transporte: "Transporte",
-      outros: "Outros",
-    };
-
-    return categories[category] || "Outros";
   }
 
   function normalizePhone(phone) {
@@ -671,6 +663,8 @@ export default function FinancePage() {
       value: String(expense.value ?? ""),
       date: expenseDate ? `${year}-${month}-${day}` : "",
       tripNumber: expense.tripNumber ? String(expense.tripNumber) : "",
+      city: expense.city || "",
+      paymentMethod: expense.paymentMethod || "",
     });
     setEditingExpenseId(expense.id);
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -705,8 +699,9 @@ export default function FinancePage() {
       return;
     }
 
-    if (!tripOptions.some((trip) => trip.value === expenseForm.tripNumber)) {
-      alert("Selecione a viagem desta despesa.");
+    if (expenseForm.tripNumber &&
+        !tripOptions.some((trip) => trip.value === expenseForm.tripNumber)) {
+      alert("Selecione uma viagem válida ou deixe sem viagem.");
       return;
     }
 
@@ -722,10 +717,17 @@ export default function FinancePage() {
       }
       const expenseData = {
         category: expenseForm.category,
+        kind: expenseForm.category === "pessoal"
+          ? "personal_withdrawal"
+          : "operational",
         description: expenseForm.description.trim(),
         value,
         expenseDate: selectedDate,
-        tripNumber: Number(expenseForm.tripNumber),
+        tripNumber: expenseForm.tripNumber
+          ? Number(expenseForm.tripNumber)
+          : null,
+        city: expenseForm.city.trim(),
+        paymentMethod: expenseForm.paymentMethod || null,
         updatedAt: serverTimestamp(),
       };
 
@@ -1477,6 +1479,10 @@ Qualquer dúvida estou à disposição. Obrigado!`;
               value: formatCurrency(tripSummary.expenses),
             },
             {
+              label: "Retirada pessoal",
+              value: formatCurrency(tripSummary.personalWithdrawals),
+            },
+            {
               label: "Pagamentos a fornecedores",
               value: formatCurrency(tripSummary.supplierPayments),
             },
@@ -2158,10 +2164,16 @@ Qualquer dúvida estou à disposição. Obrigado!`;
               <option value="combustivel">Combustível</option>
               <option value="hotel">Hospedagem</option>
               <option value="alimentacao">Alimentação</option>
+              <option value="merenda">Merenda</option>
+              <option value="almoco">Almoço</option>
+              <option value="janta">Janta</option>
               <option value="mercadoria">Compra de mercadoria</option>
               <option value="manutencao">Manutenção</option>
+              <option value="mecanico">Mecânico</option>
+              <option value="carro">Carro</option>
               <option value="transporte">Transporte</option>
               <option value="outros">Outros</option>
+              <option value="pessoal">Pessoal (retirada pessoal)</option>
             </select>
           </label>
 
@@ -2171,17 +2183,46 @@ Qualquer dúvida estou à disposição. Obrigado!`;
               name="tripNumber"
               value={expenseForm.tripNumber}
               onChange={handleExpenseChange}
-              required
               style={styles.input}
             >
-              <option value="" disabled>
-                Selecione a viagem
+              <option value="">
+                Sem viagem
               </option>
               {tripOptions.map((trip) => (
                 <option key={trip.value} value={trip.value}>
                   {trip.label}
                 </option>
               ))}
+            </select>
+          </label>
+
+          <label style={styles.label}>
+            Cidade (opcional)
+            <input
+              type="text"
+              name="city"
+              value={expenseForm.city}
+              onChange={handleExpenseChange}
+              style={styles.input}
+            />
+          </label>
+
+          <label style={styles.label}>
+            Forma de pagamento (opcional)
+            <select
+              name="paymentMethod"
+              value={expenseForm.paymentMethod}
+              onChange={handleExpenseChange}
+              style={styles.input}
+            >
+              <option value="">Não informado</option>
+              <option value="pix">Pix</option>
+              <option value="dinheiro">Dinheiro</option>
+              <option value="transferencia">Transferência</option>
+              <option value="cartao">Cartão</option>
+              <option value="cheque">Cheque</option>
+              <option value="boleto">Boleto</option>
+              <option value="outros">Outros</option>
             </select>
           </label>
 
@@ -2443,10 +2484,12 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                       background:
                         entry.type === "sale"
                           ? "#dcfce7"
-                          : "#fee2e2",
-                    }}
-                  >
-                    {entry.type === "sale" ? "💰" : "💸"}
+                            : entry.personalWithdrawal
+                              ? "#edf0f5"
+                              : "#fee2e2",
+                      }}
+                    >
+                      {entry.type === "sale" ? "💰" : entry.personalWithdrawal ? "↗" : "💸"}
                   </div>
 
                   <div>
@@ -2517,6 +2560,7 @@ const FINANCE_HIGHLIGHTS = {
   "Total recebido": "green",
   "Total pendente": "gold",
   "Total de despesas": "red",
+  "Retirada pessoal": "navy",
   "Lucro estimado": "result",
 };
 

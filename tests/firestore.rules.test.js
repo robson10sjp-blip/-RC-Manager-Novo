@@ -554,7 +554,15 @@ test("stock flow: entry movement and Secretária RC writes", async () => {
     })
   );
   await assertSucceeds(
-    addDoc(collection(db, "users", USER_A, "expenses"), { description: "Gasolina", amount: 50 })
+    addDoc(collection(db, "users", USER_A, "expenses"), {
+      category: "pessoal",
+      kind: "personal_withdrawal",
+      value: 50,
+      expenseDate: new Date("2026-10-23T12:00:00"),
+      city: "",
+      tripNumber: null,
+      paymentMethod: "pix",
+    })
   );
   await assertSucceeds(
     addDoc(collection(db, "users", USER_A, "products"), {

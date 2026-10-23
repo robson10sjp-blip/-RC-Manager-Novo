@@ -92,6 +92,28 @@ test("does not count payments on a different day as today's receipts", () => {
   assert.equal(snapshot.receivedThisMonth, 25);
 });
 
+test("reports personal withdrawals separately from operating expenses", () => {
+  const snapshot = createSecretarySnapshot(
+    {
+      expenses: [
+        { id: "meal", category: "merenda", value: 25, tripNumber: 4, expenseDate: "2026-10-17" },
+        { id: "personal", category: "pessoal", kind: "personal_withdrawal", value: 40, tripNumber: 4, expenseDate: "2026-10-17" },
+      ],
+    },
+    today
+  );
+
+  assert.equal(snapshot.expensesTodayTotal, 25);
+  assert.equal(snapshot.personalWithdrawalsTodayTotal, 40);
+  assert.equal(snapshot.tripFinancials[4].expenses, 25);
+  assert.equal(snapshot.tripFinancials[4].personalWithdrawals, 40);
+  assert.equal(snapshot.tripExpenseCategories[4].pessoal, undefined);
+  assert.equal(snapshot.tripPersonalWithdrawals[4], 40);
+  assert.match(answerSecretaryQuery("resumo de hoje", snapshot), /Retirada pessoal de hoje: R\$\s?40,00/);
+  assert.match(answerSecretaryQuery("retirada pessoal", snapshot), /no histórico: R\$\s?40,00/);
+  assert.match(answerSecretaryQuery("despesas merenda de todas as viagens", snapshot), /merenda.*R\$\s?25,00/i);
+});
+
 test("answers different receivable phrasings with the consolidated live total", () => {
   const snapshot = createSecretarySnapshot(
     {

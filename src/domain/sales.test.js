@@ -333,6 +333,7 @@ test("calculates estimated profit and cash flow separately with complete cost da
     received: 80,
     pending: 120,
     expenses: 30,
+    personalWithdrawals: 0,
     supplierPayments: 0,
     supplierOperationalPurchases: 0,
     costOfGoodsSold: 80,
@@ -362,6 +363,29 @@ test("subtracts supplier payments from cash flow without charging profit twice",
   assert.equal(summary.supplierOperationalPurchases, 0);
   assert.equal(summary.cashFlow, 25);
   assert.equal(summary.estimatedProfit, 90);
+});
+
+test("personal withdrawals reduce cash flow without reducing operating profit", () => {
+  const summary = calculateTripFinancialSummary(
+    [
+      {
+        total: 200,
+        amountPaid: 150,
+        pendingAmount: 50,
+        items: [{ productId: "p-1", quantity: 2 }],
+      },
+    ],
+    [
+      { category: "hotel", value: 20 },
+      { category: "pessoal", kind: "personal_withdrawal", value: 30 },
+    ],
+    [{ id: "p-1", costPrice: 40 }]
+  );
+
+  assert.equal(summary.expenses, 20);
+  assert.equal(summary.personalWithdrawals, 30);
+  assert.equal(summary.estimatedProfit, 100);
+  assert.equal(summary.cashFlow, 100);
 });
 
 test("counts operational supplier purchases once in profit, not again when paid", () => {
