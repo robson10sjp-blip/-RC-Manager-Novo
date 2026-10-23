@@ -74,6 +74,34 @@ test("allows cash purchases and rejects invalid supplier purchase data", () => {
     installments: [],
     now: new Date(2026, 9, 18, 12),
   });
+
+  test("records several issued checks in a supplier purchase without counting them as cash paid", () => {
+    const purchase = buildSupplierPayable({
+      supplier: { id: "supplier-1", name: "Fornecedor" },
+      description: "Compra com cheques",
+      purchaseDate: "2026-10-18",
+      totalAmount: 1000,
+      downPayment: 0,
+      installments: [
+        {
+          id: "check-1", amount: 400, dueDate: "2026-11-18",
+          method: "cheque", identification: "0001", bankAccount: "bb-pf",
+          issueDate: "2026-10-18",
+        },
+        {
+          id: "check-2", amount: 600, dueDate: "2026-12-18",
+          method: "cheque", identification: "0002", bankAccount: "bb-pj",
+          issueDate: "2026-10-18",
+        },
+      ],
+    });
+    assert.equal(purchase.paidAmount, 0);
+    assert.equal(purchase.balance, 1000);
+    assert.deepEqual(purchase.installments.map((item) => item.method), ["cheque", "cheque"]);
+    assert.deepEqual(purchase.installments.map((item) => item.checkStatus), ["issued", "issued"]);
+    assert.equal(purchase.installments[0].issueDate.getDate(), 18);
+    assert.equal(purchase.installments[1].dueDate.getMonth(), 11);
+  });
   assert.equal(purchase.balance, 0);
   assert.equal(purchase.status, "paid");
   assert.throws(

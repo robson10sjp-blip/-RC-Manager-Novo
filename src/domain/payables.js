@@ -98,6 +98,329 @@ export function getPayableBalance(payable) {
   return amountFromCents(Math.max(total - paid, 0));
 }
 
+export function editSupplierPurchase(payable, {
+  description,
+  totalAmount,
+  purchaseDate,
+  dueDate,
+  paymentType,
+  initialPaymentAmount,
+  installmentId = "supplier-edit-adjustment",
+}) {
+  const totalCents = cents(totalAmount);
+  const paidCents = cents(payable.paidAmount);
+  if (!Number.isFinite(totalCents) || totalCents <= 0) {
+    throw new Error("O total da compra deve ser maior que zero.");
+  }
+  if (totalCents < paidCents) {
+    throw new Error("O total da compra não pode ficar abaixo do valor já pago.");
+  }
+  if (!String(description || "").trim()) {
+    throw new Error("Informe a descrição da compra.");
+  }
+  const nextPurchaseDate = toDate(purchaseDate);
+  if (!nextPurchaseDate) throw new Error("Informe uma data válida para a compra.");
+  const nextDueDate = dueDate ? toDate(dueDate) : null;
+  if (dueDate && !nextDueDate) throw new Error("Informe um vencimento válido.");
+
+  const balance = amountFromCents(totalCents - paidCents);
+  if (!["cash", "credit"].includes(paymentType)) {
+    throw new Error("Selecione uma condição de pagamento válida.");
+  }
+  if (paymentType === "cash" && balance > 0) {
+    throw new Error("A condição à vista exige que o total esteja integralmente pago.");
+  }
+
+  const installments = (payable.installments || []).map((item) => ({ ...item }));
+  const originalSchedule = (payable.installments || [])
+    .reduce((sum, item) => sum + cents(item.amount), 0);
+  const inferredInitial = originalSchedule > 0
+    ? Math.max(cents(payable.totalAmount) - originalSchedule, 0)
+    : paidCents >= cents(payable.totalAmount)
+      ? cents(payable.totalAmount)
+      : 0;
+  const initialCents = cents(initialPaymentAmount ?? amountFromCents(inferredInitial));
+  if (initialCents > totalCents) {
+    throw new Error("O valor da entrada registrada supera o novo total.");
+  }
+  const expectedSchedule = totalCents - initialCents;
+  const scheduleDifference = expectedSchedule - originalSchedule;
+  if (scheduleDifference > 0) {
+    const target = [...installments].reverse().find(
+      (item) => item.method !== "cheque" &&
+        cents(item.amount) > cents(item.paidAmount)
+    );
+    if (target) {
+      target.amount = amountFromCents(cents(target.amount) + scheduleDifference);
+    } else {
+      installments.push({
+        id: installmentId,
+        amount: amountFromCents(scheduleDifference),
+        paidAmount: 0,
+        dueDate: nextDueDate,
+        method: "boleto",
+        identification: "",
+        status: "pending",
+      });
+    }
+  } else if (scheduleDifference < 0) {
+    let reduction = -scheduleDifference;
+    const candidates = installments
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => item.method !== "cheque")
+      .reverse();
+    for (const { item } of candidates) {
+      const available = Math.max(cents(item.amount) - cents(item.paidAmount), 0);
+      const reduced = Math.min(reduction, available);
+      item.amount = amountFromCents(cents(item.amount) - reduced);
+      reduction -= reduced;
+      if (reduction === 0) break;
+    }
+    if (reduction > 0) {
+      throw new Error(
+        "Não é possível reduzir o total sem alterar parcelas pagas ou cheques já emitidos."
+      );
+    }
+  }
+
+  for (const installment of installments) {
+    if (
+      installment.method !== "cheque" &&
+      cents(installment.amount) > cents(installment.paidAmount) &&
+      nextDueDate
+    ) {
+      installment.dueDate = nextDueDate;
+    }
+  }
+  const actualSchedule = installments.reduce((sum, item) => sum + cents(item.amount), 0);
+  if (actualSchedule !== expectedSchedule) {
+    throw new Error("As parcelas atuais não conciliam com o total; revise a condição e a programação antes de salvar.");
+  }
+
+  return {
+    description: String(description).trim(),
+    totalAmount: amountFromCents(totalCents),
+    initialPaymentAmount: amountFromCents(initialCents),
+    purchaseDate: nextPurchaseDate,
+    ...(nextDueDate ? { dueDate: nextDueDate } : {}),
+    paymentType,
+    installments,
+    balance,
+    status: balance === 0 ? "paid" : paidCents > 0 ? "partial" : "pending",
+  };
+}
+
+export function correctSupplierPayment(payable, payment, corrected) {
+  const oldAmount = cents(payment.amount);
+  const newAmount = cents(corrected.amount);
+  if (!Number.isFinite(newAmount) || newAmount <= 0) {
+    throw new Error("O valor corrigido deve ser maior que zero.");
+  }
+  if (!toDate(corrected.date)) throw new Error("Informe uma data válida para o pagamento.");
+  if (!["pix", "dinheiro", "transferencia", "boleto", "cartao", "cheque"].includes(corrected.method)) {
+    throw new Error("Selecione uma forma de pagamento válida.");
+  }
+  if (corrected.method === "cheque") {
+    if (!String(corrected.identification || "").trim()) {
+      throw new Error("Informe o número do cheque.");
+    }
+    if (!["bb-pf", "bb-pj"].includes(corrected.bankAccount)) {
+      throw new Error("Selecione a conta bancária do cheque.");
+    }
+    if (!toDate(corrected.issueDate) || !toDate(corrected.expectedCompensationDate)) {
+      throw new Error("Informe as datas de emissão e previsão de compensação do cheque.");
+    }
+  }
+  const basePaid = cents(payable.paidAmount) - oldAmount;
+  if (basePaid < 0 || basePaid + newAmount > cents(payable.totalAmount)) {
+    throw new Error("A correção excede o total da compra ou não concilia com os pagamentos.");
+  }
+  const installments = (payable.installments || []).map((item) => ({ ...item }));
+  for (const allocation of payment.allocations || []) {
+    if (!allocation.installmentId) continue;
+    const installment = installments.find((item) => item.id === allocation.installmentId);
+    if (!installment || cents(installment.paidAmount) < cents(allocation.amount)) {
+      throw new Error("Não foi possível conciliar a parcela vinculada ao pagamento.");
+    }
+    installment.paidAmount = amountFromCents(
+      cents(installment.paidAmount) - cents(allocation.amount)
+    );
+    installment.status = installment.paidAmount > 0 ? "partial" : "pending";
+  }
+
+  const base = {
+    ...payable,
+    paidAmount: amountFromCents(basePaid),
+    balance: amountFromCents(cents(payable.totalAmount) - basePaid),
+    installments,
+    status: basePaid === cents(payable.totalAmount) ? "paid" : basePaid > 0 ? "partial" : "pending",
+  };
+  const selectedInstallment = corrected.installmentId || payment.installmentId || null;
+  if (payment.type === "check-compensation" && selectedInstallment) {
+    if (corrected.method !== "cheque") {
+      throw new Error("A forma de pagamento de um cheque compensado não pode ser alterada.");
+    }
+    const check = installments.find((item) => item.id === selectedInstallment);
+    if (!check || check.method !== "cheque") {
+      throw new Error("O cheque compensado não pertence mais a esta compra.");
+    }
+    check.amount = amountFromCents(newAmount);
+  }
+  const result = applyPaymentToPayable(base, {
+    amount: amountFromCents(newAmount),
+    installmentId: selectedInstallment,
+    allowCheckCompensation: payment.type === "check-compensation",
+  });
+  return {
+    ...result,
+    installments: result.installments.map((item) => {
+      if (item.id !== selectedInstallment || item.method !== "cheque" ||
+        payment.type !== "check-compensation") return item;
+      return {
+        ...item,
+        identification: corrected.identification,
+        bankAccount: corrected.bankAccount,
+        bankName: corrected.bankName || item.bankName,
+        issueDate: corrected.issueDate,
+        dueDate: corrected.expectedCompensationDate || item.dueDate,
+      };
+    }),
+  };
+}
+
+export function createIssuedCheck(payable, check) {
+  const amountCents = cents(check.amount);
+  const balanceCents = cents(getPayableBalance(payable));
+  if (!Number.isFinite(amountCents) || amountCents <= 0 || amountCents > balanceCents) {
+    throw new Error("O valor do cheque deve caber no saldo em aberto da compra.");
+  }
+  if (!String(check.identification || "").trim()) {
+    throw new Error("Informe o número do cheque.");
+  }
+  if (!["bb-pf", "bb-pj"].includes(check.bankAccount)) {
+    throw new Error("Selecione a conta bancária do cheque.");
+  }
+  const issueDate = toDate(check.issueDate);
+  const dueDate = toDate(check.expectedCompensationDate);
+  if (!issueDate || !dueDate) {
+    throw new Error("Informe a emissão e a data prevista de compensação do cheque.");
+  }
+  if ((payable.installments || []).some((item) =>
+    item.method === "cheque" &&
+    item.bankAccount === check.bankAccount &&
+    String(item.identification || "").trim().toLocaleLowerCase("pt-BR") ===
+      String(check.identification).trim().toLocaleLowerCase("pt-BR")
+  )) {
+    throw new Error("Já existe um cheque com esse número e conta nesta compra.");
+  }
+  const installments = (payable.installments || []).map((item) => ({ ...item }));
+  let toReserve = amountCents;
+  const scheduledOpen = installments.reduce(
+    (sum, item) => sum + Math.max(cents(item.amount) - cents(item.paidAmount), 0),
+    0
+  );
+  const unallocatedBalance = Math.max(balanceCents - scheduledOpen, 0);
+  for (const item of [...installments].reverse()) {
+    if (item.method === "cheque") continue;
+    const open = Math.max(cents(item.amount) - cents(item.paidAmount), 0);
+    const reserve = Math.min(open, toReserve);
+    item.amount = amountFromCents(cents(item.amount) - reserve);
+    toReserve -= reserve;
+    if (toReserve === 0) break;
+  }
+  if (toReserve > unallocatedBalance) {
+    throw new Error("O saldo já está representado por cheques emitidos; não é possível emitir outro sem alterar essas obrigações.");
+  }
+  installments.push({
+    id: check.id,
+    amount: amountFromCents(amountCents),
+    paidAmount: 0,
+    dueDate,
+    method: "cheque",
+    identification: String(check.identification).trim(),
+    bankAccount: check.bankAccount,
+    bankName: check.bankName || "Banco do Brasil",
+    issueDate,
+    checkStatus: CHECK_STATUSES.ISSUED,
+    checkStatusHistory: [{ status: CHECK_STATUSES.ISSUED, changedAt: check.createdAt || new Date() }],
+    status: "pending",
+  });
+  return installments;
+}
+
+export function correctIssuedCheck(payable, installmentId, changes) {
+  const installments = (payable.installments || []).map((item) => ({ ...item }));
+  const check = installments.find((item) => item.id === installmentId);
+  if (!check || check.method !== "cheque" || getCheckStatus(check) !== CHECK_STATUSES.ISSUED) {
+    throw new Error("Somente cheques entregues e ainda não compensados podem ser corrigidos.");
+  }
+  const amountCents = cents(changes.amount);
+  if (!Number.isFinite(amountCents) || amountCents <= 0) {
+    throw new Error("O valor do cheque deve ser maior que zero.");
+  }
+  if (!String(changes.identification || "").trim()) {
+    throw new Error("Informe o número do cheque.");
+  }
+  if (!["bb-pf", "bb-pj"].includes(changes.bankAccount)) {
+    throw new Error("Selecione a conta do cheque.");
+  }
+  const issueDate = toDate(changes.issueDate);
+  const dueDate = toDate(changes.expectedCompensationDate);
+  if (!issueDate || !dueDate) {
+    throw new Error("Informe as datas de emissão e previsão de compensação.");
+  }
+  const duplicate = installments.some((item) =>
+    item.id !== installmentId &&
+    item.method === "cheque" &&
+    item.bankAccount === changes.bankAccount &&
+    String(item.identification || "").trim().toLocaleLowerCase("pt-BR") ===
+      String(changes.identification).trim().toLocaleLowerCase("pt-BR")
+  );
+  if (duplicate) throw new Error("Já existe outro cheque com esse número e conta.");
+
+  const difference = amountCents - cents(check.amount);
+  let adjustment = Math.abs(difference);
+  const regularInstallments = installments
+    .filter((item) => item.id !== installmentId && item.method !== "cheque")
+    .reverse();
+  if (difference > 0) {
+    for (const item of regularInstallments) {
+      const available = Math.max(cents(item.amount) - cents(item.paidAmount), 0);
+      const reduction = Math.min(available, adjustment);
+      item.amount = amountFromCents(cents(item.amount) - reduction);
+      adjustment -= reduction;
+      if (adjustment === 0) break;
+    }
+    if (adjustment > 0) {
+      throw new Error("Não há saldo de parcelas comuns suficiente para aumentar este cheque.");
+    }
+  } else if (difference < 0) {
+    const target = regularInstallments.find(
+      (item) => cents(item.amount) > cents(item.paidAmount)
+    );
+    if (target) {
+      target.amount = amountFromCents(cents(target.amount) + adjustment);
+    } else {
+      installments.push({
+        id: changes.adjustmentInstallmentId,
+        amount: amountFromCents(adjustment),
+        paidAmount: 0,
+        dueDate,
+        method: "boleto",
+        identification: "",
+        status: "pending",
+      });
+    }
+  }
+  check.amount = amountFromCents(amountCents);
+  check.identification = String(changes.identification).trim();
+  check.bankAccount = changes.bankAccount;
+  check.bankName = changes.bankName || "Banco do Brasil";
+  check.issueDate = issueDate;
+  check.dueDate = dueDate;
+  return installments;
+}
+
 export function validatePayableSchedule(totalAmount, downPayment, installments) {
   const totalCents = cents(totalAmount);
   const downCents = cents(downPayment);

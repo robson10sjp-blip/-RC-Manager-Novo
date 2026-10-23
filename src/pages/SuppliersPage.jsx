@@ -14,7 +14,13 @@ import {
 
 import { auth, db } from "../firebase/config";
 import { runTransaction } from "../firebase/firestoreAccess";
-import { applyPaymentToPayable, getPayableBalance, summarizePayables } from "../domain/payables";
+import {
+  applyPaymentToPayable,
+  CHECK_STATUSES,
+  getCheckStatus,
+  getPayableBalance,
+  summarizePayables,
+} from "../domain/payables";
 import { isFirestoreReadOnly } from "../firebase/writePolicy";
 import {
   buildSupplierPayable,
@@ -24,6 +30,13 @@ import {
   getSupplierDisplayName,
 } from "../domain/suppliers";
 import { toDate } from "../utils/dates";
+import {
+  compensateSupplierCheck,
+  correctSupplierPayment,
+  correctSupplierCheck,
+  editSupplierPurchase,
+  issueSupplierCheck,
+} from "../services/supplierPayables.js";
 import "./SuppliersPage.css";
 
 const todayInput = () => new Date().toISOString().slice(0, 10);
@@ -44,6 +57,10 @@ const emptyPurchase = {
   paymentType: "credit",
   paymentMethod: "pix",
   downPayment: "0",
+  initialCheckIdentification: "",
+  initialCheckBankAccount: "bb-pf",
+  initialCheckIssueDate: todayInput(),
+  initialCheckExpectedDate: todayInput(),
 };
 const emptyPayment = {
   payableId: "",
@@ -51,17 +68,25 @@ const emptyPayment = {
   date: todayInput(),
   method: "pix",
   identification: "",
+  bankAccount: "bb-pf",
+  bankName: "Banco do Brasil",
+  issueDate: todayInput(),
+  expectedCompensationDate: todayInput(),
 };
 
 export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState([]);
   const [payables, setPayables] = useState([]);
   const [paymentsByPayable, setPaymentsByPayable] = useState({});
+  const [correctionsByPayable, setCorrectionsByPayable] = useState({});
   const [form, setForm] = useState(emptyForm);
   const [purchase, setPurchase] = useState(emptyPurchase);
   const [installments, setInstallments] = useState([]);
   const [payment, setPayment] = useState(emptyPayment);
   const [editingId, setEditingId] = useState(null);
+  const [editingPurchase, setEditingPurchase] = useState(null);
+  const [editingPayment, setEditingPayment] = useState(null);
+  const [editingCheck, setEditingCheck] = useState(null);
   const [expandedSupplierId, setExpandedSupplierId] = useState(null);
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
@@ -70,16 +95,19 @@ export default function SuppliersPage() {
   const [saving, setSaving] = useState(false);
   const [savingPurchase, setSavingPurchase] = useState(false);
   const [savingPayment, setSavingPayment] = useState(false);
+  const [compensatingCheckId, setCompensatingCheckId] = useState(null);
   const savingLock = useRef(false);
   const purchaseLock = useRef(false);
   const paymentLock = useRef(false);
   const paymentOperation = useRef(null);
+  const compensatingCheckLock = useRef(new Set());
 
   useEffect(() => {
     let unsubscribeSuppliers = null;
     let unsubscribePayables = null;
     let generation = 0;
     const paymentListeners = new Map();
+    const correctionListeners = new Map();
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       generation += 1;
       const currentGeneration = generation;
@@ -87,14 +115,22 @@ export default function SuppliersPage() {
       unsubscribePayables?.();
       for (const unsubscribe of paymentListeners.values()) unsubscribe();
       paymentListeners.clear();
+      for (const unsubscribe of correctionListeners.values()) unsubscribe();
+      correctionListeners.clear();
       setSuppliers([]);
       setPayables([]);
       setPaymentsByPayable({});
+      setCorrectionsByPayable({});
       setForm(emptyForm);
       setPurchase({ ...emptyPurchase, purchaseDate: todayInput() });
       setInstallments([]);
       setPayment({ ...emptyPayment, date: todayInput() });
       setEditingId(null);
+      setEditingPurchase(null);
+      setEditingPayment(null);
+      setEditingCheck(null);
+      compensatingCheckLock.current.clear();
+      setCompensatingCheckId(null);
       setExpandedSupplierId(null);
       setSearch("");
       setLoading(Boolean(user));
@@ -138,6 +174,16 @@ export default function SuppliersPage() {
               return next;
             });
           }
+          for (const [payableId, unsubscribe] of correctionListeners) {
+            if (payableIds.has(payableId)) continue;
+            unsubscribe();
+            correctionListeners.delete(payableId);
+            setCorrectionsByPayable((current) => {
+              const next = { ...current };
+              delete next[payableId];
+              return next;
+            });
+          }
           for (const payableDocument of documents) {
             if (paymentListeners.has(payableDocument.id)) continue;
             paymentListeners.set(
@@ -171,6 +217,38 @@ export default function SuppliersPage() {
                 }
               )
             );
+            if (!correctionListeners.has(payableDocument.id)) {
+              correctionListeners.set(
+                payableDocument.id,
+                onSnapshot(
+                  collection(
+                    db,
+                    "users",
+                    user.uid,
+                    "payables",
+                    payableDocument.id,
+                    "corrections"
+                  ),
+                  (correctionSnapshot) => {
+                    if (currentGeneration !== generation) return;
+                    setCorrectionsByPayable((current) => ({
+                      ...current,
+                      [payableDocument.id]: correctionSnapshot.docs
+                        .map((item) => ({ id: item.id, ...item.data() }))
+                        .sort((first, second) =>
+                          (toDate(second.createdAt)?.getTime() || 0) -
+                          (toDate(first.createdAt)?.getTime() || 0)
+                        ),
+                    }));
+                  },
+                  (loadError) => {
+                    if (currentGeneration !== generation) return;
+                    console.error("Erro ao carregar correções de fornecedor:", loadError);
+                    setError("Não foi possível carregar o histórico de correções.");
+                  }
+                )
+              );
+            }
           }
           setPayables(documents.map((item) => ({ id: item.id, ...item.data() })));
         },
@@ -189,6 +267,8 @@ export default function SuppliersPage() {
       unsubscribePayables?.();
       for (const unsubscribe of paymentListeners.values()) unsubscribe();
       paymentListeners.clear();
+      for (const unsubscribe of correctionListeners.values()) unsubscribe();
+      correctionListeners.clear();
     };
   }, []);
 
@@ -376,10 +456,28 @@ export default function SuppliersPage() {
     }
 
     const supplier = suppliers.find((item) => item.id === purchase.supplierId);
-    const paidAmount =
-      purchase.paymentType === "cash"
+    const initialCheque = purchase.paymentMethod === "cheque" &&
+      Number(String(purchase.downPayment || 0).replace(",", ".")) > 0;
+    const paidAmount = initialCheque
+      ? 0
+      : purchase.paymentType === "cash"
         ? purchase.totalAmount
         : purchase.downPayment;
+    const purchaseInstallments = purchase.paymentType === "cash"
+      ? []
+      : [
+          ...(initialCheque ? [{
+            id: crypto.randomUUID(),
+            amount: purchase.downPayment,
+            dueDate: purchase.initialCheckExpectedDate,
+            method: "cheque",
+            identification: purchase.initialCheckIdentification,
+            bankAccount: purchase.initialCheckBankAccount,
+            bankName: "Banco do Brasil",
+            issueDate: purchase.initialCheckIssueDate,
+          }] : []),
+          ...installments,
+        ];
     let payableData;
     try {
       payableData = buildSupplierPayable({
@@ -388,7 +486,7 @@ export default function SuppliersPage() {
         purchaseDate: purchase.purchaseDate,
         totalAmount: purchase.totalAmount,
         downPayment: paidAmount,
-        installments: purchase.paymentType === "cash" ? [] : installments,
+        installments: purchaseInstallments,
       });
     } catch (validationError) {
       setError(validationError.message);
@@ -476,6 +574,9 @@ export default function SuppliersPage() {
       payment.date,
       payment.method,
       payment.identification.trim(),
+      payment.bankAccount,
+      payment.issueDate,
+      payment.expectedCompensationDate,
     ].join("|");
     if (paymentOperation.current?.fingerprint !== fingerprint) {
       paymentOperation.current = {
@@ -500,6 +601,28 @@ export default function SuppliersPage() {
       setSavingPayment(true);
       setError("");
       setNotice("");
+      if (payment.method === "cheque") {
+        const result = await issueSupplierCheck({
+          db,
+          userId: user.uid,
+          payableId: payable.id,
+          operationId: paymentOperation.current.reference.id,
+          amount,
+          identification: payment.identification,
+          bankAccount: payment.bankAccount,
+          bankName: payment.bankName,
+          issueDate: payment.issueDate,
+          expectedCompensationDate: payment.expectedCompensationDate,
+        });
+        paymentOperation.current = null;
+        setPayment({ ...emptyPayment, date: todayInput() });
+        setNotice(
+          result.alreadyRecorded
+            ? "Este cheque já estava registrado; não foi criada uma nova saída de caixa."
+            : "Cheque registrado como emitido. A obrigação e o fluxo de caixa só serão baixados na compensação."
+        );
+        return;
+      }
       const alreadyRecorded = await runTransaction(db, async (transaction) => {
         const recordedPayment = await transaction.get(paymentReference);
         if (recordedPayment.exists()) return true;
@@ -542,6 +665,187 @@ export default function SuppliersPage() {
       setNotice("");
     } finally {
       paymentLock.current = false;
+      setSavingPayment(false);
+    }
+  }
+
+  async function handleCheckCompensation(payableId, installment) {
+    if (compensatingCheckLock.current.has(installment.id)) return;
+    const user = auth.currentUser;
+    if (!user) {
+      setError("Entre novamente no RC Manager para continuar.");
+      return;
+    }
+    if (!window.confirm(
+      `Confirmar a compensação do cheque nº ${installment.identification || "sem número"}? A saída será lançada uma única vez no fluxo de caixa.`
+    )) return;
+    compensatingCheckLock.current.add(installment.id);
+    setCompensatingCheckId(installment.id);
+    try {
+      setError("");
+      setNotice("");
+      const alreadyRecorded = await compensateSupplierCheck({
+        db,
+        userId: user.uid,
+        payableId,
+        installmentId: installment.id,
+      });
+      setNotice(
+        alreadyRecorded
+          ? "A compensação já estava registrada; o fluxo de caixa não foi duplicado."
+          : "Cheque compensado e saída registrada uma única vez no Financeiro."
+      );
+    } catch (compensationError) {
+      console.error("Erro ao compensar cheque do fornecedor:", compensationError);
+      setError(`Não foi possível compensar o cheque: ${compensationError.message}`);
+    } finally {
+      compensatingCheckLock.current.delete(installment.id);
+      setCompensatingCheckId(null);
+    }
+  }
+
+  function beginPurchaseEdit(payable) {
+    const firstOpenInstallment = (payable.installments || []).find(
+      (item) => item.method !== "cheque" &&
+        Number(item.amount || 0) > Number(item.paidAmount || 0)
+    );
+    const dateValue = (value) => {
+      const parsed = toDate(value);
+      if (!parsed) return "";
+      return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+    };
+    setEditingPurchase({
+      payableId: payable.id,
+      description: payable.description || "",
+      totalAmount: String(payable.totalAmount ?? ""),
+      purchaseDate: dateValue(payable.purchaseDate),
+      dueDate: dateValue(firstOpenInstallment?.dueDate || payable.dueDate),
+      paymentType: payable.paymentType ||
+        (Number(payable.paidAmount || 0) >= Number(payable.totalAmount || 0) ? "cash" : "credit"),
+    });
+  }
+
+  async function savePurchaseEdit(event) {
+    event.preventDefault();
+    const user = auth.currentUser;
+    if (!user || !editingPurchase) return;
+    try {
+      setSavingPurchase(true);
+      setError("");
+      const { payableId, ...changes } = editingPurchase;
+      await editSupplierPurchase({ db, userId: user.uid, payableId, changes });
+      setEditingPurchase(null);
+      setNotice("Compra corrigida. Saldo e parcelas foram recalculados; a versão anterior foi preservada no histórico de correções.");
+    } catch (editError) {
+      console.error("Erro ao corrigir compra do fornecedor:", editError);
+      setError(`Não foi possível corrigir a compra: ${editError.message}`);
+    } finally {
+      setSavingPurchase(false);
+    }
+  }
+
+  function beginCheckEdit(payableId, check) {
+    const inputDate = (value) => {
+      const parsed = toDate(value);
+      if (!parsed) return todayInput();
+      return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+    };
+    setEditingCheck({
+      payableId,
+      installmentId: check.id,
+      amount: String(check.amount ?? ""),
+      identification: check.identification || "",
+      bankAccount: check.bankAccount || "bb-pf",
+      bankName: check.bankName || "Banco do Brasil",
+      issueDate: inputDate(check.issueDate),
+      expectedCompensationDate: inputDate(check.dueDate),
+    });
+  }
+
+  async function saveCheckCorrection(event) {
+    event.preventDefault();
+    const user = auth.currentUser;
+    if (!user || !editingCheck) return;
+    try {
+      setSavingPayment(true);
+      setError("");
+      const { payableId, installmentId, ...values } = editingCheck;
+      await correctSupplierCheck({
+        db,
+        userId: user.uid,
+        payableId,
+        installmentId,
+        changes: {
+          ...values,
+          amount: Number(String(values.amount).replace(",", ".")),
+          issueDate: new Date(`${values.issueDate}T12:00:00`),
+          expectedCompensationDate: new Date(`${values.expectedCompensationDate}T12:00:00`),
+        },
+      });
+      setEditingCheck(null);
+      setNotice("Cheque corrigido sem alterar o total devido nem registrar saída de caixa. Os dados anteriores foram preservados no histórico de correções.");
+    } catch (checkError) {
+      console.error("Erro ao corrigir cheque:", checkError);
+      setError(`Não foi possível corrigir o cheque: ${checkError.message}`);
+    } finally {
+      setSavingPayment(false);
+    }
+  }
+
+  function beginPaymentEdit(payableId, entry) {
+    const inputDate = (value) => {
+      const parsed = toDate(value);
+      if (!parsed) return todayInput();
+      return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+    };
+    setEditingPayment({
+      payableId,
+      paymentId: entry.id,
+      amount: String(entry.amount ?? ""),
+      date: inputDate(entry.date),
+      method: entry.method || "pix",
+      identification: entry.identification || "",
+      bankAccount: entry.bankAccount || "bb-pf",
+      bankName: entry.bankName || "Banco do Brasil",
+      issueDate: inputDate(entry.issueDate),
+      expectedCompensationDate: inputDate(entry.expectedCompensationDate),
+    });
+  }
+
+  async function savePaymentCorrection(event) {
+    event.preventDefault();
+    const user = auth.currentUser;
+    if (!user || !editingPayment) return;
+    try {
+      setSavingPayment(true);
+      setError("");
+      const { payableId, paymentId, ...values } = editingPayment;
+      const date = new Date(`${values.date}T12:00:00`);
+      const issueDate = values.method === "cheque"
+        ? new Date(`${values.issueDate}T12:00:00`)
+        : null;
+      const expectedCompensationDate = values.method === "cheque"
+        ? new Date(`${values.expectedCompensationDate}T12:00:00`)
+        : null;
+      await correctSupplierPayment({
+        db,
+        userId: user.uid,
+        payableId,
+        paymentId,
+        changes: {
+          ...values,
+          amount: Number(String(values.amount).replace(",", ".")),
+          date,
+          issueDate,
+          expectedCompensationDate,
+        },
+      });
+      setEditingPayment(null);
+      setNotice("Pagamento corrigido sem criar novo lançamento. Valores, saldo e parcelas foram recalculados e a versão anterior ficou no histórico de correções.");
+    } catch (correctionError) {
+      console.error("Erro ao corrigir pagamento do fornecedor:", correctionError);
+      setError(`Não foi possível corrigir o pagamento: ${correctionError.message}`);
+    } finally {
       setSavingPayment(false);
     }
   }
@@ -720,9 +1024,66 @@ export default function SuppliersPage() {
                                   <span>Pago: <FinancialValue>{formatCurrency(item.paidAmount)}</FinancialValue></span>
                                   <span>Parcelas: {(item.installments || []).length}</span>
                                 </div>
+                                <div className="supplier-purchase-actions">
+                                  <button type="button" onClick={() => beginPurchaseEdit(item)} disabled={readOnly}>
+                                    Editar compra
+                                  </button>
+                                </div>
+                                {editingPurchase?.payableId === item.id && (
+                                  <form className="supplier-correction-form" onSubmit={savePurchaseEdit}>
+                                    <h5>Corrigir compra</h5>
+                                    <label>
+                                      Descrição
+                                      <input value={editingPurchase.description} required maxLength={240}
+                                        onChange={(event) => setEditingPurchase((current) => ({ ...current, description: event.target.value }))} />
+                                    </label>
+                                    <label>
+                                      Valor total
+                                      <input type="number" min="0.01" step="0.01" value={editingPurchase.totalAmount} required
+                                        onChange={(event) => setEditingPurchase((current) => ({ ...current, totalAmount: event.target.value }))} />
+                                    </label>
+                                    <label>
+                                      Data da compra
+                                      <input type="date" value={editingPurchase.purchaseDate} required
+                                        onChange={(event) => setEditingPurchase((current) => ({ ...current, purchaseDate: event.target.value }))} />
+                                    </label>
+                                    <label>
+                                      Vencimento das parcelas comuns
+                                      <input type="date" value={editingPurchase.dueDate}
+                                        onChange={(event) => setEditingPurchase((current) => ({ ...current, dueDate: event.target.value }))} />
+                                    </label>
+                                    <label>
+                                      Condição de pagamento
+                                      <select value={editingPurchase.paymentType}
+                                        onChange={(event) => setEditingPurchase((current) => ({ ...current, paymentType: event.target.value }))}>
+                                        <option value="cash">À vista</option>
+                                        <option value="credit">A prazo</option>
+                                      </select>
+                                    </label>
+                                    <div className="supplier-correction-actions">
+                                      <button type="submit" disabled={savingPurchase || readOnly}>
+                                        {savingPurchase ? "Salvando..." : "Salvar correção"}
+                                      </button>
+                                      <button type="button" onClick={() => setEditingPurchase(null)}>Cancelar</button>
+                                    </div>
+                                    <small>O total não pode ficar abaixo do que já foi pago. Cheques emitidos não são alterados junto com o vencimento comum.</small>
+                                  </form>
+                                )}
                                 {(item.installments || []).map((installment, index) => (
                                   <div className="supplier-installment" key={installment.id || index}>
-                                    <span>Parcela {index + 1} · vence {formatDate(installment.dueDate)}</span>
+                                    <span>
+                                      {installment.method === "cheque" ? `Cheque nº ${installment.identification || "sem número"}` : `Parcela ${index + 1}`}
+                                      {" · vence/compensa "}{formatDate(installment.dueDate)}
+                                      {installment.method === "cheque" && (
+                                        <>
+                                          <br />{installment.bankName || "Banco do Brasil"} · {installment.bankAccount === "bb-pj" ? "PJ" : "PF"}
+                                          {" · emitido "}{formatDate(installment.issueDate)}
+                                          {" · "}{getCheckStatus(installment) === CHECK_STATUSES.COMPENSATED ? "Compensado" :
+                                            getCheckStatus(installment) === CHECK_STATUSES.RETURNED ? "Devolvido" :
+                                              getCheckStatus(installment) === CHECK_STATUSES.CANCELLED ? "Cancelado" : "Entregue / emitido"}
+                                        </>
+                                      )}
+                                    </span>
                                     <span>
                                       <FinancialValue>{formatCurrency(installment.paidAmount || 0)}</FinancialValue> de{" "}
                                       <FinancialValue>{formatCurrency(installment.amount)}</FinancialValue>
@@ -730,16 +1091,155 @@ export default function SuppliersPage() {
                                     <strong>
                                       Saldo <FinancialValue>{formatCurrency(Math.max(Number(installment.amount || 0) - Number(installment.paidAmount || 0), 0))}</FinancialValue>
                                     </strong>
+                                    {installment.method === "cheque" &&
+                                    getCheckStatus(installment) === CHECK_STATUSES.ISSUED && (
+                                      <>
+                                        <button type="button" onClick={() => handleCheckCompensation(item.id, installment)} disabled={readOnly || compensatingCheckId === installment.id}>
+                                          {compensatingCheckId === installment.id ? "Compensando..." : "Confirmar compensação"}
+                                        </button>
+                                        <button type="button" onClick={() => beginCheckEdit(item.id, installment)} disabled={readOnly}>
+                                          Corrigir cheque
+                                        </button>
+                                      </>
+                                    )}
                                   </div>
                                 ))}
+                                {editingCheck?.payableId === item.id && (
+                                  <form className="supplier-correction-form" onSubmit={saveCheckCorrection}>
+                                    <h5>Corrigir cheque entregue</h5>
+                                    <label>
+                                      Valor
+                                      <input type="number" min="0.01" step="0.01" required value={editingCheck.amount}
+                                        onChange={(event) => setEditingCheck((current) => ({ ...current, amount: event.target.value }))} />
+                                    </label>
+                                    <label>
+                                      Banco / conta
+                                      <select required value={editingCheck.bankAccount}
+                                        onChange={(event) => setEditingCheck((current) => ({ ...current, bankAccount: event.target.value }))}>
+                                        <option value="bb-pf">Banco do Brasil · PF</option>
+                                        <option value="bb-pj">Banco do Brasil · PJ</option>
+                                      </select>
+                                    </label>
+                                    <label>
+                                      Número do cheque
+                                      <input required maxLength={40} value={editingCheck.identification}
+                                        onChange={(event) => setEditingCheck((current) => ({ ...current, identification: event.target.value }))} />
+                                    </label>
+                                    <label>
+                                      Emissão
+                                      <input type="date" required value={editingCheck.issueDate}
+                                        onChange={(event) => setEditingCheck((current) => ({ ...current, issueDate: event.target.value }))} />
+                                    </label>
+                                    <label>
+                                      Previsão de compensação
+                                      <input type="date" required value={editingCheck.expectedCompensationDate}
+                                        onChange={(event) => setEditingCheck((current) => ({ ...current, expectedCompensationDate: event.target.value }))} />
+                                    </label>
+                                    <div className="supplier-correction-actions">
+                                      <button type="submit" disabled={savingPayment || readOnly}>
+                                        {savingPayment ? "Salvando..." : "Salvar correção"}
+                                      </button>
+                                      <button type="button" onClick={() => setEditingCheck(null)}>Cancelar</button>
+                                    </div>
+                                  </form>
+                                )}
                                 {(paymentsByPayable[item.id] || []).length > 0 && (
                                   <details className="supplier-payment-history">
                                     <summary>Histórico de pagamentos ({paymentsByPayable[item.id].length})</summary>
                                     {paymentsByPayable[item.id].map((entry) => (
-                                      <p key={entry.id}>
-                                        {formatDate(entry.date)} · <FinancialValue>{formatCurrency(entry.amount)}</FinancialValue> ·{" "}
-                                        {entry.method || entry.type || "Pagamento"}
-                                        {entry.identification ? ` · ${entry.identification}` : ""}
+                                      <div className="supplier-payment-history-entry" key={entry.id}>
+                                        <p>
+                                          {formatDate(entry.date)} · <FinancialValue>{formatCurrency(entry.amount)}</FinancialValue> ·{" "}
+                                          {entry.method || entry.type || "Pagamento"}
+                                          {entry.identification ? ` · ${entry.identification}` : ""}
+                                          {entry.type === "check-compensation" ? " · cheque compensado" : ""}
+                                        </p>
+                                        <button type="button" onClick={() => beginPaymentEdit(item.id, entry)} disabled={readOnly}>
+                                          Corrigir pagamento
+                                        </button>
+                                        {editingPayment?.payableId === item.id && editingPayment.paymentId === entry.id && (
+                                          <form className="supplier-correction-form" onSubmit={savePaymentCorrection}>
+                                            <h5>Corrigir pagamento</h5>
+                                            <label>
+                                              Valor
+                                              <input type="number" min="0.01" step="0.01" value={editingPayment.amount} required
+                                                onChange={(event) => setEditingPayment((current) => ({ ...current, amount: event.target.value }))} />
+                                            </label>
+                                            <label>
+                                              Data
+                                              <input type="date" value={editingPayment.date} required
+                                                onChange={(event) => setEditingPayment((current) => ({ ...current, date: event.target.value }))} />
+                                            </label>
+                                            <label>
+                                              Forma de pagamento
+                                              <select value={editingPayment.method}
+                                                disabled={entry.type === "check-compensation"}
+                                                onChange={(event) => setEditingPayment((current) => ({ ...current, method: event.target.value }))}>
+                                                <option value="pix">Pix</option>
+                                                <option value="dinheiro">Dinheiro</option>
+                                                <option value="transferencia">Transferência</option>
+                                                <option value="boleto">Boleto</option>
+                                                <option value="cartao">Cartão</option>
+                                                <option value="cheque">Cheque</option>
+                                              </select>
+                                            </label>
+                                            {editingPayment.method === "cheque" && (
+                                              <>
+                                                <label>
+                                                  Banco / conta
+                                                  <select value={editingPayment.bankAccount}
+                                                    onChange={(event) => setEditingPayment((current) => ({ ...current, bankAccount: event.target.value, bankName: "Banco do Brasil" }))}>
+                                                    <option value="bb-pf">Banco do Brasil · PF</option>
+                                                    <option value="bb-pj">Banco do Brasil · PJ</option>
+                                                  </select>
+                                                </label>
+                                                <label>
+                                                  Número do cheque
+                                                  <input value={editingPayment.identification} required maxLength={40}
+                                                    onChange={(event) => setEditingPayment((current) => ({ ...current, identification: event.target.value }))} />
+                                                </label>
+                                                <label>
+                                                  Emissão
+                                                  <input type="date" value={editingPayment.issueDate} required
+                                                    onChange={(event) => setEditingPayment((current) => ({ ...current, issueDate: event.target.value }))} />
+                                                </label>
+                                                <label>
+                                                  Previsão de compensação
+                                                  <input type="date" value={editingPayment.expectedCompensationDate} required
+                                                    onChange={(event) => setEditingPayment((current) => ({ ...current, expectedCompensationDate: event.target.value }))} />
+                                                </label>
+                                              </>
+                                            )}
+                                            {editingPayment.method !== "cheque" && (
+                                              <label>
+                                                Identificação / comprovante
+                                                <input value={editingPayment.identification}
+                                                  onChange={(event) => setEditingPayment((current) => ({ ...current, identification: event.target.value }))} />
+                                              </label>
+                                            )}
+                                            <div className="supplier-correction-actions">
+                                              <button type="submit" disabled={savingPayment || readOnly}>
+                                                {savingPayment ? "Salvando..." : "Salvar correção"}
+                                              </button>
+                                              <button type="button" onClick={() => setEditingPayment(null)}>Cancelar</button>
+                                            </div>
+                                          </form>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </details>
+                                )}
+                                {(correctionsByPayable[item.id] || []).length > 0 && (
+                                  <details className="supplier-correction-history">
+                                    <summary>Histórico de correções ({correctionsByPayable[item.id].length})</summary>
+                                    {correctionsByPayable[item.id].map((correction) => (
+                                      <p key={correction.id}>
+                                        {formatDate(correction.createdAt)} ·{" "}
+                                        {correction.type === "purchase"
+                                          ? `Compra: ${formatCurrency(correction.before?.totalAmount)} → ${formatCurrency(correction.after?.totalAmount)} · ${correction.before?.description || "sem descrição"} → ${correction.after?.description || "sem descrição"}`
+                                          : correction.type === "check"
+                                            ? `Cheque: ${correction.before?.identification || "sem número"} · ${formatCurrency(correction.before?.amount)} → ${correction.after?.installments?.find((check) => check.id === correction.installmentId)?.identification || "sem número"} · ${formatCurrency(correction.after?.installments?.find((check) => check.id === correction.installmentId)?.amount)}`
+                                          : `Pagamento: ${formatCurrency(correction.before?.amount)} → ${formatCurrency(correction.after?.amount)} · ${correction.before?.method || "forma não informada"} → ${correction.after?.method || "forma não informada"}`}
                                       </p>
                                     ))}
                                   </details>
@@ -850,9 +1350,13 @@ export default function SuppliersPage() {
                 const paymentType = event.target.value;
                 setPurchase((current) => ({
                   ...current,
-                  paymentType,
-                  downPayment:
-                    paymentType === "cash" ? current.totalAmount : "0",
+                  paymentType: paymentType === "cash" && current.paymentMethod === "cheque"
+                    ? "credit"
+                    : paymentType,
+                  paymentMethod: paymentType === "cash" && current.paymentMethod === "cheque"
+                    ? "pix"
+                    : current.paymentMethod,
+                  downPayment: paymentType === "cash" ? current.totalAmount : "0",
                 }));
                 if (paymentType === "cash") setInstallments([]);
               }}
@@ -867,10 +1371,16 @@ export default function SuppliersPage() {
             <select
               value={purchase.paymentMethod}
               onChange={(event) =>
-                setPurchase((current) => ({
-                  ...current,
-                  paymentMethod: event.target.value,
-                }))
+                setPurchase((current) => {
+                  const paymentMethod = event.target.value;
+                  return {
+                    ...current,
+                    paymentMethod,
+                    ...(paymentMethod === "cheque" && current.paymentType === "cash"
+                      ? { paymentType: "credit", downPayment: current.totalAmount }
+                      : {}),
+                  };
+                })
               }
               disabled={readOnly}
             >
@@ -879,13 +1389,19 @@ export default function SuppliersPage() {
               <option value="transferencia">Transferência</option>
               <option value="boleto">Boleto</option>
               <option value="cartao">Cartão</option>
+              <option value="cheque">Cheque</option>
             </select>
           </label>
+          {purchase.paymentMethod === "cheque" && (
+            <p className="supplier-purchase-wide supplier-check-note">
+              Cheque entregue não é considerado pago nem gera saída de caixa antes da compensação.
+            </p>
+          )}
 
           {purchase.paymentType === "credit" && (
             <>
               <label>
-                Valor já pago (opcional)
+                {purchase.paymentMethod === "cheque" ? "Valor do cheque de entrada" : "Valor já pago (opcional)"}
                 <input
                   type="number"
                   min="0"
@@ -900,6 +1416,37 @@ export default function SuppliersPage() {
                   disabled={readOnly}
                 />
               </label>
+              {purchase.paymentMethod === "cheque" && Number(purchase.downPayment) > 0 && (
+                <>
+                  <label>
+                    Banco / conta do cheque *
+                    <select value={purchase.initialCheckBankAccount}
+                      onChange={(event) => setPurchase((current) => ({ ...current, initialCheckBankAccount: event.target.value }))}
+                      required disabled={readOnly}>
+                      <option value="bb-pf">Banco do Brasil · PF</option>
+                      <option value="bb-pj">Banco do Brasil · PJ</option>
+                    </select>
+                  </label>
+                  <label>
+                    Número do cheque *
+                    <input value={purchase.initialCheckIdentification}
+                      onChange={(event) => setPurchase((current) => ({ ...current, initialCheckIdentification: event.target.value }))}
+                      required maxLength={40} disabled={readOnly} />
+                  </label>
+                  <label>
+                    Emissão *
+                    <input type="date" value={purchase.initialCheckIssueDate}
+                      onChange={(event) => setPurchase((current) => ({ ...current, initialCheckIssueDate: event.target.value }))}
+                      required disabled={readOnly} />
+                  </label>
+                  <label>
+                    Previsão de compensação *
+                    <input type="date" value={purchase.initialCheckExpectedDate}
+                      onChange={(event) => setPurchase((current) => ({ ...current, initialCheckExpectedDate: event.target.value }))}
+                      required disabled={readOnly} />
+                  </label>
+                </>
+              )}
               <div className="supplier-installment-editor supplier-purchase-wide">
                 <div className="supplier-section-heading">
                   <div>
@@ -919,6 +1466,11 @@ export default function SuppliersPage() {
                           id: crypto.randomUUID(),
                           amount: "",
                           dueDate: "",
+                          method: "boleto",
+                          identification: "",
+                          bankAccount: "bb-pf",
+                          bankName: "Banco do Brasil",
+                          issueDate: todayInput(),
                         },
                       ])
                     }
@@ -960,6 +1512,44 @@ export default function SuppliersPage() {
                             disabled={readOnly}
                           />
                         </label>
+                        <label>
+                          Forma de pagamento
+                          <select value={installment.method || "boleto"}
+                            onChange={(event) => updateInstallment(index, "method", event.target.value)}
+                            required disabled={readOnly}>
+                            <option value="boleto">Boleto / parcela</option>
+                            <option value="cheque">Cheque</option>
+                          </select>
+                        </label>
+                        {installment.method === "cheque" && (
+                          <>
+                            <label>
+                              Banco / conta *
+                              <select value={installment.bankAccount || "bb-pf"}
+                                onChange={(event) => {
+                                  updateInstallment(index, "bankAccount", event.target.value);
+                                  updateInstallment(index, "bankName", "Banco do Brasil");
+                                }}
+                                required disabled={readOnly}>
+                                <option value="bb-pf">Banco do Brasil · PF</option>
+                                <option value="bb-pj">Banco do Brasil · PJ</option>
+                              </select>
+                            </label>
+                            <label>
+                              Número do cheque *
+                              <input value={installment.identification || ""}
+                                onChange={(event) => updateInstallment(index, "identification", event.target.value)}
+                                maxLength={40} required disabled={readOnly} />
+                            </label>
+                            <label>
+                              Data de emissão *
+                              <input type="date" value={installment.issueDate || ""}
+                                onChange={(event) => updateInstallment(index, "issueDate", event.target.value)}
+                                required disabled={readOnly} />
+                            </label>
+                            <small>O vencimento acima é a data prevista de compensação. O cheque permanece como obrigação até compensar.</small>
+                          </>
+                        )}
                         <button
                           type="button"
                           className="suppliers-secondary-button"
@@ -1070,8 +1660,42 @@ export default function SuppliersPage() {
               <option value="transferencia">Transferência</option>
               <option value="boleto">Boleto</option>
               <option value="cartao">Cartão</option>
+              <option value="cheque">Cheque</option>
             </select>
           </label>
+          {payment.method === "cheque" && (
+            <>
+              <label>
+                Banco / conta do cheque *
+                <select
+                  value={payment.bankAccount}
+                  onChange={(event) => setPayment((current) => ({
+                    ...current,
+                    bankAccount: event.target.value,
+                    bankName: "Banco do Brasil",
+                  }))}
+                  required disabled={readOnly}>
+                  <option value="bb-pf">Banco do Brasil · PF</option>
+                  <option value="bb-pj">Banco do Brasil · PJ</option>
+                </select>
+              </label>
+              <label>
+                Data de emissão *
+                <input type="date" value={payment.issueDate}
+                  onChange={(event) => setPayment((current) => ({ ...current, issueDate: event.target.value }))}
+                  required disabled={readOnly} />
+              </label>
+              <label>
+                Previsão de compensação *
+                <input type="date" value={payment.expectedCompensationDate}
+                  onChange={(event) => setPayment((current) => ({ ...current, expectedCompensationDate: event.target.value }))}
+                  required disabled={readOnly} />
+              </label>
+              <small className="supplier-purchase-wide">
+                A emissão registra o cheque sem baixar o saldo financeiro. A saída de caixa ocorre somente ao confirmar a compensação.
+              </small>
+            </>
+          )}
           <label>
             Identificação / comprovante
             <input

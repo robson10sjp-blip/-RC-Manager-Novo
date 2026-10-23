@@ -5,6 +5,9 @@ import {
   applyCheckStatusTransition,
   applyPaymentToPayable,
   CHECK_STATUSES,
+  correctSupplierPayment,
+  createIssuedCheck,
+  editSupplierPurchase,
   filterPayablesByTrip,
   getCheckStatus,
   getPayableBalance,
@@ -217,6 +220,109 @@ test("issued checks remain liabilities until they are compensated", () => {
         CHECK_STATUSES.COMPENSATED
       ),
     /Somente cheques emitidos/
+  );
+});
+
+test("supplier edits recalculate installments without reducing the total below paid amounts", () => {
+  const payable = {
+    id: "supplier-purchase",
+    description: "Lote",
+    totalAmount: 1000,
+    paidAmount: 200,
+    balance: 800,
+    paymentType: "credit",
+    purchaseDate: date("2026-10-18"),
+    installments: [
+      { id: "part-1", amount: 800, paidAmount: 100, dueDate: date("2026-11-18"), method: "boleto" },
+    ],
+  };
+  const updated = editSupplierPurchase(payable, {
+    description: "Lote corrigido",
+    totalAmount: 1200,
+    purchaseDate: "2026-10-19",
+    dueDate: "2026-12-01",
+    paymentType: "credit",
+  });
+  assert.equal(updated.totalAmount, 1200);
+  assert.equal(updated.paidAmount, undefined);
+  assert.equal(updated.balance, 1000);
+  assert.equal(updated.installments[0].amount, 1000);
+  assert.equal(updated.installments[0].paidAmount, 100);
+  assert.equal(updated.installments[0].dueDate.getDate(), 1);
+  assert.throws(
+    () => editSupplierPurchase(payable, {
+      description: "Menor que recebido",
+      totalAmount: 150,
+      purchaseDate: "2026-10-19",
+      dueDate: "2026-12-01",
+      paymentType: "credit",
+    }),
+    /abaixo do valor já pago/
+  );
+  assert.throws(
+    () => editSupplierPurchase(payable, {
+      description: "À vista sem quitar",
+      totalAmount: 1000,
+      purchaseDate: "2026-10-19",
+      paymentType: "cash",
+    }),
+    /integralmente pago/
+  );
+});
+
+test("issuing multiple checks reserves obligations without reducing paid or cash totals", () => {
+  const payable = {
+    totalAmount: 1000,
+    paidAmount: 200,
+    balance: 800,
+    installments: [
+      { id: "part-1", amount: 500, paidAmount: 100, dueDate: date("2026-11-01"), method: "boleto" },
+      { id: "part-2", amount: 300, paidAmount: 0, dueDate: date("2026-12-01"), method: "boleto" },
+    ],
+  };
+  const withFirst = createIssuedCheck(payable, {
+    id: "check-1", amount: 200, identification: "001", bankAccount: "bb-pf",
+    issueDate: "2026-10-18", expectedCompensationDate: "2026-11-10",
+  });
+  const afterFirst = { ...payable, installments: withFirst };
+  const withSecond = createIssuedCheck(afterFirst, {
+    id: "check-2", amount: 300, identification: "002", bankAccount: "bb-pj",
+    issueDate: "2026-10-19", expectedCompensationDate: "2026-12-10",
+  });
+  assert.equal(withSecond.filter((item) => item.method === "cheque").length, 2);
+  assert.equal(withSecond.reduce((sum, item) => sum + item.amount, 0), 800);
+  assert.equal(payable.paidAmount, 200);
+  assert.equal(getPayableBalance({ ...payable, installments: withSecond }), 800);
+  assert.equal(withSecond.find((item) => item.id === "check-1").checkStatus, CHECK_STATUSES.ISSUED);
+});
+
+test("correcting a payment updates existing allocation without adding another payment", () => {
+  const payable = {
+    totalAmount: 1000,
+    paidAmount: 350,
+    balance: 650,
+    installments: [
+      { id: "part-1", amount: 400, paidAmount: 250, dueDate: date("2026-11-01"), method: "boleto" },
+      { id: "part-2", amount: 500, paidAmount: 0, dueDate: date("2026-12-01"), method: "boleto" },
+    ],
+  };
+  const corrected = correctSupplierPayment(
+    payable,
+    { amount: 250, installmentId: "part-1", allocations: [{ installmentId: "part-1", amount: 250 }] },
+    { amount: 200, date: date("2026-10-19"), installmentId: "part-1", method: "pix" }
+  );
+  assert.equal(corrected.paidAmount, 300);
+  assert.equal(corrected.balance, 700);
+  assert.equal(corrected.installments[0].paidAmount, 200);
+  assert.equal(corrected.allocations[0].amount, 200);
+  assert.equal(payable.paidAmount, 350);
+  assert.throws(
+    () => correctSupplierPayment(
+      { ...payable, paidAmount: 900, balance: 100 },
+      { amount: 100, allocations: [] },
+      { amount: 300, date: date("2026-10-19"), method: "pix" }
+    ),
+    /excede o total/
   );
 });
 

@@ -70,6 +70,7 @@ export function buildSupplierPayable({
     throw new Error("A lista de parcelas é inválida.");
   }
 
+  const chequeNumbers = new Set();
   const normalizedInstallments = installments.map((installment, index) => {
     const amount = Number(String(installment.amount || 0).replace(",", "."));
     const amountCents = Math.round((amount + Number.EPSILON) * 100);
@@ -82,13 +83,46 @@ export function buildSupplierPayable({
     if (!dueDate || Number.isNaN(dueDate.getTime())) {
       throw new Error(`Informe um vencimento válido para a parcela ${index + 1}.`);
     }
+    const method = installment.method || "boleto";
+    if (!["boleto", "cheque"].includes(method)) {
+      throw new Error(`A forma da parcela ${index + 1} não é válida.`);
+    }
+    const checkFields = {};
+    if (method === "cheque") {
+      const identification = String(installment.identification || "").trim();
+      const issueDate = installment.issueDate
+        ? new Date(`${installment.issueDate}T12:00:00`)
+        : null;
+      if (!identification) throw new Error(`Informe o número do cheque da parcela ${index + 1}.`);
+      if (!["bb-pf", "bb-pj"].includes(installment.bankAccount)) {
+        throw new Error(`Selecione a conta do cheque da parcela ${index + 1}.`);
+      }
+      if (!issueDate || Number.isNaN(issueDate.getTime())) {
+        throw new Error(`Informe a data de emissão do cheque da parcela ${index + 1}.`);
+      }
+      const uniqueNumber = `${installment.bankAccount}|${identification.toLocaleLowerCase("pt-BR")}`;
+      if (chequeNumbers.has(uniqueNumber)) {
+        throw new Error("Cada cheque deve ter número próprio dentro da conta bancária.");
+      }
+      chequeNumbers.add(uniqueNumber);
+      checkFields.bankAccount = installment.bankAccount;
+      checkFields.bankName = installment.bankName || "Banco do Brasil";
+      checkFields.issueDate = issueDate;
+      checkFields.checkStatus = "issued";
+      checkFields.checkStatusHistory = [
+        { status: "issued", changedAt: now },
+      ];
+    }
     return {
       id: installment.id || `installment-${index + 1}`,
       amount: amountCents / 100,
       paidAmount: 0,
       dueDate,
-      method: "boleto",
-      identification: "",
+      method,
+      identification: method === "cheque"
+        ? String(installment.identification).trim()
+        : String(installment.identification || "").trim(),
+      ...checkFields,
       status: "pending",
     };
   });
@@ -112,10 +146,12 @@ export function buildSupplierPayable({
     supplierId: supplier.id,
     supplierName: getSupplierDisplayName(supplier),
     purchaseType: "inventory",
+    paymentType: paidCents === totalCents ? "cash" : "credit",
     description: String(description).trim(),
     purchaseDate: purchase,
     totalAmount: totalCents / 100,
     paidAmount: paidCents / 100,
+    initialPaymentAmount: paidCents / 100,
     balance: (totalCents - paidCents) / 100,
     initialPaymentDate: paidCents > 0 ? now : null,
     installments: normalizedInstallments,

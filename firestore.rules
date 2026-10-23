@@ -49,6 +49,47 @@ service cloud.firestore {
           <= request.resource.data.get('previousBalance', 0);
     }
 
+    function hasPurchaseCorrection(uid, payableId) {
+      let correctionId = request.resource.data.get('lastCorrectionId', '');
+      let correctionPath = /databases/$(database)/documents/users/$(uid)/payables/$(payableId)/corrections/$(correctionId);
+      let correction = getAfter(correctionPath).data;
+      return correctionId is string
+        && correctionId.size() > 0
+        && correctionId != resource.data.get('lastCorrectionId', '')
+        && !exists(correctionPath)
+        && existsAfter(correctionPath)
+        && correction.type in ['purchase', 'check']
+        && correction.payableId == payableId
+        && correction.createdAt == request.time
+        && correction.after.totalAmount == request.resource.data.totalAmount
+        && correction.after.description == request.resource.data.get('description', null)
+        && correction.after.purchaseDate == request.resource.data.get('purchaseDate', null)
+        && correction.after.balance == request.resource.data.get('balance', null)
+        && correction.after.paymentType == request.resource.data.get('paymentType', null)
+        && correction.after.initialPaymentAmount == request.resource.data.get('initialPaymentAmount', null)
+        && correction.after.dueDate == request.resource.data.get('dueDate', null)
+        && correction.after.status == request.resource.data.get('status', null)
+        && correction.after.installments == request.resource.data.installments;
+    }
+
+    function hasPaymentCorrection(uid, payableId, paymentId) {
+      let correctionId = request.resource.data.get('lastCorrectionId', '');
+      let correctionPath = /databases/$(database)/documents/users/$(uid)/payables/$(payableId)/corrections/$(correctionId);
+      let correction = getAfter(correctionPath).data;
+      return correctionId is string
+        && correctionId.size() > 0
+        && correctionId != resource.data.get('lastCorrectionId', '')
+        && !exists(correctionPath)
+        && existsAfter(correctionPath)
+        && correction.type == 'payment'
+        && correction.payableId == payableId
+        && correction.paymentId == paymentId
+        && correction.createdAt == request.time
+        && correction.after.amount == request.resource.data.amount
+        && correction.after.date == request.resource.data.date
+        && correction.after.method == request.resource.data.method;
+    }
+
     function validClientClassification(data) {
       return !('classification' in data) || data.classification in [
         'unclassified',
@@ -281,13 +322,37 @@ service cloud.firestore {
         allow update: if owner(uid)
           && unchangedOrNumber('totalAmount')
           && unchangedOrNumber('paidAmount')
-          && unchangedOrNumber('balance');
+          && unchangedOrNumber('balance')
+          && unchangedOrString('description')
+          && (!request.resource.data.diff(resource.data).affectedKeys().hasAny([
+            'description', 'totalAmount', 'purchaseDate', 'dueDate',
+            'paymentType', 'initialPaymentAmount', 'lastCorrectionId'
+          ])
+            || hasPurchaseCorrection(uid, payableId));
         allow delete: if owner(uid);
       }
 
       match /payables/{payableId}/payments/{paymentId} {
         allow read: if owner(uid);
         allow create: if owner(uid) && optionalNumber('amount');
+        allow update: if owner(uid)
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            'amount', 'date', 'method', 'identification', 'bankAccount',
+            'bankName', 'issueDate', 'expectedCompensationDate', 'allocations',
+            'lastCorrectionId', 'updatedAt'
+          ])
+          && unchangedOrNumber('amount')
+          && request.resource.data.amount > 0
+          && hasPaymentCorrection(uid, payableId, paymentId);
+        allow delete: if false;
+      }
+
+      match /payables/{payableId}/corrections/{correctionId} {
+        allow read: if owner(uid);
+        allow create: if owner(uid)
+          && request.resource.data.payableId == payableId
+          && request.resource.data.type in ['purchase', 'payment', 'check']
+          && request.resource.data.createdAt == request.time;
         allow update, delete: if false;
       }
 

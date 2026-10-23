@@ -98,6 +98,10 @@
 .supplier-purchase-form select,
 .supplier-payment-form input,
 .supplier-payment-form select,
+.supplier-installment-editor-row input,
+.supplier-installment-editor-row select,
+.supplier-correction-form input,
+.supplier-correction-form select,
 .suppliers-search {
   width: 100%;
   min-width: 0;
@@ -405,7 +409,7 @@
 
 .supplier-installment-editor-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: end;
   gap: 10px;
   padding: 10px;
@@ -492,6 +496,100 @@
   margin: 7px 0 0;
 }
 
+.supplier-purchase-actions,
+.supplier-correction-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 9px;
+}
+
+.supplier-purchase-actions button,
+.supplier-payment-history-entry > button,
+.supplier-correction-actions button,
+.supplier-installment > button {
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 1px solid #d4deea;
+  border-radius: 8px;
+  background: #fff;
+  color: #31598b;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.supplier-purchase-actions button:disabled,
+.supplier-payment-history-entry > button:disabled,
+.supplier-correction-actions button:disabled,
+.supplier-installment > button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.supplier-payment-history-entry {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid #eef1f5;
+}
+
+.supplier-correction-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  width: 100%;
+  margin: 10px 0;
+  padding: 13px;
+  border: 1px solid #dce4f0;
+  border-radius: 11px;
+  background: #f9fbfd;
+}
+
+.supplier-correction-form h5,
+.supplier-correction-form small,
+.supplier-correction-form .supplier-correction-actions {
+  grid-column: 1 / -1;
+}
+
+.supplier-correction-form h5 {
+  margin: 0;
+}
+
+.supplier-correction-form label {
+  display: grid;
+  gap: 6px;
+  color: #34435a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.supplier-correction-form small {
+  color: #65738a;
+}
+
+.supplier-correction-history {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #e8edf3;
+}
+
+.supplier-correction-history summary {
+  color: #8a6a1f;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.supplier-correction-history p {
+  color: #65738a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .supplier-actions button:disabled,
 .suppliers-secondary-button:disabled {
   cursor: not-allowed;
@@ -533,7 +631,8 @@
 
   .supplier-purchase-form,
   .supplier-payment-form,
-  .supplier-installment-editor-row {
+  .supplier-installment-editor-row,
+  .supplier-correction-form {
     grid-template-columns: minmax(0, 1fr);
   }
 

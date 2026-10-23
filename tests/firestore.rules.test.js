@@ -24,6 +24,14 @@ import {
 } from "firebase/firestore";
 import { createClientTrip, recordClientVisit, recordClientGift, cancelClientGift } from "../src/services/clientRecords.js";
 import { buildClientVisitSummary } from "../src/domain/clientRecords.js";
+import {
+  compensateSupplierCheck,
+  correctSupplierCheck,
+  correctSupplierPayment,
+  editSupplierPurchase,
+  issueSupplierCheck,
+} from "../src/services/supplierPayables.js";
+import { buildSupplierPayable } from "../src/domain/suppliers.js";
 
 const PROJECT_ID = "demo-rc-manager-rules";
 const RULES_PATH = path.resolve(process.cwd(), "firestore.rules");
@@ -155,6 +163,145 @@ test("blocks cross-user writes", async () => {
       quantity: 999,
     })
   );
+});
+
+test("supplier purchase edits, payment corrections and check compensation are atomic and idempotent", async () => {
+  const db = ownerDb();
+  const payableRef = ref(db, "payables", "supplier-fake");
+  const paymentsRef = collection(db, "users", USER_A, "payables", "supplier-fake", "payments");
+  const purchase = buildSupplierPayable({
+    supplier: { id: "supplier-fake", name: "Fornecedor Fictício" },
+    description: "Compra fictícia",
+    purchaseDate: "2026-10-01",
+    totalAmount: 500,
+    downPayment: 100,
+    installments: [{
+      id: "installment-1", amount: 400,
+      dueDate: "2026-11-01", method: "boleto",
+    }],
+  });
+  await assertSucceeds(setDoc(payableRef, purchase));
+  await assertSucceeds(setDoc(doc(paymentsRef, "down-payment-1"), {
+    type: "down-payment", amount: 100,
+    date: new Date("2026-10-01T12:00:00Z"), method: "pix", allocations: [],
+  }));
+
+  const issue = {
+    db, userId: USER_A, payableId: "supplier-fake", operationId: "issue-test-1",
+    amount: 150, identification: "00981", bankAccount: "bb-pf",
+    bankName: "Banco do Brasil", issueDate: "2026-10-02",
+    expectedCompensationDate: "2026-11-10",
+  };
+  const firstIssue = await assertSucceeds(issueSupplierCheck(issue));
+  const secondIssue = await assertSucceeds(issueSupplierCheck({
+    ...issue,
+    operationId: "issue-test-2",
+    amount: 50,
+    identification: "00982",
+    bankAccount: "bb-pj",
+  }));
+  assert.notEqual(firstIssue.checkId, secondIssue.checkId);
+  assert.equal((await assertSucceeds(issueSupplierCheck(issue))).alreadyRecorded, true);
+  const reloadedPayable = (await getDoc(ref(ownerDb(), "payables", "supplier-fake"))).data();
+  const check = reloadedPayable.installments.find((item) => item.id === firstIssue.checkId);
+  assert.equal(reloadedPayable.installments.filter((item) => item.method === "cheque").length, 2);
+  assert.equal(check.checkStatus, "issued");
+  assert.equal(check.issueDate.toDate().toISOString().slice(0, 10), "2026-10-02");
+  assert.equal(reloadedPayable.paidAmount, 100);
+  assert.equal((await getDocs(paymentsRef)).size, 1);
+  await assertSucceeds(correctSupplierCheck({
+    db, userId: USER_A, payableId: "supplier-fake", installmentId: check.id,
+    changes: {
+      amount: 150, identification: "00981-CORR", bankAccount: "bb-pf",
+      bankName: "Banco do Brasil", issueDate: new Date("2026-10-02T12:00:00Z"),
+      expectedCompensationDate: new Date("2026-11-10T12:00:00Z"),
+    },
+  }));
+  assert.equal((await getDocs(collection(db, "users", USER_A, "payables", "supplier-fake", "corrections"))).size, 1);
+
+  await assertSucceeds(compensateSupplierCheck({
+    db, userId: USER_A, payableId: "supplier-fake", installmentId: check.id,
+  }));
+  await assertSucceeds(compensateSupplierCheck({
+    db, userId: USER_A, payableId: "supplier-fake", installmentId: check.id,
+  }));
+  assert.equal((await getDocs(paymentsRef)).size, 2);
+  const afterCompensation = (await getDoc(payableRef)).data();
+  assert.equal(afterCompensation.paidAmount, 250);
+  assert.equal(afterCompensation.balance, 250);
+  assert.equal(afterCompensation.installments.find((item) => item.id === check.id).checkStatus, "compensated");
+
+  await assertSucceeds(editSupplierPurchase({
+    db, userId: USER_A, payableId: "supplier-fake",
+    changes: {
+      description: "Compra fictícia corrigida", totalAmount: 600,
+      purchaseDate: "2026-10-03", dueDate: "2026-12-01", paymentType: "credit",
+    },
+  }));
+  const editedPayable = (await getDoc(payableRef)).data();
+  assert.equal(editedPayable.totalAmount, 600);
+  assert.equal(editedPayable.paidAmount, 250);
+  assert.equal(editedPayable.balance, 350);
+  assert.equal(editedPayable.installments.find((item) => item.id === check.id).amount, 150);
+  assert.equal((await getDocs(collection(db, "users", USER_A, "payables", "supplier-fake", "corrections"))).size, 2);
+  await assert.rejects(editSupplierPurchase({
+    db, userId: USER_A, payableId: "supplier-fake",
+    changes: {
+      description: "Total abaixo do pago", totalAmount: 200,
+      purchaseDate: "2026-10-03", dueDate: "2026-12-01", paymentType: "credit",
+    },
+  }), /abaixo do valor já pago/);
+
+  const partialRef = doc(paymentsRef, "partial-1");
+  const current = (await getDoc(payableRef)).data();
+  await assertSucceeds(runTransaction(db, async (tx) => {
+    tx.update(payableRef, {
+      paidAmount: 300,
+      balance: 300,
+      status: "partial",
+      installments: current.installments.map((item) =>
+        item.id === "installment-1"
+          ? { ...item, paidAmount: 50, status: "partial" }
+          : item
+      ),
+    });
+    tx.set(partialRef, {
+      amount: 50, date: new Date("2026-10-04T12:00:00Z"), method: "pix",
+      installmentId: "installment-1", allocations: [{ installmentId: "installment-1", amount: 50 }],
+    });
+  }));
+  await assertSucceeds(correctSupplierPayment({
+    db, userId: USER_A, payableId: "supplier-fake", paymentId: "partial-1",
+    changes: {
+      amount: 40, date: new Date("2026-10-05T12:00:00Z"), method: "pix",
+      identification: "", installmentId: "installment-1",
+    },
+  }));
+  const corrected = (await getDoc(payableRef)).data();
+  const correctedPayment = (await getDoc(partialRef)).data();
+  assert.equal(corrected.paidAmount, 290);
+  assert.equal(corrected.balance, 310);
+  assert.equal(correctedPayment.amount, 40);
+  assert.equal((await getDocs(paymentsRef)).docs.reduce(
+    (sum, item) => sum + Number(item.data().amount || 0), 0
+  ), 290);
+  assert.equal((await getDocs(paymentsRef)).size, 3);
+  assert.equal((await getDocs(collection(db, "users", USER_A, "payables", "supplier-fake", "corrections"))).size, 3);
+  await assertFails(updateDoc(payableRef, {
+    description: "Sem correção auditada",
+    totalAmount: 601,
+    paidAmount: 290,
+    balance: 311,
+  }));
+  await assertFails(updateDoc(partialRef, { amount: 45 }));
+  const auditSnapshot = await getDocs(collection(db, "users", USER_A, "payables", "supplier-fake", "corrections"));
+  await assertFails(updateDoc(auditSnapshot.docs[0].ref, { type: "forged" }));
+  await assertFails(deleteDoc(auditSnapshot.docs[0].ref));
+  await assertFails(getDoc(ref(testEnv.authenticatedContext(USER_B).firestore(), "payables", "supplier-fake")));
+  await assertFails(getDocs(collection(testEnv.authenticatedContext(USER_B).firestore(),
+    "users", USER_A, "payables", "supplier-fake", "corrections")));
+  await assertFails(updateDoc(doc(testEnv.authenticatedContext(USER_B).firestore(),
+    "users", USER_A, "payables", "supplier-fake"), { totalAmount: 9999 }));
 });
 
 test("validates product quantity as non-negative integer", async () => {

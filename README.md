@@ -13,6 +13,13 @@
 - O build falha explicitamente se uma variavel obrigatoria faltar ou contiver um valor de exemplo. A mensagem mostra apenas nomes de variaveis, nunca valores.
 - O Service Worker usa atualizacao automatica e os arquivos de entrada do PWA exigem revalidacao HTTP. Nenhuma correcao requer apagar IndexedDB, login ou dados locais.
 
+## Fornecedores: cheques e correcoes
+
+- Compras e pagamentos de fornecedores continuam usando `users/{uid}/payables` e a subcolecao `payments`, compartilhadas com o Financeiro. Cheques emitidos ficam como obrigacao; somente a compensacao cria o pagamento no caixa, com ID deterministico compartilhado entre as telas para impedir duplicidade.
+- Compras aceitam varias parcelas/cheques com banco/conta, numero, emissao e data prevista de compensacao. O saldo, as parcelas e os pagamentos sao editados em transacoes.
+- Correcoes preservam os valores anteriores em `payables/{payableId}/corrections`, sem criar um segundo pagamento. O total da compra nao pode ficar abaixo do que ja foi pago; reducoes que afetem parcelas pagas ou cheques emitidos sao bloqueadas para conciliacao explicita.
+- As novas escritas de correcoes exigem as permissoes correspondentes em [firestore.rules](./firestore.rules). Publique o arquivo completo manualmente no console do Firebase; as regras de producao nao sao aplicadas pelo deploy do Netlify.
+
 This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
 
 Currently, two official plugins are available:
