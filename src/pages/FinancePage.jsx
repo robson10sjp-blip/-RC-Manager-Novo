@@ -58,7 +58,7 @@ import { toDate } from "../utils/dates";
 import { getExpenseCategoryLabel, isPersonalWithdrawal } from "../domain/expenses.js";
 import ReceiptViewer from "../components/receipts/ReceiptViewer.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
-import TripReview from "../components/TripReview.jsx";
+import { saleDateInput } from "../domain/saleTrip.js";
 import { useFinancialPrivacy } from "../context/financialPrivacy.js";
 import "./FinancePayables.css";
 import "./FinancePremium.css";
@@ -415,8 +415,13 @@ export default function FinancePage() {
       sales,
       payables,
       expenses,
+      report: true,
     }),
     [trips, sales, payables, expenses]
+  );
+  const entryTripOptions = useMemo(
+    () => buildTripOptions({ trips, payables, expenses }),
+    [trips, payables, expenses]
   );
   const selectedTripOption = tripOptions.find((trip) => trip.id === tripFilter);
   const selectedTripSales = useMemo(() => {
@@ -587,12 +592,12 @@ export default function FinancePage() {
       entries.push({
         id: `sale-${sale.id}`,
         type: "sale",
-        date: toDate(sale.saleDate) || toDate(sale.createdAt),
+        date: toDate(saleDateInput(sale.saleDate)),
         title: sale.clientName || "Venda",
         description: [
           `Compra #${sale.id}`,
           `${(sale.items || []).length} item(ns)`,
-          getRecordTripId(sale) ? getTripOptionLabel(sale, tripOptions) : "Sem viagem definida",
+          getTripOptionLabel(sale, tripOptions),
           sale.tripCity,
         ]
           .filter(Boolean)
@@ -714,7 +719,7 @@ export default function FinancePage() {
       return;
     }
 
-    const selectedExpenseTrip = tripOptions.find((trip) => trip.id === expenseForm.tripId);
+    const selectedExpenseTrip = entryTripOptions.find((trip) => trip.id === expenseForm.tripId);
     if (expenseForm.tripId && !selectedExpenseTrip) {
       alert("Selecione uma viagem válida ou deixe sem viagem.");
       return;
@@ -880,7 +885,7 @@ export default function FinancePage() {
       setPayableMessage("Informe uma data de compra válida.");
       return;
     }
-    const payableTrip = tripOptions.find((trip) => trip.id === payableForm.tripId);
+    const payableTrip = entryTripOptions.find((trip) => trip.id === payableForm.tripId);
     if (payableForm.tripId && !payableTrip) {
       setPayableMessage("Selecione uma viagem válida ou deixe sem viagem.");
       return;
@@ -1465,8 +1470,6 @@ Qualquer dúvida estou à disposição. Obrigado!`;
       </PageHeader>
 
       <section className="fin-summary" style={styles.tripSummarySection}>
-        <TripReview key={auth.currentUser?.uid || "signed-out"} userId={auth.currentUser?.uid}
-          trips={trips} sales={sales} payables={payables} expenses={expenses} />
         <div style={styles.tripSummaryHeader}>
           <div>
             <h2 style={styles.cardTitle}>
@@ -1479,13 +1482,9 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                     : "Resumo da viagem"}
             </h2>
             <p style={styles.helperText}>
-              Viagens separadas pelos vínculos registrados. Registros sem ano
-              ou sem cadastro permanecem disponíveis para revisão, sem atribuição pela data.
+              Vendas por trimestre e ano da data da venda. Despesas e compras mantêm seus próprios vínculos.
             </p>
           </div>
-          <span style={styles.proposalBadge}>
-            Vínculos de viagem preservados
-          </span>
         </div>
         <div className="fin-cards" style={styles.tripSummaryGrid}>
           {[
@@ -1917,8 +1916,8 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                   Viagem (opcional)
                   <select name="tripId" value={payableForm.tripId} onChange={handlePayableFormChange}>
                     <option value="">Sem viagem vinculada</option>
-                    {tripOptions.map((trip) => (
-                      <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, tripOptions)}</option>
+                    {entryTripOptions.map((trip) => (
+                      <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, entryTripOptions)}</option>
                     ))}
                   </select>
                 </label>
@@ -2301,9 +2300,9 @@ Qualquer dúvida estou à disposição. Obrigado!`;
               <option value="">
                 Sem viagem definida
               </option>
-              {tripOptions.map((trip) => (
+              {entryTripOptions.map((trip) => (
                 <option key={trip.id} value={trip.id}>
-                  {getTripSelectionLabel(trip, tripOptions)}
+                  {getTripSelectionLabel(trip, entryTripOptions)}
                 </option>
               ))}
             </select>
@@ -2497,7 +2496,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                                 </p>
                                 {(openSale.tripName || openSale.tripCity) && (
                                   <p style={styles.saleDebtMeta}>
-                                    Viagem registrada: {getRecordTripId(openSale) ? getTripOptionLabel(openSale, tripOptions) : "Sem viagem definida"}
+                                    Viagem: {getTripOptionLabel(openSale, tripOptions)}
                                     {openSale.tripCity
                                       ? ` • ${openSale.tripCity}`
                                       : ""}

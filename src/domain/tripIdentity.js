@@ -1,6 +1,11 @@
 import { normalizeSearchText } from "./clientCities.js";
+import { getSaleTrip, isSaleRecord } from "./saleTrip.js";
 
 export function getTripNumberYear(record = {}) {
+  if (isSaleRecord(record)) {
+    const trip = getSaleTrip(record);
+    return { tripNumber: trip?.tripNumber || null, tripYear: trip?.tripYear || null };
+  }
   const name = normalizeSearchText(record.tripName || record.name);
   const numberMatch =
     name.match(/\b([1-9]\d*)\s*(?:a|o)?\s*viagem\b/) ||
@@ -16,6 +21,7 @@ export function getTripNumberYear(record = {}) {
 }
 
 export function getTripOptionLabel(trip = {}, options = []) {
+  if (isSaleRecord(trip)) return getSaleTrip(trip)?.name || "Data da venda não informada ou inválida";
   if (trip.identityConflict && !trip.registered) {
     return trip.tripNumber
       ? `${trip.tripNumber}ª viagem (ano em conflito)`
@@ -38,8 +44,17 @@ export function getTripOptionLabel(trip = {}, options = []) {
 }
 
 export function getRecordTripId(record = {}) {
+  if (isSaleRecord(record)) return getSaleTrip(record)?.id || "";
+  return getLinkedTripId(record);
+}
+
+export function getLinkedTripId(record = {}) {
   if (record.tripId) return String(record.tripId);
-  const { tripNumber, tripYear } = getTripNumberYear(record);
+  const stored = {
+    tripNumber: record.tripNumber, tripYear: record.tripYear,
+    year: record.year, tripName: record.tripName, name: record.name,
+  };
+  const { tripNumber, tripYear } = getTripNumberYear(stored);
   if (tripNumber) {
     return `legacy-number-${tripNumber}${tripYear ? `-${tripYear}` : ""}`;
   }
@@ -51,6 +66,8 @@ export function getRecordTripId(record = {}) {
 export function tripMatchesRecord(record = {}, trip = {}) {
   const selectedId = typeof trip === "string" ? trip : trip.id;
   if (!selectedId) return false;
+  if (isSaleRecord(record)) return getSaleTrip(record)?.id === selectedId;
+  if (trip.linkedTripIds?.includes(getRecordTripId(record))) return true;
 
   const selectedIdentity = getTripNumberYear(trip);
   const recordIdentity = getTripNumberYear(record);
@@ -75,10 +92,15 @@ export function buildTripOptions({
   visits = [],
   payables = [],
   expenses = [],
+  salesOnly = false,
+  report = false,
 }) {
   const options = new Map();
+  const saleOptions = sales.map(getSaleTrip).filter(Boolean);
+  if (salesOnly) return [...new Map(saleOptions.map((trip) => [trip.id, trip])).values()]
+    .sort((a, b) => a.tripYear - b.tripYear || a.tripNumber - b.tripNumber);
   const evidence = new Map();
-  for (const record of [...sales, ...visits, ...payables, ...expenses]) {
+  for (const record of [...visits, ...payables, ...expenses]) {
     const id = getRecordTripId(record);
     if (!id) continue;
     const { tripNumber, tripYear } = getTripNumberYear(record);
@@ -98,6 +120,7 @@ export function buildTripOptions({
     });
   }
   for (const trip of trips) {
+    if (report && ![...visits, ...payables, ...expenses].some((record) => record.tripId === trip.id)) continue;
     const { tripNumber, tripYear } = getTripNumberYear(trip);
     const identity = evidence.get(trip.id);
     const identityConflict = Boolean(identity && (
@@ -115,6 +138,19 @@ export function buildTripOptions({
       reviewRequired: !tripNumber || !tripYear || identityConflict,
     });
   }
+  if (report) {
+    for (const option of [...options.values()]) {
+      if (!option.tripNumber || !option.tripYear) continue;
+      const id = `trip-${option.tripYear}-${option.tripNumber}`;
+      const existing = options.get(id);
+      options.delete(option.id);
+      options.set(id, {
+        ...option, id, linkedTripIds: [...(existing?.linkedTripIds || []), option.id],
+        name: getTripOptionLabel(option), reviewRequired: false, identityConflict: false,
+      });
+    }
+  }
+  for (const trip of saleOptions) options.set(trip.id, { ...options.get(trip.id), ...trip, reviewRequired: false });
   return [...options.values()].sort((a, b) =>
     (a.tripYear || 0) - (b.tripYear || 0) ||
     (a.tripNumber || 0) - (b.tripNumber || 0) ||
@@ -159,6 +195,8 @@ export function filterRecordsByTrip(records, selection, options = []) {
 }
 
 export function getSaleTripEditFields(form, changed) {
+  // Sale classification is derived from saleDate, not persisted travel metadata.
+  if (isSaleRecord(form)) return {};
   if (!changed) return {};
   if (!form.tripId) {
     return { tripId: "", tripName: "", tripNumber: null, tripYear: null };

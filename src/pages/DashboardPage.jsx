@@ -19,7 +19,6 @@ import {
 import { toDate } from "../utils/dates";
 import {
   buildTripOptions,
-  buildTripReview,
   getTripOptionLabel,
   getTripSelectionLabel,
   filterRecordsByTrip,
@@ -241,16 +240,13 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const tripReviewSaleIds = useMemo(() => new Set(
-    buildTripReview({ trips, sales }).filter((row) => row.collection === "sales")
-      .map((row) => row.recordId)
-  ), [trips, sales]);
   const tripOptions = useMemo(
     () => buildTripOptions({
       trips,
       sales,
       payables,
       expenses,
+      report: true,
     }),
     [expenses, payables, sales, trips]
   );
@@ -258,10 +254,9 @@ export default function DashboardPage() {
   const selectedSales = useMemo(
     () => {
       if (tripFilter === "all") return sales;
-      if (tripFilter === "review") return sales.filter((sale) => tripReviewSaleIds.has(sale.id));
       return filterRecordsByTrip(sales, tripFilter, tripOptions);
     },
-    [sales, tripOptions, tripFilter, tripReviewSaleIds]
+    [sales, tripOptions, tripFilter]
   );
   const selectedExpenses = useMemo(
     () =>
@@ -269,8 +264,6 @@ export default function DashboardPage() {
         ? expenses
         : tripFilter === "unassigned"
           ? expenses.filter((expense) => !getRecordTripId(expense))
-          : tripFilter === "review"
-          ? []
           : selectedTripOption
             ? expenses.filter((expense) =>
               tripMatchesRecord(expense, selectedTripOption)
@@ -279,9 +272,7 @@ export default function DashboardPage() {
     [expenses, selectedTripOption, tripFilter]
   );
   const selectedPayables = useMemo(
-    () => tripFilter === "review"
-      ? []
-      : filterPayablesByTrip(
+    () => filterPayablesByTrip(
           payables,
           tripFilter === "all" || tripFilter === "unassigned"
             ? tripFilter
@@ -532,8 +523,8 @@ export default function DashboardPage() {
               <div>
                 <h2>Resultado das vendas por viagem</h2>
                 <p>
-                  Vínculos registrados por identificador, número e ano. Nenhum dado foi alterado.
-                  {" "}Despesas vinculadas acompanham a viagem selecionada.
+                  Vendas por trimestre e ano da data da venda.
+                  {" "}Despesas e compras mantêm seus próprios vínculos de viagem.
                 </p>
               </div>
 
@@ -550,7 +541,6 @@ export default function DashboardPage() {
                     </option>
                   ))}
                   <option value="unassigned">Sem viagem definida</option>
-                  <option value="review">Revisão necessária</option>
                 </select>
               </label>
             </div>
@@ -635,12 +625,6 @@ export default function DashboardPage() {
               </section>
             )}
 
-            {tripFilter !== "all" && (
-              <p className="dash-notice">
-                Apenas registros do vínculo selecionado são incluídos.
-                Anos ausentes não são inferidos pela data.
-              </p>
-            )}
           </section>
 
           <div className="dash-grid">

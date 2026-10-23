@@ -18,14 +18,14 @@ test("historical numeric travel labels share an identity without date-based gues
   }
   assert.notEqual(getRecordTripId({ tripName: "3ª viagem 2026" }),
     getRecordTripId({ tripName: "3ª viagem 2027" }));
-  assert.equal(getRecordTripId({ saleDate: "2026-10-01" }), "");
+  assert.equal(getRecordTripId({ saleDate: "2026-10-01" }), "trip-2026-4");
   assert.equal(getRecordTripId({ tripId: "trip-unique", tripName: "3" }), "trip-unique");
 });
 
 test("trip options deduplicate historical aliases but preserve separate new trips with equal names", () => {
   const options = buildTripOptions({
     trips: [{ id: "trip-one", name: "3" }, { id: "trip-two", name: "3" }],
-    sales: [{ tripName: "3" }, { tripName: "3ª viagem" }],
+    payables: [{ tripName: "3" }, { tripName: "3ª viagem" }],
     visits: [{ tripName: "Rota Sul" }],
   });
   assert.equal(options.length, 4);
@@ -115,9 +115,9 @@ test("ID-less, missing-year and equal-name references stay distinct, without los
     { id: "s3", tripId: "trip-2026-4", total: 300 },
     { id: "s4", tripId: "trip-2027-4", total: 400 },
     { id: "s5", tripName: "4 viagem", total: 500 },
-    { id: "s6", total: 600, saleDate: "2026-10-01" },
+    { id: "s6", total: 600 },
   ];
-  const options = buildTripOptions({ trips, sales });
+  const options = buildTripOptions({ trips, payables: sales });
   assert.equal(filterRecordsByTrip(sales, "all", options).reduce((sum, sale) => sum + sale.total, 0), 2100);
   assert.deepEqual(filterRecordsByTrip(sales, "trip-2026-4", options).map((sale) => sale.id), ["s3"]);
   assert.deepEqual(filterRecordsByTrip(sales, "unassigned", options).map((sale) => sale.id), ["s6"]);
@@ -157,7 +157,7 @@ test("conflicting references to one missing ID never pick the last observed year
     { id: "b", tripId: "missing", tripName: "4ª viagem de 2027" },
   ];
   for (const ordered of [sales, [...sales].reverse()]) {
-    const options = buildTripOptions({ sales: ordered });
+    const options = buildTripOptions({ payables: ordered });
     assert.equal(options.length, 1);
     assert.equal(options[0].tripYear, null);
     assert.equal(getTripOptionLabel(options[0]), "4ª viagem (ano em conflito)");
@@ -169,10 +169,10 @@ test("conflicting references to one missing ID never pick the last observed year
 test("registered identity is authoritative but divergent linked records are marked for review", () => {
   const trips = [{ id: "registered", name: "4ª viagem de 2026", tripNumber: 4, tripYear: 2026 }];
   const sales = [{ id: "conflict", tripId: "registered", tripYear: 2027, tripNumber: 4 }];
-  const [option] = buildTripOptions({ trips, sales });
+  const [option] = buildTripOptions({ trips, payables: sales });
   assert.equal(option.identityConflict, true);
   assert.equal(option.reviewRequired, true);
   assert.equal(getTripOptionLabel(option), "4ª viagem de 2026");
   assert.equal(getTripOptionLabel(sales[0], [option]), "4ª viagem de 2026");
-  assert.equal(buildTripReview({ trips, sales }).length, 2);
+  assert.equal(buildTripReview({ trips, payables: sales }).length, 2);
 });

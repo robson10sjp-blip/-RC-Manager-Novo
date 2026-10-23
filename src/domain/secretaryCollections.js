@@ -97,13 +97,17 @@ export function buildCollectionsReport({
   sales = [],
   today = new Date(),
   trip = "all",
-  trips = [],
 } = {}) {
   const day = startOfDay(today);
   const clientsById = new Map(clients.map((client) => [client.id, client]));
   const isAll = trip === "all" || trip === null || trip === undefined;
-  const scope = /^[1-4]$/.test(String(trip)) ? `legacy-number-${trip}` : trip;
-  const scopedSales = filterRecordsByTrip(sales, scope, buildTripOptions({ trips, sales }));
+  const options = buildTripOptions({ sales, salesOnly: true });
+  const candidates = options.filter((option) => option.tripNumber === Number(trip));
+  if (/^[1-4]$/.test(String(trip)) && candidates.length > 1) {
+    throw new Error("Informe o ano da viagem para consultar cobranças.");
+  }
+  const scope = /^[1-4]$/.test(String(trip)) ? candidates[0] || { id: "no-sales" } : trip;
+  const scopedSales = filterRecordsByTrip(sales, scope, options);
 
   const groups = {
     overdue: emptyGroup(),

@@ -375,10 +375,8 @@ export function createSecretarySnapshot(
     );
   const tripsThisMonth = summarizeTrips(salesThisMonth);
   const totalPending = receivables.totalPending;
-  const tripOptions = buildTripOptions({ trips, sales, expenses, payables: enrichedPayables });
-  const scopes = [...tripOptions, ...[1, 2, 3, 4]
-    .filter((number) => !tripOptions.some((trip) => trip.id === `legacy-number-${number}`))
-    .map((tripNumber) => ({ id: `legacy-number-${tripNumber}`, tripNumber }))];
+  const tripOptions = buildTripOptions({ trips, sales, expenses, payables: enrichedPayables, report: true });
+  const scopes = tripOptions;
   const tripFinancials = {};
   const tripPending = {};
   const tripDebtors = {};
@@ -426,8 +424,9 @@ export function createSecretarySnapshot(
         .reduce((total, expense) => total + Number(expense.value || 0), 0);
   }
   for (const number of [1, 2, 3, 4]) {
+    const candidates = scopes.filter((scope) => scope.tripNumber === number);
     for (const summary of [tripFinancials, tripPending, tripDebtors, tripExpenseCategories, tripPersonalWithdrawals]) {
-      summary[number] = summary[`legacy-number-${number}`];
+      summary[number] = candidates.length === 1 ? summary[candidates[0].id] : undefined;
     }
   }
   const allTripFinancials = calculateTripFinancialSummary(

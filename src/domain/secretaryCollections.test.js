@@ -9,16 +9,17 @@ import {
 
 const today = new Date(2026, 9, 18, 10, 0);
 
-test("collections use only saved travel identity and keep years and unassigned records separate", () => {
+test("collections classify original sale dates, keeping years and undated records separate", () => {
   const records = [
-    { id: "a", tripId: "2026-four", tripYear: 2026, tripNumber: 4, tripCity: "Tucumã", total: 100, amountPaid: 20 },
-    { id: "b", tripId: "2027-four", tripYear: 2027, tripNumber: 4, tripCity: "Xinguara", total: 300, amountPaid: 0 },
-    { id: "no-trip", saleDate: "2026-10-01", total: 600, amountPaid: 0 },
+    { id: "a", saleDate: "2026-10-01", tripId: "wrong-id", tripCity: "Tucumã", total: 100, amountPaid: 20 },
+    { id: "b", saleDate: "2027-10-01", tripCity: "Xinguara", total: 300, amountPaid: 0 },
+    { id: "no-trip", clientId: "c", total: 600, amountPaid: 0 },
   ];
-  const report = buildCollectionsReport({ sales: records, today, trip: { id: "2026-four" } });
+  const report = buildCollectionsReport({ sales: records, today, trip: { id: "trip-2026-4" } });
   assert.equal(report.noDueDate.total, 80);
   assert.equal(buildCollectionsReport({ sales: records, today, trip: "unassigned" }).noDueDate.total, 600);
-  assert.equal(buildCollectionsReport({ sales: records, today, trip: "all" }).noDueDate.total, 980);
+  const all = buildCollectionsReport({ sales: records, today, trip: "all" });
+  assert.equal(all.noDueDate.total + all.upcoming.total, 980);
 });
 
 const clients = [
@@ -145,10 +146,10 @@ test("Secretary answers 'Quem devo cobrar hoje na 4ª viagem?' with a structured
     null
   );
 
-  assert.equal(response.tripContext.id, "legacy-number-4");
+  assert.equal(response.tripContext.id, "trip-2026-4");
   assert.equal(response.collections.focusToday, true);
-  assert.equal(response.collections.provisional, true);
-  assert.match(response.answer, /provisória/);
+  assert.equal(response.collections.provisional, false);
+  assert.doesNotMatch(response.answer, /provisória/);
   assert.match(response.answer, /Vencidas: 1 cobrança\(s\)/);
   assert.match(response.answer, /apenas para planejamento/);
   assert.equal(response.collections.report.overdue.count, 1);
@@ -319,5 +320,5 @@ test("per-trip pending ignores settled sales and discounts partial payments", ()
 
   assert.equal(snapshot.tripPending[4].amount, 750);
   assert.equal(snapshot.tripPending[4].salesCount, 1);
-  assert.equal(snapshot.tripPending[3].amount, 0);
+  assert.equal(snapshot.tripPending[3], undefined);
 });

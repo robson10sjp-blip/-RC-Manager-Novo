@@ -18,12 +18,11 @@ import {
 } from "react-icons/lu";
 import ReceiptTemplate from "../components/receipts/ReceiptTemplate";
 import FinancialValue from "../components/FinancialValue.jsx";
-import TripSelector from "../components/TripSelector.jsx";
-import useClientTrips from "../hooks/useClientTrips.js";
 import {
-  buildTripOptions, buildTripReview, getRecordTripId, getSaleTripEditFields,
+  buildTripOptions, getRecordTripId, getSaleTripEditFields,
   getTripOptionLabel, getTripSelectionLabel, filterRecordsByTrip,
 } from "../domain/tripIdentity.js";
+import { getSaleTrip, saleDateInput } from "../domain/saleTrip.js";
 import {
   buildReceiptImageFile,
   buildReceiptPdfFile,
@@ -74,7 +73,7 @@ function createEmptySale() {
     clientId: "",
     paymentMethod: "prazo",
     amountPaid: "",
-    saleDate: toDateInputValue(saleDate),
+    saleDate: saleDateInput(saleDate),
     dueDate: toDateInputValue(dueDate),
     tripName: "",
     tripId: "",
@@ -90,8 +89,6 @@ export default function SalesPage() {
   const [clients, setClients] = useState([]);
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
-  const [userId, setUserId] = useState("");
-  const { trips, visits, loading: loadingTrips, error: tripLoadError } = useClientTrips(userId);
   const location = useLocation();
   const requestedClientId = location.state?.newSaleClientId || "";
   const [tripFilter, setTripFilter] = useState("all");
@@ -110,9 +107,6 @@ export default function SalesPage() {
   }));
   const [showSaleForm, setShowSaleForm] = useState(Boolean(requestedClientId));
   const [saving, setSaving] = useState(false);
-  const [creatingTrip, setCreatingTrip] = useState(false);
-  const [tripChanged, setTripChanged] = useState(false);
-  const [tripSelectorVersion, setTripSelectorVersion] = useState(0);
   const [loading, setLoading] = useState(true);
   const [editingSaleId, setEditingSaleId] = useState(null);
   const [quickMode, setQuickMode] = useState(false);
@@ -120,9 +114,8 @@ export default function SalesPage() {
   const receivingSaleLock = useRef(false);
   const pendingPaymentOperation = useRef(null);
   const knownTrips = useMemo(() => buildTripOptions({
-    trips,
-    sales, visits,
-  }), [trips, sales, visits]);
+    sales, salesOnly: true,
+  }), [sales]);
 
   useEffect(() => {
     let unsubscribeClients = null;
@@ -130,7 +123,6 @@ export default function SalesPage() {
     let unsubscribeSales = null;
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
-      setUserId(user?.uid || "");
       if (unsubscribeClients) unsubscribeClients();
       if (unsubscribeProducts) unsubscribeProducts();
       if (unsubscribeSales) unsubscribeSales();
@@ -302,19 +294,10 @@ export default function SalesPage() {
     );
   }, [sales]);
 
-  const tripReviewBySaleId = useMemo(() => new Map(
-    buildTripReview({ trips, sales }).filter((row) => row.collection === "sales")
-      .map((row) => [row.recordId, row])
-  ), [trips, sales]);
-
   const displayedSales = useMemo(() => {
-    const filteredSales = (tripFilter === "review"
-      ? sales.filter((sale) => tripReviewBySaleId.has(sale.id))
-      : filterRecordsByTrip(sales, tripFilter, knownTrips)).map((sale) => ({
+    const filteredSales = filterRecordsByTrip(sales, tripFilter, knownTrips).map((sale) => ({
         ...sale,
-        originalSaleDate: toDate(sale.saleDate) || toDate(sale.createdAt),
-        dateSource: toDate(sale.saleDate) ? "saleDate" : "createdAt",
-        reviewReason: tripReviewBySaleId.get(sale.id)?.reason || "",
+        originalSaleDate: saleDateInput(sale.saleDate),
       }));
 
     const search = searchText.trim().toLocaleLowerCase("pt-BR");
@@ -338,7 +321,6 @@ export default function SalesPage() {
   }, [
     sales,
     tripFilter,
-    tripReviewBySaleId,
     knownTrips,
     clientsById,
     searchText,
@@ -350,13 +332,6 @@ export default function SalesPage() {
       style: "currency",
       currency: "BRL",
     });
-  }
-
-  function formatDate(timestamp) {
-    const date = toDate(timestamp);
-    if (!date) return "Data não informada";
-
-    return date.toLocaleString("pt-BR");
   }
 
   function formatDateOnly(value) {
@@ -558,9 +533,6 @@ export default function SalesPage() {
   }
 
   function clearSale() {
-    setCreatingTrip(false);
-    setTripChanged(false);
-    setTripSelectorVersion((version) => version + 1);
     setQuickMode(false);
     setSale(createEmptySale());
     setClientSearch("");
@@ -571,13 +543,7 @@ export default function SalesPage() {
 
   function handleEditSale(currentSale) {
     currentSale = sales.find((record) => record.id === currentSale.id) || currentSale;
-    setCreatingTrip(false);
-    setTripChanged(false);
-    setTripSelectorVersion((version) => version + 1);
-    const saleDate =
-      toDate(currentSale.saleDate) ||
-      toDate(currentSale.createdAt) ||
-      new Date();
+    const saleDate = saleDateInput(currentSale.saleDate);
 
     const legacyDueDate =
       currentSale.dueDate ||
@@ -593,7 +559,7 @@ export default function SalesPage() {
       clientId: currentSale.clientId || "",
       paymentMethod: currentSale.paymentMethod || "prazo",
       amountPaid: String(currentSale.amountPaid || 0),
-      saleDate: toDateInputValue(saleDate),
+      saleDate,
       dueDate: toDateInputValue(legacyDueDate),
       tripName: currentSale.tripName || "",
       tripId: getRecordTripId(currentSale),
@@ -1091,11 +1057,6 @@ export default function SalesPage() {
   async function handleSubmit(event) {
     event.preventDefault();
 
-    if (creatingTrip) {
-      alert("Confirme ou cancele a criação da nova viagem antes de salvar a venda.");
-      return;
-    }
-
     const user = auth.currentUser;
 
     if (!user) {
@@ -1349,7 +1310,7 @@ export default function SalesPage() {
             paymentMethod:
               sale.paymentMethod,
             status: saleStatus,
-            saleDate: new Date(`${sale.saleDate}T12:00:00`),
+            saleDate: new Date(`${sale.saleDate}T12:00:00-03:00`),
             dueDate: sale.dueDate
               ? new Date(`${sale.dueDate}T12:00:00`)
               : null,
@@ -1617,12 +1578,13 @@ export default function SalesPage() {
         pendingAmount: updatedPending,
         paymentMethod: sale.paymentMethod,
         status: updatedPending === 0 ? "paid" : savedPaid > 0 ? "partial" : "pending",
-        saleDate: new Date(`${sale.saleDate}T12:00:00`),
+        saleDate: saleDateInput(oldSale.saleDate) === sale.saleDate
+          ? oldSale.saleDate
+          : new Date(`${sale.saleDate}T12:00:00-03:00`),
         dueDate: sale.dueDate
           ? new Date(`${sale.dueDate}T12:00:00`)
           : null,
         tripCity: sale.tripCity.trim(),
-        ...getSaleTripEditFields(sale, tripChanged && sale.tripId !== getRecordTripId(oldSale)),
         updatedAt: serverTimestamp(),
       });
     });
@@ -1630,8 +1592,7 @@ export default function SalesPage() {
 
   const tripFilterLabels = {
     all: "Todas as vendas",
-    review: "Em revisão",
-    unassigned: "Sem viagem definida",
+    unassigned: "Data da venda não informada ou inválida",
     ...Object.fromEntries(knownTrips.map((trip) => [trip.id, getTripSelectionLabel(trip, knownTrips)])),
   };
 
@@ -1647,9 +1608,7 @@ export default function SalesPage() {
     );
   });
 
-  const scopedSales = tripFilter === "review"
-    ? sales.filter((sale) => tripReviewBySaleId.has(sale.id))
-    : filterRecordsByTrip(sales, tripFilter, knownTrips);
+  const scopedSales = filterRecordsByTrip(sales, tripFilter, knownTrips);
   const tripScopeSummary = tripFilter === "all" ? null : getSalesSummary(scopedSales);
 
   const scopeTotals = tripScopeSummary
@@ -1684,7 +1643,6 @@ export default function SalesPage() {
           type="button"
           className="cl-btn cl-btn-primary cl-new"
           onClick={() => {
-            setCreatingTrip(false);
             setShowSaleForm((current) => !current);
           }}
           aria-expanded={showSaleForm}
@@ -1814,22 +1772,10 @@ export default function SalesPage() {
           </div>
 
           <div style={styles.itemGrid}>
-            <TripSelector
-              key={tripSelectorVersion}
-              allowUnregistered={false}
-              userId={userId}
-              options={knownTrips}
-              value={sale.tripId}
-              onPendingChange={setCreatingTrip}
-              disabled={saving || loadingTrips || Boolean(tripLoadError)}
-              onChange={(trip) => {
-                setTripChanged(true);
-                setSale((current) => ({
-                  ...current, tripId: trip.id, tripName: trip.name,
-                  tripNumber: trip.tripNumber, tripYear: trip.tripYear,
-                }));
-              }}
-            />
+            <label style={styles.label}>
+              Viagem
+              <input readOnly value={getSaleTrip(sale)?.name || "Informe a data da venda"} style={styles.input} />
+            </label>
 
             <label style={styles.label}>
               Cidade da viagem (opcional)
@@ -1848,7 +1794,6 @@ export default function SalesPage() {
               />
             </label>
           </div>
-          {tripLoadError && <p role="alert" className="cl-record-error">{tripLoadError}</p>}
 
           <div style={styles.itemsHeader}>
             <h3 style={styles.sectionTitle}>
@@ -2167,8 +2112,7 @@ export default function SalesPage() {
         <div className="sl-heading">
           <h2>Vendas registradas</h2>
           <p>
-            Viagens separadas pelos vínculos registrados. Ano ausente ou cadastro
-            não encontrado permanece para revisão, sem atribuição pela data.
+            Vendas organizadas por trimestre e ano da data da venda.
           </p>
         </div>
 
@@ -2180,11 +2124,9 @@ export default function SalesPage() {
           <div className="sl-trips">
             {knownTrips.map((trip) => (
               <TripSummaryCard key={trip.id} title={getTripSelectionLabel(trip, knownTrips)}
-                period="Vínculo registrado" summary={getSalesSummary(filterRecordsByTrip(sales, trip.id, knownTrips))}
-                review={trip.reviewRequired} />
+                period={["Janeiro a março", "Abril a junho", "Julho a setembro", "Outubro a dezembro"][trip.tripNumber - 1]}
+                summary={getSalesSummary(filterRecordsByTrip(sales, trip.id, knownTrips))} />
             ))}
-            <TripSummaryCard title="Sem viagem definida" period="Nenhuma atribuição automática"
-              summary={getSalesSummary(filterRecordsByTrip(sales, "unassigned", knownTrips))} review />
           </div>
         )}
 
@@ -2196,8 +2138,7 @@ export default function SalesPage() {
               {knownTrips.map((trip) => (
                 <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, knownTrips)}</option>
               ))}
-              <option value="unassigned">Sem viagem definida</option>
-              <option value="review">Separadas para revisão</option>
+              <option value="unassigned">Data da venda não informada ou inválida</option>
             </select>
           </label>
           <label className="sl-filter-search">
@@ -2269,10 +2210,8 @@ export default function SalesPage() {
                       <h3>{currentSale.clientName || "Cliente não informado"}</h3>
                       <p>
                         {currentSale.originalSaleDate
-                          ? currentSale.dateSource === "saleDate"
-                            ? `Venda em ${formatDate(currentSale.originalSaleDate)}`
-                            : `Registro criado em ${formatDate(currentSale.originalSaleDate)}`
-                          : "Data original não confiável"}
+                          ? `Venda em ${formatDateOnly(currentSale.originalSaleDate)}`
+                          : "Data da venda não informada ou inválida"}
                       </p>
                     </div>
                     <span className={`cl-status sl-badge-${statusKey}`}>
@@ -2281,8 +2220,8 @@ export default function SalesPage() {
                   </div>
 
                   <div className="sl-tags">
-                      <span className={currentSale.reviewReason ? "sl-tag-review" : "sl-tag-trip"}>
-                        {getRecordTripId(currentSale) ? getTripOptionLabel(currentSale, knownTrips) : "Sem viagem definida"}
+                      <span className="sl-tag-trip">
+                        {getTripOptionLabel(currentSale, knownTrips)}
                         {currentSale.tripCity ? ` • ${currentSale.tripCity}` : ""}
                       </span>
                     {currentSale.dueDate && (
@@ -2292,12 +2231,6 @@ export default function SalesPage() {
                     )}
                     <span title={currentSale.id}>Compra #{String(currentSale.id).slice(-6)}</span>
                   </div>
-
-                  {currentSale.reviewReason && (
-                    <p className="sl-review-note">
-                      Revisar: {currentSale.reviewReason || "A data original ou os valores da venda precisam ser conferidos."}
-                    </p>
-                  )}
 
                   <ul className="sl-products">
                     {(currentSale.items || []).map((item, index) => (

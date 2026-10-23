@@ -82,6 +82,7 @@ import ReceiptViewer from "../components/receipts/ReceiptViewer.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
 import TripSelector from "../components/TripSelector.jsx";
 import useClientTrips from "../hooks/useClientTrips.js";
+import { saleDateInput } from "../domain/saleTrip.js";
 import { buildTripOptions, getRecordTripId, getTripOptionLabel, getTripSelectionLabel } from "../domain/tripIdentity.js";
 import "./ClientsPremium.css";
 
@@ -369,8 +370,12 @@ export default function ClientsPage() {
   );
 
   const knownTrips = useMemo(
-    () => buildTripOptions({ trips, sales, visits: visitRecords }),
-    [trips, sales, visitRecords]
+    () => buildTripOptions({ trips, visits: visitRecords }),
+    [trips, visitRecords]
+  );
+  const purchaseTrips = useMemo(
+    () => buildTripOptions({ sales, salesOnly: true }),
+    [sales]
   );
 
   const clientRows = useMemo(() => {
@@ -1489,8 +1494,8 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
               onChange={(event) => setTripFilter(event.target.value)}
             >
               <option value="all">Todas as viagens</option>
-              {knownTrips.map((trip) => (
-                <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, knownTrips)}</option>
+              {purchaseTrips.map((trip) => (
+                <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, purchaseTrips)}</option>
               ))}
               <option value="unassigned">Sem viagem definida</option>
             </select>
@@ -1724,13 +1729,10 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                                 purchase.valorTotal ??
                                 received + pending
                             );
-                            const purchaseDate = toDate(
-                              purchase.saleDate || purchase.createdAt
-                            );
+                            const purchaseDate = toDate(saleDateInput(purchase.saleDate));
                             const financeStatus =
                               pending <= 0 ? "Pago" : received > 0 ? "Parcial" : "Pendente";
-                            const tripLabel = getRecordTripId(purchase)
-                              ? getTripOptionLabel(purchase, knownTrips) : "Sem viagem definida";
+                            const tripLabel = getTripOptionLabel(purchase, knownTrips);
 
                             return (
                               <article className="cl-purchase" key={purchase.id}>

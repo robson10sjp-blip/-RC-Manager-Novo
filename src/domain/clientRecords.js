@@ -1,5 +1,5 @@
 import { getClientCityKey } from "./clientCities.js";
-import { getRecordTripId } from "./tripIdentity.js";
+import { getRecordTripId, getLinkedTripId } from "./tripIdentity.js";
 
 export function validateActionDate(value) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
@@ -36,7 +36,7 @@ export function resolveClientTripVisitStatus({
   const bought = sales.some(
     (sale) =>
       sale.clientId === client.id &&
-      Boolean(tripKey) && getRecordTripId(sale) === tripKey &&
+      Boolean(tripKey) && (getRecordTripId(sale) === tripKey || getLinkedTripId(sale) === tripKey) &&
       !["cancelled", "canceled"].includes(sale.status) &&
       getClientCityKey(sale.tripCity || client.city) === cityKey
   );

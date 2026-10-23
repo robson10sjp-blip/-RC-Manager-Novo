@@ -288,9 +288,9 @@ test("existing report tools separate annual IDs and refuse ambiguous travel numb
   const context = createToolContext({
     clients: [], products: [], expenses: [], suppliers: [], payables: [],
     sales: [
-      { id: "a", tripId: "2026-four", tripNumber: 4, tripYear: 2026, total: 100, amountPaid: 10 },
-      { id: "b", tripId: "2027-four", tripNumber: 4, tripYear: 2027, total: 300, amountPaid: 20 },
-      { id: "no-trip", saleDate: "2026-10-01", total: 900, amountPaid: 0 },
+      { id: "a", saleDate: "2026-10-01", tripId: "2026-four", total: 100, amountPaid: 10 },
+      { id: "b", saleDate: "2027-10-01", tripId: "2027-four", total: 300, amountPaid: 20 },
+      { id: "no-trip", clientId: "c", total: 900, amountPaid: 0 },
     ],
   });
   assert.throws(() => runTool("resumo_vendas", { viagem: "4" }, context), /ambígua/);

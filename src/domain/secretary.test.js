@@ -9,28 +9,28 @@ import {
 
 const today = new Date(2026, 9, 17, 12);
 
-test("annual travel questions and follow-ups keep IDs, ask about ambiguity and never infer from dates", () => {
+test("annual travel questions and follow-ups use original sale dates and ask about multiple years", () => {
   const snapshot = createSecretarySnapshot({
     trips: [
       { id: "four-2026", name: "4ª viagem de 2026", tripNumber: 4, tripYear: 2026 },
       { id: "four-2027", name: "4ª viagem de 2027", tripNumber: 4, tripYear: 2027 },
     ],
     sales: [
-      { id: "a", tripId: "four-2026", tripName: "4 viagem/2026", total: 100, amountPaid: 20, pendingAmount: 80 },
-      { id: "b", tripId: "four-2027", tripName: "4 viagem/2027", total: 200, amountPaid: 50, pendingAmount: 150 },
-      { id: "undated-trip", saleDate: "2026-10-01", total: 900, amountPaid: 0, pendingAmount: 900 },
+      { id: "a", saleDate: "2026-10-01", tripId: "four-2026", tripName: "4 viagem/2026", total: 100, amountPaid: 20, pendingAmount: 80 },
+      { id: "b", saleDate: "2027-10-01", tripId: "four-2027", tripName: "4 viagem/2027", total: 200, amountPaid: 50, pendingAmount: 150 },
+      { id: "undated-trip", clientId: "c", total: 900, amountPaid: 0, pendingAmount: 900 },
     ],
   }, today);
   const question = answerSecretaryQueryWithContext("Quanto vendi na 4ª viagem de 2027?", snapshot);
-  assert.equal(question.tripContext.id, "four-2027");
+  assert.equal(question.tripContext.id, "trip-2027-4");
   assert.match(question.answer, /4ª viagem de 2027.*200,00/);
   assert.doesNotMatch(question.answer, /900,00|100,00/);
   const followUp = answerSecretaryQueryWithContext("E quanto falta receber?", snapshot, null, question.tripContext);
-  assert.equal(followUp.tripContext.id, "four-2027");
+  assert.equal(followUp.tripContext.id, "trip-2027-4");
   assert.match(followUp.answer, /150,00/);
   assert.match(answerSecretaryQuery("Quanto vendi na 4ª viagem?", snapshot), /mais de um vínculo/);
   assert.equal(snapshot.allTripFinancials.sold, 1200);
-  assert.equal(snapshot.tripFinancials["four-2026"].sold, 100);
+  assert.equal(snapshot.tripFinancials["trip-2026-4"].sold, 100);
   const report = answerSecretaryQueryWithContext("Quem devo cobrar na 4ª viagem de 2026?", snapshot);
   assert.equal(report.collections.report.noDueDate.total, 80);
   assert.equal(report.collections.tripLabel, "4ª viagem de 2026");
@@ -291,8 +291,8 @@ test("keeps selected trip context for chained questions and marks candidate trip
     "Quanto recebi na 4ª viagem?",
     snapshot
   );
-  assert.equal(first.tripContext.id, "legacy-number-4");
-  assert.match(first.answer, /4ª viagem.*ano não informado/);
+  assert.equal(first.tripContext.id, "trip-2026-4");
+  assert.match(first.answer, /4ª viagem de 2026/);
   assert.match(first.answer, /R\$.*250,00/);
 
   const followUp = answerSecretaryQueryWithContext(
@@ -301,7 +301,7 @@ test("keeps selected trip context for chained questions and marks candidate trip
     undefined,
     first.tripContext
   );
-  assert.equal(followUp.tripContext.id, "legacy-number-4");
+  assert.equal(followUp.tripContext.id, "trip-2026-4");
   assert.match(followUp.answer, /4ª viagem/);
   assert.match(followUp.answer, /R\$.*250,00/);
   assert.doesNotMatch(followUp.answer, /R\$.*200,00/);
@@ -312,7 +312,7 @@ test("keeps selected trip context for chained questions and marks candidate trip
     undefined,
     "all"
   );
-  assert.equal(explicitTripOverridesAllContext.tripContext.id, "legacy-number-4");
+  assert.equal(explicitTripOverridesAllContext.tripContext.id, "trip-2026-4");
   assert.match(explicitTripOverridesAllContext.answer, /4ª viagem/);
   assert.match(explicitTripOverridesAllContext.answer, /R\$.*500,00/);
 });
@@ -359,8 +359,8 @@ test("understands trip-period phrases, fuel category, debtor lists and all-trip 
         },
       ],
       expenses: [
-        { id: "fuel-fourth", tripNumber: 4, category: "combustivel", value: 80 },
-        { id: "food-fourth", tripNumber: 4, category: "alimentacao", value: 20 },
+        { id: "fuel-fourth", tripNumber: 4, tripYear: 2026, category: "combustivel", value: 80 },
+        { id: "food-fourth", tripNumber: 4, tripYear: 2026, category: "alimentacao", value: 20 },
         { id: "unassigned", category: "combustivel", value: 400 },
       ],
     },
@@ -372,14 +372,14 @@ test("understands trip-period phrases, fuel category, debtor lists and all-trip 
       "Quanto falta receber da viagem de julho a setembro?",
       snapshot
     ),
-    /3ª viagem.*ano não informado.*R\$.*200,00/
+    /3ª viagem de 2026.*R\$.*200,00/
   );
   const fourthTripDebtors = answerSecretaryQuery(
     "Quais clientes estão devendo na viagem de outubro a dezembro?",
     snapshot
   );
   assert.match(fourthTripDebtors, /Ana \(R\$.*250,00\)/);
-  assert.match(fourthTripDebtors, /ano não informado/);
+  assert.match(fourthTripDebtors, /de 2026/);
   assert.match(
     answerSecretaryQuery("Quanto gastei de combustível na 4ª viagem?", snapshot),
     /4ª viagem.*combustível.*R\$.*80,00/
@@ -417,8 +417,8 @@ test("ranks trips by profit only when cost data is complete", () => {
       ],
       products: [{ id: "item", costPrice: 40 }],
       expenses: [
-        { tripNumber: 3, value: 50 },
-        { tripNumber: 4, value: 260 },
+        { tripNumber: 3, tripYear: 2026, value: 50 },
+        { tripNumber: 4, tripYear: 2026, value: 260 },
       ],
     },
     today
@@ -485,7 +485,7 @@ test("answers trip expense, estimated profit and highest trip revenue from assig
       ],
       products: [{ id: "item-1", costPrice: 50 }],
       expenses: [
-        { id: "assigned", tripNumber: 3, value: 40 },
+        { id: "assigned", tripNumber: 3, tripYear: 2026, value: 40 },
         { id: "unassigned", value: 100 },
       ],
     },
