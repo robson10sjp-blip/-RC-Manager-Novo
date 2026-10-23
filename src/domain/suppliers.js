@@ -1,3 +1,5 @@
+import { getTripNumberYear } from "./tripIdentity.js";
+
 const onlyDigits = (value) => String(value || "").replace(/\D/g, "");
 
 export function formatSupplierPhone(value) {
@@ -49,6 +51,7 @@ export function buildSupplierPayable({
   totalAmount,
   downPayment,
   installments,
+  trip = null,
   now = new Date(),
 }) {
   const total = Number(String(totalAmount).replace(",", "."));
@@ -142,6 +145,19 @@ export function buildSupplierPayable({
     throw new Error("Informe uma data válida para a compra.");
   }
 
+  const tripFields = {};
+  if (trip?.id) {
+    const tripName = String(trip.name || "").trim();
+    if (!tripName || tripName.length > 100) {
+      throw new Error("A viagem selecionada não possui um nome válido.");
+    }
+    const identity = getTripNumberYear(trip);
+    tripFields.tripId = trip.id;
+    tripFields.tripName = tripName;
+    tripFields.tripNumber = identity.tripNumber;
+    tripFields.tripYear = identity.tripYear;
+  }
+
   return {
     supplierId: supplier.id,
     supplierName: getSupplierDisplayName(supplier),
@@ -149,6 +165,7 @@ export function buildSupplierPayable({
     paymentType: paidCents === totalCents ? "cash" : "credit",
     description: String(description).trim(),
     purchaseDate: purchase,
+    ...tripFields,
     totalAmount: totalCents / 100,
     paidAmount: paidCents / 100,
     initialPaymentAmount: paidCents / 100,

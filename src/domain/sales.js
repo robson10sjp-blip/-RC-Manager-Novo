@@ -305,6 +305,9 @@ export function calculateTripFinancialSummary(
     expenses: 0,
     personalWithdrawals: 0,
     supplierPayments: 0,
+    supplierPurchases: 0,
+    supplierChecksPending: 0,
+    supplierChecksCompensated: 0,
     supplierOperationalPurchases: 0,
     costOfGoodsSold: 0,
     estimatedProfit: 0,
@@ -356,6 +359,26 @@ export function calculateTripFinancialSummary(
     (total, payable) => total + Number(payable.paidAmount || 0),
     0
   );
+  summary.supplierPurchases = payables.reduce(
+    (total, payable) =>
+      total +
+      (payable.purchaseType === "operational"
+        ? 0
+        : Number(payable.totalAmount || 0)),
+    0
+  );
+  for (const payable of payables) {
+    for (const installment of payable.installments || []) {
+      if (installment.method !== "cheque") continue;
+      const amount = Number(installment.amount || 0);
+      const paid = Number(installment.paidAmount || 0);
+      const remaining = Math.max(amount - paid, 0);
+      const status = installment.checkStatus ||
+        (remaining === 0 ? "compensated" : "issued");
+      if (status === "issued") summary.supplierChecksPending += remaining;
+      if (status === "compensated") summary.supplierChecksCompensated += paid;
+    }
+  }
   summary.supplierOperationalPurchases = payables.reduce(
     (total, payable) =>
       total +
@@ -387,6 +410,9 @@ export function calculateTripFinancialSummary(
     expenses: money(summary.expenses),
     personalWithdrawals: money(summary.personalWithdrawals),
     supplierPayments: money(summary.supplierPayments),
+    supplierPurchases: money(summary.supplierPurchases),
+    supplierChecksPending: money(summary.supplierChecksPending),
+    supplierChecksCompensated: money(summary.supplierChecksCompensated),
     supplierOperationalPurchases: money(summary.supplierOperationalPurchases),
     costOfGoodsSold: money(summary.costOfGoodsSold),
   };

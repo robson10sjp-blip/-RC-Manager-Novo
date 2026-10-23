@@ -167,6 +167,22 @@ test("blocks cross-user writes", async () => {
 
 test("supplier purchase edits, payment corrections and check compensation are atomic and idempotent", async () => {
   const db = ownerDb();
+  const trip2027 = await createClientTrip({
+    db,
+    userId: USER_A,
+    name: "1ª viagem/2027",
+  });
+  const trip2028 = await createClientTrip({
+    db,
+    userId: USER_A,
+    name: "1ª viagem/2028",
+  });
+  const otherUserDb = testEnv.authenticatedContext(USER_B).firestore();
+  const privateTrip = await createClientTrip({
+    db: otherUserDb,
+    userId: USER_B,
+    name: "2ª viagem/2027",
+  });
   const payableRef = ref(db, "payables", "supplier-fake");
   const paymentsRef = collection(db, "users", USER_A, "payables", "supplier-fake", "payments");
   const purchase = buildSupplierPayable({
@@ -175,12 +191,27 @@ test("supplier purchase edits, payment corrections and check compensation are at
     purchaseDate: "2026-10-01",
     totalAmount: 500,
     downPayment: 100,
+    trip: trip2027,
     installments: [{
       id: "installment-1", amount: 400,
       dueDate: "2026-11-01", method: "boleto",
     }],
   });
   await assertSucceeds(setDoc(payableRef, purchase));
+  const foreignTripPurchase = buildSupplierPayable({
+    supplier: { id: "supplier-fake", name: "Fornecedor Fictício" },
+    description: "Vínculo de outra conta",
+    purchaseDate: "2026-10-01",
+    totalAmount: 100,
+    downPayment: 100,
+    installments: [],
+    trip: privateTrip,
+  });
+  await assertFails(setDoc(ref(db, "payables", "foreign-trip-purchase"), foreignTripPurchase));
+  const savedPurchase = (await getDoc(payableRef)).data();
+  assert.equal(savedPurchase.tripId, trip2027.id);
+  assert.equal(savedPurchase.tripNumber, 1);
+  assert.equal(savedPurchase.tripYear, 2027);
   await assertSucceeds(setDoc(doc(paymentsRef, "down-payment-1"), {
     type: "down-payment", amount: 100,
     date: new Date("2026-10-01T12:00:00Z"), method: "pix", allocations: [],
@@ -220,12 +251,18 @@ test("supplier purchase edits, payment corrections and check compensation are at
   assert.equal((await getDocs(collection(db, "users", USER_A, "payables", "supplier-fake", "corrections"))).size, 1);
 
   await assertSucceeds(compensateSupplierCheck({
-    db, userId: USER_A, payableId: "supplier-fake", installmentId: check.id,
+    db,
+    userId: USER_A,
+    payableId: "supplier-fake",
+    installmentId: check.id,
+    changedAt: new Date("2027-02-15T12:00:00Z"),
   }));
   await assertSucceeds(compensateSupplierCheck({
     db, userId: USER_A, payableId: "supplier-fake", installmentId: check.id,
   }));
   assert.equal((await getDocs(paymentsRef)).size, 2);
+  const compensation = await getDoc(doc(paymentsRef, `check-compensation-${check.id}`));
+  assert.equal(compensation.data().date.toDate().toISOString(), "2027-02-15T12:00:00.000Z");
   const afterCompensation = (await getDoc(payableRef)).data();
   assert.equal(afterCompensation.paidAmount, 250);
   assert.equal(afterCompensation.balance, 250);
@@ -236,12 +273,18 @@ test("supplier purchase edits, payment corrections and check compensation are at
     changes: {
       description: "Compra fictícia corrigida", totalAmount: 600,
       purchaseDate: "2026-10-03", dueDate: "2026-12-01", paymentType: "credit",
+      tripId: trip2028.id,
+      tripName: trip2028.name,
+      tripNumber: 1,
+      tripYear: 2028,
     },
   }));
   const editedPayable = (await getDoc(payableRef)).data();
   assert.equal(editedPayable.totalAmount, 600);
   assert.equal(editedPayable.paidAmount, 250);
   assert.equal(editedPayable.balance, 350);
+  assert.equal(editedPayable.tripId, trip2028.id);
+  assert.equal(editedPayable.tripYear, 2028);
   assert.equal(editedPayable.installments.find((item) => item.id === check.id).amount, 150);
   assert.equal((await getDocs(collection(db, "users", USER_A, "payables", "supplier-fake", "corrections"))).size, 2);
   await assert.rejects(editSupplierPurchase({

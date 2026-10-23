@@ -56,6 +56,12 @@ export async function editSupplierPurchase({
       balance: after.balance,
       status: after.status,
     };
+    const tripFields = {
+      tripId: after.tripId ?? before.tripId ?? "",
+      tripName: after.tripName ?? before.tripName ?? "",
+      tripNumber: after.tripNumber ?? before.tripNumber ?? null,
+      tripYear: after.tripYear ?? before.tripYear ?? null,
+    };
     transaction.set(correction, {
       type: "purchase",
       payableId,
@@ -66,12 +72,17 @@ export async function editSupplierPurchase({
         dueDate: before.dueDate || null,
         paymentType: before.paymentType ?? null,
         balance: getPayableBalance(before),
+        tripId: before.tripId ?? "",
+        tripName: before.tripName ?? "",
+        tripNumber: before.tripNumber ?? null,
+        tripYear: before.tripYear ?? null,
       },
-      after: auditFields,
+      after: { ...auditFields, ...tripFields },
       createdAt: serverTimestamp(),
     });
     transaction.update(payableReference, {
       ...auditFields,
+      ...(Object.hasOwn(changes, "tripId") ? tripFields : {}),
       lastCorrectionId: correctionId,
       updatedAt: serverTimestamp(),
     });
@@ -220,6 +231,10 @@ export async function correctSupplierCheck({
       initialPaymentAmount: before.initialPaymentAmount ?? null,
       balance: before.balance ?? null,
       status: before.status ?? null,
+      tripId: before.tripId ?? "",
+      tripName: before.tripName ?? "",
+      tripNumber: before.tripNumber ?? null,
+      tripYear: before.tripYear ?? null,
       installments,
     };
     transaction.set(correction, {

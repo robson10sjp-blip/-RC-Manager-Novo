@@ -29,6 +29,11 @@ import {
   formatSupplierPhone,
   getSupplierDisplayName,
 } from "../domain/suppliers";
+import {
+  buildTripOptions,
+  getRecordTripId,
+  getTripOptionLabel,
+} from "../domain/tripIdentity.js";
 import { toDate } from "../utils/dates";
 import {
   compensateSupplierCheck,
@@ -61,6 +66,7 @@ const emptyPurchase = {
   initialCheckBankAccount: "bb-pf",
   initialCheckIssueDate: todayInput(),
   initialCheckExpectedDate: todayInput(),
+  tripId: "",
 };
 const emptyPayment = {
   payableId: "",
@@ -77,6 +83,7 @@ const emptyPayment = {
 export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState([]);
   const [payables, setPayables] = useState([]);
+  const [trips, setTrips] = useState([]);
   const [paymentsByPayable, setPaymentsByPayable] = useState({});
   const [correctionsByPayable, setCorrectionsByPayable] = useState({});
   const [form, setForm] = useState(emptyForm);
@@ -98,6 +105,8 @@ export default function SuppliersPage() {
   const [compensatingCheckId, setCompensatingCheckId] = useState(null);
   const savingLock = useRef(false);
   const purchaseLock = useRef(false);
+  const suggestedTripRef = useRef("");
+  const tripSelectionTouched = useRef(false);
   const paymentLock = useRef(false);
   const paymentOperation = useRef(null);
   const compensatingCheckLock = useRef(new Set());
@@ -105,6 +114,7 @@ export default function SuppliersPage() {
   useEffect(() => {
     let unsubscribeSuppliers = null;
     let unsubscribePayables = null;
+    let unsubscribeTrips = null;
     let generation = 0;
     const paymentListeners = new Map();
     const correctionListeners = new Map();
@@ -113,16 +123,20 @@ export default function SuppliersPage() {
       const currentGeneration = generation;
       unsubscribeSuppliers?.();
       unsubscribePayables?.();
+      unsubscribeTrips?.();
       for (const unsubscribe of paymentListeners.values()) unsubscribe();
       paymentListeners.clear();
       for (const unsubscribe of correctionListeners.values()) unsubscribe();
       correctionListeners.clear();
       setSuppliers([]);
       setPayables([]);
+      setTrips([]);
       setPaymentsByPayable({});
       setCorrectionsByPayable({});
       setForm(emptyForm);
       setPurchase({ ...emptyPurchase, purchaseDate: todayInput() });
+      suggestedTripRef.current = "";
+      tripSelectionTouched.current = false;
       setInstallments([]);
       setPayment({ ...emptyPayment, date: todayInput() });
       setEditingId(null);
@@ -258,6 +272,39 @@ export default function SuppliersPage() {
           setError("Não foi possível verificar as contas vinculadas aos fornecedores.");
         }
       );
+      unsubscribeTrips = onSnapshot(
+        collection(db, "users", user.uid, "trips"),
+        (snapshot) => {
+          if (currentGeneration !== generation) return;
+          const records = snapshot.docs.map((item) => ({
+            id: item.id,
+            ...item.data(),
+          }));
+          setTrips(records);
+          const latestTrip = records
+            .slice()
+            .sort(
+              (first, second) =>
+                (toDate(second.createdAt)?.getTime() || 0) -
+                (toDate(first.createdAt)?.getTime() || 0)
+            )[0];
+          if (!tripSelectionTouched.current) {
+            setPurchase((current) => ({
+              ...current,
+              tripId:
+                !current.tripId || current.tripId === suggestedTripRef.current
+                  ? latestTrip?.id || ""
+                  : current.tripId,
+            }));
+          }
+          suggestedTripRef.current = latestTrip?.id || "";
+        },
+        (loadError) => {
+          if (currentGeneration !== generation) return;
+          console.error("Erro ao carregar viagens para compras:", loadError);
+          setError("Não foi possível carregar as viagens disponíveis para vincular compras.");
+        }
+      );
     });
 
     return () => {
@@ -265,12 +312,29 @@ export default function SuppliersPage() {
       unsubscribeAuth();
       unsubscribeSuppliers?.();
       unsubscribePayables?.();
+      unsubscribeTrips?.();
       for (const unsubscribe of paymentListeners.values()) unsubscribe();
       paymentListeners.clear();
       for (const unsubscribe of correctionListeners.values()) unsubscribe();
       correctionListeners.clear();
     };
   }, []);
+
+  const tripOptionsForPurchases = useMemo(
+    () => buildTripOptions({ trips, payables }),
+    [trips, payables]
+  );
+  const suggestedTripId = useMemo(
+    () =>
+      trips
+        .slice()
+        .sort(
+          (first, second) =>
+            (toDate(second.createdAt)?.getTime() || 0) -
+            (toDate(first.createdAt)?.getTime() || 0)
+        )[0]?.id || "",
+    [trips]
+  );
 
   const visibleSuppliers = useMemo(() => {
     const searchTerm = search.trim().toLocaleLowerCase("pt-BR");
@@ -487,6 +551,7 @@ export default function SuppliersPage() {
         totalAmount: purchase.totalAmount,
         downPayment: paidAmount,
         installments: purchaseInstallments,
+        trip: tripOptionsForPurchases.find((trip) => trip.id === purchase.tripId),
       });
     } catch (validationError) {
       setError(validationError.message);
@@ -534,7 +599,13 @@ export default function SuppliersPage() {
           });
         }
       });
-      setPurchase({ ...emptyPurchase, purchaseDate: todayInput() });
+      setPurchase({
+        ...emptyPurchase,
+        purchaseDate: todayInput(),
+        tripId: suggestedTripId,
+      });
+      suggestedTripRef.current = suggestedTripId;
+      tripSelectionTouched.current = false;
       setInstallments([]);
       setError("");
       setNotice("Compra registrada em Contas a pagar e vinculada ao fornecedor.");
@@ -722,6 +793,7 @@ export default function SuppliersPage() {
       dueDate: dateValue(firstOpenInstallment?.dueDate || payable.dueDate),
       paymentType: payable.paymentType ||
         (Number(payable.paidAmount || 0) >= Number(payable.totalAmount || 0) ? "cash" : "credit"),
+      tripId: payable.tripId || getRecordTripId(payable),
     });
   }
 
@@ -733,7 +805,21 @@ export default function SuppliersPage() {
       setSavingPurchase(true);
       setError("");
       const { payableId, ...changes } = editingPurchase;
-      await editSupplierPurchase({ db, userId: user.uid, payableId, changes });
+      const selectedTrip = tripOptionsForPurchases.find(
+        (trip) => trip.id === changes.tripId
+      );
+      await editSupplierPurchase({
+        db,
+        userId: user.uid,
+        payableId,
+        changes: {
+          ...changes,
+          tripId: selectedTrip?.id || "",
+          tripName: selectedTrip?.name || "",
+          tripNumber: selectedTrip?.tripNumber || null,
+          tripYear: selectedTrip?.tripYear || null,
+        },
+      });
       setEditingPurchase(null);
       setNotice("Compra corrigida. Saldo e parcelas foram recalculados; a versão anterior foi preservada no histórico de correções.");
     } catch (editError) {
@@ -1022,6 +1108,15 @@ export default function SuppliersPage() {
                                 <div className="supplier-purchase-meta">
                                   <span>Total: <FinancialValue>{formatCurrency(item.totalAmount)}</FinancialValue></span>
                                   <span>Pago: <FinancialValue>{formatCurrency(item.paidAmount)}</FinancialValue></span>
+                                  <span>
+                                    Viagem: {getRecordTripId(item)
+                                      ? getTripOptionLabel({
+                                          tripName: item.tripName,
+                                          tripNumber: item.tripNumber,
+                                          tripYear: item.tripYear,
+                                        })
+                                      : "Sem viagem"}
+                                  </span>
                                   <span>Parcelas: {(item.installments || []).length}</span>
                                 </div>
                                 <div className="supplier-purchase-actions">
@@ -1046,6 +1141,20 @@ export default function SuppliersPage() {
                                       Data da compra
                                       <input type="date" value={editingPurchase.purchaseDate} required
                                         onChange={(event) => setEditingPurchase((current) => ({ ...current, purchaseDate: event.target.value }))} />
+                                    </label>
+                                    <label>
+                                      Viagem de destino
+                                      <select
+                                        value={editingPurchase.tripId}
+                                        onChange={(event) => setEditingPurchase((current) => ({ ...current, tripId: event.target.value }))}
+                                      >
+                                        <option value="">Sem viagem definida</option>
+                                        {tripOptionsForPurchases.map((trip) => (
+                                          <option key={trip.id} value={trip.id}>
+                                            {getTripOptionLabel(trip)}
+                                          </option>
+                                        ))}
+                                      </select>
                                     </label>
                                     <label>
                                       Vencimento das parcelas comuns
@@ -1306,6 +1415,31 @@ export default function SuppliersPage() {
               required
               disabled={readOnly}
             />
+          </label>
+          <label>
+            Viagem de destino (opcional)
+            <select
+              value={purchase.tripId}
+              onChange={(event) => {
+                tripSelectionTouched.current = true;
+                setPurchase((current) => ({
+                  ...current,
+                  tripId: event.target.value,
+                }));
+              }}
+              disabled={readOnly}
+            >
+              <option value="">Sem viagem definida</option>
+              {tripOptionsForPurchases.map((trip) => (
+                <option key={trip.id} value={trip.id}>
+                  {getTripOptionLabel(trip)}
+                  {trip.id === suggestedTripId
+                    ? " · sugestão (última cadastrada)"
+                    : ""}
+                </option>
+              ))}
+            </select>
+            <small>Você pode alterar a sugestão antes de salvar. A viagem não é inferida pela data da compra.</small>
           </label>
           <label className="supplier-purchase-wide">
             Descrição da mercadoria *

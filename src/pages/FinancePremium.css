@@ -53,6 +53,87 @@
   grid-column: span 2;
 }
 
+.fin-purchase-card {
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fin-purchase-card:hover,
+.fin-purchase-card:focus-visible {
+  border-color: var(--rc-gold) !important;
+  box-shadow: 0 8px 20px rgba(10, 18, 38, 0.12);
+}
+
+.fin-purchase-card small {
+  color: var(--rc-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.fin-purchase-detail {
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid var(--rc-line);
+  border-radius: 14px;
+  background: #fff;
+}
+
+.fin-purchase-detail-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.fin-purchase-detail-heading h3 {
+  margin: 0 0 4px;
+  color: var(--rc-navy-800);
+}
+
+.fin-purchase-detail-heading p,
+.fin-purchase-empty {
+  margin: 0;
+  color: var(--rc-muted);
+  font-size: 13px;
+}
+
+.fin-purchase-detail-heading button {
+  flex: 0 0 auto;
+  border: 1px solid var(--rc-line);
+  border-radius: 9px;
+  background: #fff;
+  color: var(--rc-navy-800);
+  padding: 8px 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.fin-purchase-table-wrap {
+  overflow-x: auto;
+}
+
+.fin-purchase-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.fin-purchase-table th,
+.fin-purchase-table td {
+  padding: 10px;
+  border-bottom: 1px solid var(--rc-line);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.fin-purchase-table th {
+  color: var(--rc-muted);
+  font-size: 12px;
+}
+
 .fin-card span {
   color: var(--rc-muted) !important;
   font-size: 13px !important;

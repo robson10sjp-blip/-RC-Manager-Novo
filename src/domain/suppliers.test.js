@@ -75,6 +75,34 @@ test("allows cash purchases and rejects invalid supplier purchase data", () => {
     now: new Date(2026, 9, 18, 12),
   });
 
+  test("links an advance merchandise purchase to the explicitly selected trip and year", () => {
+    const firstTrip = { id: "trip-1-2027", name: "1ª viagem/2027" };
+    const purchase = buildSupplierPayable({
+      supplier: { id: "supplier-1", name: "Fornecedor" },
+      description: "Mercadorias antecipadas para janeiro",
+      purchaseDate: "2026-12-10",
+      totalAmount: 10000,
+      downPayment: 0,
+      installments: [{
+        id: "check-1",
+        amount: 10000,
+        dueDate: "2027-02-01",
+        method: "cheque",
+        identification: "001",
+        bankAccount: "bb-pj",
+        issueDate: "2026-12-10",
+      }],
+      trip: firstTrip,
+    });
+
+    assert.equal(purchase.tripId, "trip-1-2027");
+    assert.equal(purchase.tripName, "1ª viagem/2027");
+    assert.equal(purchase.tripNumber, 1);
+    assert.equal(purchase.tripYear, 2027);
+    assert.equal(purchase.totalAmount, 10000);
+    assert.equal(purchase.paidAmount, 0);
+  });
+
   test("records several issued checks in a supplier purchase without counting them as cash paid", () => {
     const purchase = buildSupplierPayable({
       supplier: { id: "supplier-1", name: "Fornecedor" },

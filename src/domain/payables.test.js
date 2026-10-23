@@ -445,3 +445,27 @@ test("filters obligations by trip while preserving the general view", () => {
   assert.deepEqual(filterPayablesByTrip(records, "unassigned").map((item) => item.id), ["general"]);
   assert.equal(getPayableBalance({ totalAmount: 120, paidAmount: 45 }), 75);
 });
+
+test("filters supplier purchases by stable trip ID and year without mixing historical purchases", () => {
+  const records = [
+    { id: "purchase-27", tripId: "trip-2027", tripName: "1ª viagem/2027", tripNumber: 1, tripYear: 2027 },
+    { id: "purchase-28", tripId: "trip-2028", tripName: "1ª viagem/2028", tripNumber: 1, tripYear: 2028 },
+    { id: "legacy-27", tripName: "1ª viagem/2027", totalAmount: 100 },
+    { id: "unassigned", totalAmount: 200 },
+  ];
+
+  assert.deepEqual(
+    filterPayablesByTrip(records, {
+      id: "trip-2027",
+      name: "1ª viagem/2027",
+      tripNumber: 1,
+      tripYear: 2027,
+    }).map(({ id }) => id),
+    ["purchase-27", "legacy-27"]
+  );
+  assert.deepEqual(
+    filterPayablesByTrip(records, "unassigned").map(({ id }) => id),
+    ["unassigned"]
+  );
+  assert.equal(filterPayablesByTrip(records, "all").length, 4);
+});

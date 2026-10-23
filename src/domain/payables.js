@@ -1,4 +1,9 @@
 import { toDate } from "../utils/dates.js";
+import {
+  getRecordTripId,
+  getTripNumberYear,
+  tripMatchesRecord,
+} from "./tripIdentity.js";
 
 const cents = (value) => Math.round((Number(value || 0) + Number.EPSILON) * 100);
 const amountFromCents = (value) => Math.round(value) / 100;
@@ -106,6 +111,10 @@ export function editSupplierPurchase(payable, {
   paymentType,
   initialPaymentAmount,
   installmentId = "supplier-edit-adjustment",
+  tripId,
+  tripName,
+  tripNumber,
+  tripYear,
 }) {
   const totalCents = cents(totalAmount);
   const paidCents = cents(payable.paidAmount);
@@ -196,6 +205,25 @@ export function editSupplierPurchase(payable, {
   if (actualSchedule !== expectedSchedule) {
     throw new Error("As parcelas atuais não conciliam com o total; revise a condição e a programação antes de salvar.");
   }
+  let tripFields = {};
+  if (tripId !== undefined) {
+    const selectedTripId = String(tripId || "");
+    const selectedTripName = String(tripName || "").trim();
+    if (selectedTripId && (!selectedTripName || selectedTripName.length > 100)) {
+      throw new Error("Selecione uma viagem válida ou deixe a compra sem viagem.");
+    }
+    const identity = getTripNumberYear({
+      name: selectedTripName,
+      tripNumber,
+      tripYear,
+    });
+    tripFields = {
+      tripId: selectedTripId,
+      tripName: selectedTripName,
+      tripNumber: identity.tripNumber,
+      tripYear: identity.tripYear,
+    };
+  }
 
   return {
     description: String(description).trim(),
@@ -207,6 +235,7 @@ export function editSupplierPurchase(payable, {
     installments,
     balance,
     status: balance === 0 ? "paid" : paidCents > 0 ? "partial" : "pending",
+    ...tripFields,
   };
 }
 
@@ -730,10 +759,16 @@ export function summarizePayables(payables = [], today = new Date()) {
 export function filterPayablesByTrip(payables = [], tripFilter = "all") {
   if (tripFilter === "all") return payables;
   if (tripFilter === "unassigned") {
-    return payables.filter((payable) => !payable.tripNumber);
+    return payables.filter((payable) => !getRecordTripId(payable));
+  }
+  if (typeof tripFilter === "object") {
+    return payables.filter((payable) => tripMatchesRecord(payable, tripFilter));
   }
   const selected = tripFilter === "third" ? 3 : tripFilter === "fourth" ? 4 : Number(tripFilter);
+  if (Number.isFinite(selected)) {
+    return payables.filter((payable) => Number(payable.tripNumber) === selected);
+  }
   return payables.filter(
-    (payable) => Number(payable.tripNumber) === selected
+    (payable) => tripMatchesRecord(payable, { id: tripFilter })
   );
 }

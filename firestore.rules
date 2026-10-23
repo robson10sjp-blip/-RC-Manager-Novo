@@ -69,6 +69,10 @@ service cloud.firestore {
         && correction.after.initialPaymentAmount == request.resource.data.get('initialPaymentAmount', null)
         && correction.after.dueDate == request.resource.data.get('dueDate', null)
         && correction.after.status == request.resource.data.get('status', null)
+        && correction.after.get('tripId', '') == request.resource.data.get('tripId', '')
+        && correction.after.get('tripName', '') == request.resource.data.get('tripName', '')
+        && correction.after.get('tripNumber', null) == request.resource.data.get('tripNumber', null)
+        && correction.after.get('tripYear', null) == request.resource.data.get('tripYear', null)
         && correction.after.installments == request.resource.data.installments;
     }
 
@@ -114,6 +118,20 @@ service cloud.firestore {
     function validOptionalSaleTrip(uid) {
       return request.resource.data.get('tripId', '') == ''
         || validTripReference(uid, request.resource.data);
+    }
+
+    function validOptionalPayableTrip(uid, data) {
+      return data.get('tripId', '') == ''
+        ? (data.get('tripName', '') == ''
+          && (data.get('tripNumber', null) == null
+            || (data.tripNumber is int && data.tripNumber > 0))
+          && (data.get('tripYear', null) == null
+            || (data.tripYear is int && data.tripYear >= 2000 && data.tripYear <= 2100)))
+        : validTripReference(uid, data)
+          && (data.get('tripNumber', null) == null
+            || (data.tripNumber is int && data.tripNumber > 0))
+          && (data.get('tripYear', null) == null
+            || (data.tripYear is int && data.tripYear >= 2000 && data.tripYear <= 2100));
     }
 
     function validCalendarDate(value) {
@@ -318,7 +336,8 @@ service cloud.firestore {
         allow create: if owner(uid)
           && optionalNumber('totalAmount')
           && optionalNumber('paidAmount')
-          && optionalNumber('balance');
+          && optionalNumber('balance')
+          && validOptionalPayableTrip(uid, request.resource.data);
         allow update: if owner(uid)
           && unchangedOrNumber('totalAmount')
           && unchangedOrNumber('paidAmount')
@@ -326,9 +345,11 @@ service cloud.firestore {
           && unchangedOrString('description')
           && (!request.resource.data.diff(resource.data).affectedKeys().hasAny([
             'description', 'totalAmount', 'purchaseDate', 'dueDate',
-            'paymentType', 'initialPaymentAmount', 'lastCorrectionId'
+            'paymentType', 'initialPaymentAmount', 'lastCorrectionId',
+            'tripId', 'tripName', 'tripNumber', 'tripYear'
           ])
-            || hasPurchaseCorrection(uid, payableId));
+            || (validOptionalPayableTrip(uid, request.resource.data)
+              && hasPurchaseCorrection(uid, payableId)));
         allow delete: if owner(uid);
       }
 

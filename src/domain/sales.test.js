@@ -335,6 +335,9 @@ test("calculates estimated profit and cash flow separately with complete cost da
     expenses: 30,
     personalWithdrawals: 0,
     supplierPayments: 0,
+    supplierPurchases: 0,
+    supplierChecksPending: 0,
+    supplierChecksCompensated: 0,
     supplierOperationalPurchases: 0,
     costOfGoodsSold: 80,
     estimatedProfit: 90,
@@ -361,8 +364,45 @@ test("subtracts supplier payments from cash flow without charging profit twice",
 
   assert.equal(summary.supplierPayments, 25);
   assert.equal(summary.supplierOperationalPurchases, 0);
+  assert.equal(summary.supplierPurchases, 0);
   assert.equal(summary.cashFlow, 25);
   assert.equal(summary.estimatedProfit, 90);
+});
+
+test("separates supplier merchandise purchases and issued checks from cash payments", () => {
+  const summary = calculateTripFinancialSummary(
+    [{
+      total: 1000,
+      amountPaid: 1000,
+      pendingAmount: 0,
+      items: [{ productId: "p-1", quantity: 1 }],
+    }],
+    [],
+    [{ id: "p-1", costPrice: 100 }],
+    [
+      {
+        purchaseType: "inventory",
+        totalAmount: 10000,
+        paidAmount: 2000,
+        installments: [
+          { method: "cheque", amount: 3000, paidAmount: 0, checkStatus: "issued" },
+          { method: "cheque", amount: 2000, paidAmount: 2000, checkStatus: "compensated" },
+        ],
+      },
+      {
+        purchaseType: "operational",
+        totalAmount: 500,
+        paidAmount: 100,
+      },
+    ]
+  );
+
+  assert.equal(summary.supplierPurchases, 10000);
+  assert.equal(summary.supplierPayments, 2100);
+  assert.equal(summary.supplierChecksPending, 3000);
+  assert.equal(summary.supplierChecksCompensated, 2000);
+  assert.equal(summary.estimatedProfit, 400);
+  assert.equal(summary.cashFlow, -1100);
 });
 
 test("personal withdrawals reduce cash flow without reducing operating profit", () => {

@@ -1,6 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildTripOptions, getRecordTripId } from "./tripIdentity.js";
+import {
+  buildTripOptions,
+  getRecordTripId,
+  getTripOptionLabel,
+  getTripNumberYear,
+  tripMatchesRecord,
+} from "./tripIdentity.js";
 
 test("historical numeric travel labels share an identity without date-based guesses", () => {
   for (const name of ["3", "3ª viagem", "3a viagem", "Viagem 3", "Viagem nº 3"]) {
@@ -20,4 +26,52 @@ test("trip options deduplicate historical aliases but preserve separate new trip
   });
   assert.equal(options.length, 4);
   assert.equal(options.filter((trip) => trip.id === "legacy-number-3").length, 1);
+});
+
+test("trip number and year remain distinct across years", () => {
+  const firstTrip = { tripId: "trip-2027-1", name: "1ª viagem/2027" };
+  const secondTrip = { tripId: "trip-2028-1", name: "1ª viagem/2028" };
+  assert.equal(getRecordTripId(firstTrip), "trip-2027-1");
+  assert.deepEqual(getTripNumberYear(firstTrip), { tripNumber: 1, tripYear: 2027 });
+  assert.equal(getTripOptionLabel(firstTrip), "1ª viagem/2027");
+  assert.equal(
+    getRecordTripId({ tripName: "1ª viagem/2027" }),
+    "legacy-number-1-2027"
+  );
+  assert.equal(
+    tripMatchesRecord(
+      { tripName: "1ª viagem/2027", totalAmount: 100 },
+      { id: "legacy-number-1-2027", ...getTripNumberYear(firstTrip) }
+    ),
+    true
+  );
+  assert.equal(
+    tripMatchesRecord(
+      { tripName: "1ª viagem/2028", totalAmount: 100 },
+      { id: "legacy-number-1-2027", ...getTripNumberYear(firstTrip) }
+    ),
+    false
+  );
+  assert.equal(
+    tripMatchesRecord(
+      { tripNumber: 3 },
+      { id: "legacy-number-3-2027", tripNumber: 3, tripYear: 2027 }
+    ),
+    false
+  );
+  assert.equal(
+    tripMatchesRecord(
+      { tripId: "legacy-number-3", tripNumber: 3 },
+      { id: "trip-3-2026", tripNumber: 3, tripYear: 2026 }
+    ),
+    true
+  );
+  assert.equal(
+    tripMatchesRecord(
+      { tripId: "different-id", tripName: "1ª viagem/2027" },
+      firstTrip
+    ),
+    false
+  );
+  assert.notEqual(getRecordTripId(firstTrip), getRecordTripId(secondTrip));
 });
