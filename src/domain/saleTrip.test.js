@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getSaleTrip, saleDateInput } from "./saleTrip.js";
+import { getSaleTrip, getSaleYearTrips, saleDateInput } from "./saleTrip.js";
 import {
   buildTripOptions, filterRecordsByTrip, getRecordTripId, getSaleTripEditFields,
   getTripOptionLabel, tripMatchesRecord,
@@ -19,6 +19,16 @@ test("every calendar month including its last day belongs to exactly one quarter
       }
     }
   }
+});
+
+test("Dashboard annual options always contain exactly four quarters, including empty quarters", () => {
+  for (const year of [2026, 2027, 2028]) {
+    const options = getSaleYearTrips(year);
+    assert.deepEqual(options.map((trip) => trip.id), [1, 2, 3, 4].map((number) => `trip-${year}-${number}`));
+    assert.deepEqual(options.map((trip) => trip.name), [1, 2, 3, 4].map((number) => `${number}ª viagem de ${year}`));
+    assert.deepEqual(filterRecordsByTrip([], options[3].id, options), []);
+  }
+  assert.throws(() => getSaleYearTrips("bad"), /ano válido/);
 });
 
 test("boundary instants use America/Belem, independent of device timezone and timestamp format", () => {

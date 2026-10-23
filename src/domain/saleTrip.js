@@ -42,6 +42,15 @@ export function getSaleTrip(sale) {
   };
 }
 
+export function getSaleYearTrips(year) {
+  if (!Number.isInteger(Number(year)) || Number(year) < 1 || Number(year) > 9999) {
+    throw new Error("Selecione um ano válido.");
+  }
+  return [1, 4, 7, 10].map((month) => getSaleTrip({
+    saleDate: `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`,
+  }));
+}
+
 export function isSaleRecord(record) {
   return Object.hasOwn(record, "saleDate") ||
     (Object.hasOwn(record, "clientId") && (
