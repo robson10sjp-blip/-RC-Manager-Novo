@@ -13,8 +13,17 @@ import {
   organizeSalesByTrip2026,
   selectSalesForTrip,
 } from "../domain/sales";
-import { filterPayablesByTrip, summarizePayables } from "../domain/payables";
+import {
+  filterPayablesByTrip,
+  getPayableBalance,
+  summarizePayables,
+} from "../domain/payables";
 import { toDate } from "../utils/dates";
+import {
+  buildTripOptions,
+  getTripOptionLabel,
+  tripMatchesRecord,
+} from "../domain/tripIdentity.js";
 import {
   Bar,
   BarChart,
@@ -40,6 +49,11 @@ import {
 import "./DashboardPayables.css";
 import "./DashboardPremium.css";
 
+const LEGACY_CLASSIFIED_TRIPS = [
+  { tripName: "3ª viagem/2026", tripNumber: 3, tripYear: 2026 },
+  { tripName: "4ª viagem/2026", tripNumber: 4, tripYear: 2026 },
+];
+
 export default function DashboardPage() {
   const { hidden: financialValuesHidden } = useFinancialPrivacy();
   const [clients, setClients] = useState([]);
@@ -47,7 +61,9 @@ export default function DashboardPage() {
   const [sales, setSales] = useState([]);
   const [expenses, setExpenses] = useState([]);
   const [payables, setPayables] = useState([]);
+  const [trips, setTrips] = useState([]);
   const [tripFilter, setTripFilter] = useState("all");
+  const [showSupplierPurchases, setShowSupplierPurchases] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -56,6 +72,7 @@ export default function DashboardPage() {
     let unsubscribeSales = null;
     let unsubscribeExpenses = null;
     let unsubscribePayables = null;
+    let unsubscribeTrips = null;
     let authGeneration = 0;
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
@@ -65,11 +82,14 @@ export default function DashboardPage() {
       if (unsubscribeSales) unsubscribeSales();
       if (unsubscribeExpenses) unsubscribeExpenses();
       if (unsubscribePayables) unsubscribePayables();
+      if (unsubscribeTrips) unsubscribeTrips();
       setClients([]);
       setProducts([]);
       setSales([]);
       setExpenses([]);
       setPayables([]);
+      setTrips([]);
+      setShowSupplierPurchases(false);
       setLoading(Boolean(user));
 
       if (!user) {
@@ -195,6 +215,20 @@ export default function DashboardPage() {
           console.error("Erro ao carregar contas a pagar:", error);
         }
       );
+      unsubscribeTrips = onSnapshot(
+        collection(db, "users", user.uid, "trips"),
+        (snapshot) => {
+          if (generation !== authGeneration) return;
+          setTrips(snapshot.docs.map((document) => ({
+            id: document.id,
+            ...document.data(),
+          })));
+        },
+        (error) => {
+          if (generation !== authGeneration) return;
+          console.error("Erro ao carregar viagens no Dashboard:", error);
+        }
+      );
     });
 
     return () => {
@@ -206,6 +240,7 @@ export default function DashboardPage() {
       if (unsubscribeSales) unsubscribeSales();
       if (unsubscribeExpenses) unsubscribeExpenses();
       if (unsubscribePayables) unsubscribePayables();
+      if (unsubscribeTrips) unsubscribeTrips();
     };
   }, []);
 
@@ -213,26 +248,74 @@ export default function DashboardPage() {
     () => organizeSalesByTrip2026(sales),
     [sales]
   );
+  const tripBySaleId = useMemo(
+    () => new Map([
+      ...tripOrganization.thirdTrip.sales,
+      ...tripOrganization.fourthTrip.sales,
+    ].map((sale) => [sale.id, sale.tripNumber])),
+    [tripOrganization]
+  );
+  const salesWithSuggestedTrip = useMemo(
+    () => sales.map((sale) => {
+      const suggestedNumber = tripBySaleId.get(sale.id);
+      if (sale.tripId || sale.tripNumber || sale.tripName || !suggestedNumber) {
+        return sale;
+      }
+      return {
+        ...sale,
+        tripNumber: suggestedNumber,
+        tripYear: 2026,
+        tripName: `${suggestedNumber}ª viagem/2026`,
+      };
+    }),
+    [sales, tripBySaleId]
+  );
+  const tripOptions = useMemo(
+    () => buildTripOptions({
+      trips,
+      sales: [...salesWithSuggestedTrip, ...LEGACY_CLASSIFIED_TRIPS],
+      payables,
+      expenses,
+    }),
+    [expenses, payables, salesWithSuggestedTrip, trips]
+  );
+  const selectedTripOption = tripOptions.find((trip) => trip.id === tripFilter);
   const selectedSales = useMemo(
-    () => selectSalesForTrip(tripOrganization, tripFilter),
-    [tripOrganization, tripFilter]
+    () => {
+      if (tripFilter === "all") return sales;
+      if (tripFilter === "review") return tripOrganization.review.sales;
+      if (selectedTripOption) {
+        return salesWithSuggestedTrip.filter((sale) =>
+          tripMatchesRecord(sale, selectedTripOption)
+        );
+      }
+      return selectSalesForTrip(tripOrganization, tripFilter);
+    },
+    [sales, salesWithSuggestedTrip, selectedTripOption, tripFilter, tripOrganization]
   );
   const selectedExpenses = useMemo(
     () =>
       tripFilter === "all"
         ? expenses
-        : tripFilter === "review"
+        : tripFilter === "review" || tripFilter === "unassigned"
           ? []
-        : expenses.filter(
-            (expense) =>
-              String(expense.tripNumber || "") ===
-              (tripFilter === "third" ? "3" : tripFilter === "fourth" ? "4" : "")
-          ),
-    [expenses, tripFilter]
+          : selectedTripOption
+            ? expenses.filter((expense) =>
+              tripMatchesRecord(expense, selectedTripOption)
+            )
+            : [],
+    [expenses, selectedTripOption, tripFilter]
   );
   const selectedPayables = useMemo(
-    () => filterPayablesByTrip(payables, tripFilter),
-    [payables, tripFilter]
+    () => tripFilter === "review"
+      ? []
+      : filterPayablesByTrip(
+          payables,
+          tripFilter === "all" || tripFilter === "unassigned"
+            ? tripFilter
+            : selectedTripOption || tripFilter
+        ),
+    [payables, selectedTripOption, tripFilter]
   );
   const tripFinancials = useMemo(
     () => calculateTripFinancialSummary(
@@ -379,8 +462,7 @@ export default function DashboardPage() {
       tripCostDataComplete: tripFinancials.hasCompleteCostData,
       tripCashFlow: tripFinancials.cashFlow,
       supplierPayments: tripFinancials.supplierPayments,
-      supplierOperationalPurchases:
-        tripFinancials.supplierOperationalPurchases,
+      supplierPurchases: tripFinancials.supplierPurchases,
       totalPending,
       pendingSales,
       receivedThisMonth,
@@ -395,6 +477,11 @@ export default function DashboardPage() {
       currency: "BRL",
     });
   }
+
+  const displayedSupplierPurchases = useMemo(
+    () => selectedPayables.filter((payable) => payable.purchaseType !== "operational"),
+    [selectedPayables]
+  );
 
   function formatDate(date) {
     return date.toLocaleDateString("pt-BR");
@@ -421,8 +508,8 @@ export default function DashboardPage() {
     { label: "Retirada pessoal", value: formatCurrency(dashboard.tripPersonalWithdrawals) },
     { label: "Pagamentos a fornecedores", value: formatCurrency(dashboard.supplierPayments) },
     {
-      label: "Compras operacionais de fornecedores",
-      value: formatCurrency(dashboard.supplierOperationalPurchases),
+      label: "Compras de mercadorias da viagem",
+      value: formatCurrency(dashboard.supplierPurchases),
     },
   ];
 
@@ -489,8 +576,12 @@ export default function DashboardPage() {
                   onChange={(event) => setTripFilter(event.target.value)}
                 >
                   <option value="all">Geral</option>
-                  <option value="third">3ª viagem</option>
-                  <option value="fourth">4ª viagem</option>
+                  {tripOptions.map((trip) => (
+                    <option key={trip.id} value={trip.id}>
+                      {getTripOptionLabel(trip)}
+                    </option>
+                  ))}
+                  <option value="unassigned">Sem viagem definida</option>
                   <option value="review">Revisão necessária</option>
                 </select>
               </label>
@@ -509,13 +600,72 @@ export default function DashboardPage() {
             </div>
 
             <div className="dash-secondary">
-              {secondaryMetrics.map(({ label, value }) => (
-                <div key={label}>
-                  <span>{label}</span>
-                  <strong><FinancialValue>{value}</FinancialValue></strong>
-                </div>
-              ))}
+              {secondaryMetrics.map(({ label, value }) =>
+                label === "Compras de mercadorias da viagem" ? (
+                  <button
+                    key={label}
+                    type="button"
+                    className="dash-purchase-card"
+                    aria-expanded={showSupplierPurchases}
+                    onClick={() => setShowSupplierPurchases((current) => !current)}
+                  >
+                    <span>{label}</span>
+                    <strong><FinancialValue>{value}</FinancialValue></strong>
+                    <small>{showSupplierPurchases ? "Ocultar compras" : "Clique para ver compras"}</small>
+                  </button>
+                ) : (
+                  <div key={label}>
+                    <span>{label}</span>
+                    <strong><FinancialValue>{value}</FinancialValue></strong>
+                  </div>
+                )
+              )}
             </div>
+
+            {showSupplierPurchases && (
+              <section className="dash-purchase-detail" aria-label="Compras de mercadorias da viagem">
+                <div className="dash-purchase-detail-heading">
+                  <div>
+                    <h3>Compras de mercadorias da viagem</h3>
+                    <p>
+                      {tripFilter === "all"
+                        ? "Total geral de todas as viagens."
+                        : tripFilter === "unassigned"
+                          ? "Registros antigos sem viagem definida."
+                          : `Compras vinculadas a ${getTripOptionLabel(selectedTripOption || {})}.`}
+                      {" "}Inclui compras ainda não pagas.
+                    </p>
+                  </div>
+                  <button type="button" onClick={() => setShowSupplierPurchases(false)}>
+                    Fechar
+                  </button>
+                </div>
+                {displayedSupplierPurchases.length === 0 ? (
+                  <p className="dash-purchase-empty">Nenhuma compra de mercadoria nesta seleção.</p>
+                ) : (
+                  <div className="dash-purchase-list">
+                    {displayedSupplierPurchases
+                      .slice()
+                      .sort((first, second) =>
+                        (toDate(second.purchaseDate)?.getTime() || 0) -
+                        (toDate(first.purchaseDate)?.getTime() || 0)
+                      )
+                      .map((payable) => (
+                        <article key={payable.id}>
+                          <div>
+                            <strong>{payable.supplierName || "Fornecedor não informado"}</strong>
+                            <span>{payable.description || "Compra de mercadorias"}</span>
+                          </div>
+                          <span>{toDate(payable.purchaseDate)?.toLocaleDateString("pt-BR") || "Data não informada"}</span>
+                          <span>Total <FinancialValue>{formatCurrency(payable.totalAmount)}</FinancialValue></span>
+                          <span>Pago <FinancialValue>{formatCurrency(payable.paidAmount)}</FinancialValue></span>
+                          <strong>Saldo <FinancialValue>{formatCurrency(getPayableBalance(payable))}</FinancialValue></strong>
+                        </article>
+                      ))}
+                  </div>
+                )}
+              </section>
+            )}
 
             {tripFilter !== "all" && (
               <p className="dash-notice">

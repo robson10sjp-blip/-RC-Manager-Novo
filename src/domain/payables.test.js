@@ -296,6 +296,44 @@ test("issuing multiple checks reserves obligations without reducing paid or cash
   assert.equal(withSecond.find((item) => item.id === "check-1").checkStatus, CHECK_STATUSES.ISSUED);
 });
 
+test("links a supplier check to one open installment and rejects excess amount", () => {
+  const payable = {
+    totalAmount: 800,
+    paidAmount: 100,
+    installments: [
+      { id: "part-1", amount: 300, paidAmount: 50, method: "boleto" },
+      { id: "part-2", amount: 150, paidAmount: 0, method: "boleto" },
+    ],
+  };
+  const installments = createIssuedCheck(payable, {
+    id: "check-linked",
+    installmentId: "part-1",
+    amount: 200,
+    identification: "0044",
+    bankAccount: "bb-pf",
+    issueDate: "2026-10-19",
+    expectedCompensationDate: "2026-11-19",
+  });
+  assert.equal(installments.find((item) => item.id === "part-1").amount, 100);
+  assert.equal(
+    installments.find((item) => item.id === "check-linked").linkedInstallmentId,
+    "part-1"
+  );
+  assert.equal(payable.paidAmount, 100);
+  assert.throws(
+    () => createIssuedCheck(payable, {
+      id: "check-too-large",
+      installmentId: "part-1",
+      amount: 251,
+      identification: "0045",
+      bankAccount: "bb-pf",
+      issueDate: "2026-10-19",
+      expectedCompensationDate: "2026-11-19",
+    }),
+    /saldo da parcela selecionada/
+  );
+});
+
 test("correcting a payment updates existing allocation without adding another payment", () => {
   const payable = {
     totalAmount: 1000,

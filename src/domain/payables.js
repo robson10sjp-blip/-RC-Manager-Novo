@@ -344,21 +344,35 @@ export function createIssuedCheck(payable, check) {
   }
   const installments = (payable.installments || []).map((item) => ({ ...item }));
   let toReserve = amountCents;
-  const scheduledOpen = installments.reduce(
-    (sum, item) => sum + Math.max(cents(item.amount) - cents(item.paidAmount), 0),
-    0
-  );
-  const unallocatedBalance = Math.max(balanceCents - scheduledOpen, 0);
-  for (const item of [...installments].reverse()) {
-    if (item.method === "cheque") continue;
-    const open = Math.max(cents(item.amount) - cents(item.paidAmount), 0);
-    const reserve = Math.min(open, toReserve);
-    item.amount = amountFromCents(cents(item.amount) - reserve);
-    toReserve -= reserve;
-    if (toReserve === 0) break;
-  }
-  if (toReserve > unallocatedBalance) {
-    throw new Error("O saldo já está representado por cheques emitidos; não é possível emitir outro sem alterar essas obrigações.");
+  let linkedInstallmentId = "";
+  if (check.installmentId) {
+    const target = installments.find((item) => item.id === check.installmentId);
+    if (!target || target.method === "cheque") {
+      throw new Error("Selecione uma parcela comum em aberto para vincular o cheque.");
+    }
+    const open = Math.max(cents(target.amount) - cents(target.paidAmount), 0);
+    if (amountCents > open) {
+      throw new Error("O valor do cheque não pode superar o saldo da parcela selecionada.");
+    }
+    target.amount = amountFromCents(cents(target.amount) - amountCents);
+    linkedInstallmentId = target.id;
+  } else {
+    const scheduledOpen = installments.reduce(
+      (sum, item) => sum + Math.max(cents(item.amount) - cents(item.paidAmount), 0),
+      0
+    );
+    const unallocatedBalance = Math.max(balanceCents - scheduledOpen, 0);
+    for (const item of [...installments].reverse()) {
+      if (item.method === "cheque") continue;
+      const open = Math.max(cents(item.amount) - cents(item.paidAmount), 0);
+      const reserve = Math.min(open, toReserve);
+      item.amount = amountFromCents(cents(item.amount) - reserve);
+      toReserve -= reserve;
+      if (toReserve === 0) break;
+    }
+    if (toReserve > unallocatedBalance) {
+      throw new Error("O saldo já está representado por cheques emitidos; não é possível emitir outro sem alterar essas obrigações.");
+    }
   }
   installments.push({
     id: check.id,
@@ -367,6 +381,7 @@ export function createIssuedCheck(payable, check) {
     dueDate,
     method: "cheque",
     identification: String(check.identification).trim(),
+    ...(linkedInstallmentId ? { linkedInstallmentId } : {}),
     bankAccount: check.bankAccount,
     bankName: check.bankName || "Banco do Brasil",
     issueDate,

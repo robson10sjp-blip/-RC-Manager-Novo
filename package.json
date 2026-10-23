@@ -8,7 +8,7 @@
     "dev:readonly": "vite --mode readonly",
     "build": "vite build",
     "lint": "eslint .",
-    "test": "node --test src/domain/*.test.js src/firebase/*.test.js src/services/*.test.js netlify/ai/*.test.js",
+    "test": "node --test src/domain/*.test.js src/firebase/*.test.js src/services/*.test.js src/utils/*.test.js netlify/ai/*.test.js",
     "test:rules": "firebase emulators:exec --project demo-rc-manager-rules --config firebase.json --only firestore \"node --test tests/firestore.rules.test.js\"",
     "preview": "vite preview"
   },

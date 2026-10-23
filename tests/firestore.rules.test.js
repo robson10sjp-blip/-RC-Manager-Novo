@@ -287,6 +287,46 @@ test("supplier purchase edits, payment corrections and check compensation are at
   assert.equal(editedPayable.tripYear, 2028);
   assert.equal(editedPayable.installments.find((item) => item.id === check.id).amount, 150);
   assert.equal((await getDocs(collection(db, "users", USER_A, "payables", "supplier-fake", "corrections"))).size, 2);
+  const editWithCheck = {
+    db,
+    userId: USER_A,
+    payableId: "supplier-fake",
+    correctionId: "edit-with-existing-purchase-check",
+    changes: {
+      description: editedPayable.description,
+      totalAmount: editedPayable.totalAmount,
+      purchaseDate: "2026-10-03",
+      dueDate: "2026-12-01",
+      paymentType: "credit",
+      tripId: trip2028.id,
+      tripName: trip2028.name,
+      tripNumber: 1,
+      tripYear: 2028,
+    },
+    checks: [{
+      operationId: "extra-check-01",
+      installmentId: "installment-1",
+      amount: 50,
+      identification: "00983",
+      bankAccount: "bb-pf",
+      bankName: "Banco do Brasil",
+      issueDate: new Date("2026-10-04T12:00:00Z"),
+      expectedCompensationDate: new Date("2026-12-15T12:00:00Z"),
+    }],
+  };
+  await assertSucceeds(editSupplierPurchase(editWithCheck));
+  await assertSucceeds(editSupplierPurchase(editWithCheck));
+  const withAdditionalCheck = (await getDoc(payableRef)).data();
+  const issuedCheck = withAdditionalCheck.installments.find(
+    (item) => item.id === "supplier-check-extra-check-01"
+  );
+  assert.equal(issuedCheck.checkStatus, "issued");
+  assert.equal(issuedCheck.amount, 50);
+  assert.equal(issuedCheck.linkedInstallmentId, "installment-1");
+  assert.equal(withAdditionalCheck.paidAmount, 250);
+  assert.equal(withAdditionalCheck.balance, 350);
+  assert.equal((await getDocs(paymentsRef)).size, 2);
+  assert.equal((await getDocs(collection(db, "users", USER_A, "payables", "supplier-fake", "corrections"))).size, 3);
   await assert.rejects(editSupplierPurchase({
     db, userId: USER_A, payableId: "supplier-fake",
     changes: {
@@ -329,7 +369,7 @@ test("supplier purchase edits, payment corrections and check compensation are at
     (sum, item) => sum + Number(item.data().amount || 0), 0
   ), 290);
   assert.equal((await getDocs(paymentsRef)).size, 3);
-  assert.equal((await getDocs(collection(db, "users", USER_A, "payables", "supplier-fake", "corrections"))).size, 3);
+  assert.equal((await getDocs(collection(db, "users", USER_A, "payables", "supplier-fake", "corrections"))).size, 4);
   await assertFails(updateDoc(payableRef, {
     description: "Sem correção auditada",
     totalAmount: 601,

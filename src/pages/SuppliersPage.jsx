@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { LuTruck } from "react-icons/lu";
 import PageHeader from "../components/PageHeader.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
+import CurrencyInput from "../components/CurrencyInput.jsx";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -42,6 +43,7 @@ import {
   editSupplierPurchase,
   issueSupplierCheck,
 } from "../services/supplierPayables.js";
+import { parseBrlAmount } from "../utils/currency.js";
 import "./SuppliersPage.css";
 
 const todayInput = () => new Date().toISOString().slice(0, 10);
@@ -79,6 +81,16 @@ const emptyPayment = {
   issueDate: todayInput(),
   expectedCompensationDate: todayInput(),
 };
+const newIssuedCheck = () => ({
+  operationId: crypto.randomUUID(),
+  installmentId: "",
+  amount: "",
+  identification: "",
+  bankAccount: "bb-pf",
+  bankName: "Banco do Brasil",
+  issueDate: todayInput(),
+  expectedCompensationDate: todayInput(),
+});
 
 export default function SuppliersPage() {
   const [suppliers, setSuppliers] = useState([]);
@@ -92,6 +104,7 @@ export default function SuppliersPage() {
   const [payment, setPayment] = useState(emptyPayment);
   const [editingId, setEditingId] = useState(null);
   const [editingPurchase, setEditingPurchase] = useState(null);
+  const [editingPurchaseChecks, setEditingPurchaseChecks] = useState([]);
   const [editingPayment, setEditingPayment] = useState(null);
   const [editingCheck, setEditingCheck] = useState(null);
   const [expandedSupplierId, setExpandedSupplierId] = useState(null);
@@ -141,6 +154,7 @@ export default function SuppliersPage() {
       setPayment({ ...emptyPayment, date: todayInput() });
       setEditingId(null);
       setEditingPurchase(null);
+      setEditingPurchaseChecks([]);
       setEditingPayment(null);
       setEditingCheck(null);
       compensatingCheckLock.current.clear();
@@ -520,19 +534,21 @@ export default function SuppliersPage() {
     }
 
     const supplier = suppliers.find((item) => item.id === purchase.supplierId);
+    const totalAmount = parseBrlAmount(purchase.totalAmount);
+    const downPayment = parseBrlAmount(purchase.downPayment || 0);
     const initialCheque = purchase.paymentMethod === "cheque" &&
-      Number(String(purchase.downPayment || 0).replace(",", ".")) > 0;
+      Number.isFinite(downPayment) && downPayment > 0;
     const paidAmount = initialCheque
       ? 0
       : purchase.paymentType === "cash"
-        ? purchase.totalAmount
-        : purchase.downPayment;
+        ? totalAmount
+        : downPayment;
     const purchaseInstallments = purchase.paymentType === "cash"
       ? []
       : [
           ...(initialCheque ? [{
             id: crypto.randomUUID(),
-            amount: purchase.downPayment,
+            amount: downPayment,
             dueDate: purchase.initialCheckExpectedDate,
             method: "cheque",
             identification: purchase.initialCheckIdentification,
@@ -540,7 +556,10 @@ export default function SuppliersPage() {
             bankName: "Banco do Brasil",
             issueDate: purchase.initialCheckIssueDate,
           }] : []),
-          ...installments,
+          ...installments.map((installment) => ({
+            ...installment,
+            amount: parseBrlAmount(installment.amount),
+          })),
         ];
     let payableData;
     try {
@@ -548,7 +567,7 @@ export default function SuppliersPage() {
         supplier,
         description: purchase.description,
         purchaseDate: purchase.purchaseDate,
-        totalAmount: purchase.totalAmount,
+        totalAmount,
         downPayment: paidAmount,
         installments: purchaseInstallments,
         trip: tripOptionsForPurchases.find((trip) => trip.id === purchase.tripId),
@@ -623,7 +642,7 @@ export default function SuppliersPage() {
     if (paymentLock.current) return;
     const user = auth.currentUser;
     const payable = payables.find((item) => item.id === payment.payableId);
-    const amount = Number(String(payment.amount).replace(",", "."));
+    const amount = parseBrlAmount(payment.amount);
     const date = payment.date ? new Date(`${payment.date}T12:00:00`) : null;
     if (!user || !payable) {
       setError("Selecione uma compra válida para registrar o pagamento.");
@@ -775,6 +794,12 @@ export default function SuppliersPage() {
     }
   }
 
+  function dateInputValue(value) {
+    const parsed = toDate(value);
+    if (!parsed) return "";
+    return `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, "0")}-${String(parsed.getDate()).padStart(2, "0")}`;
+  }
+
   function beginPurchaseEdit(payable) {
     const firstOpenInstallment = (payable.installments || []).find(
       (item) => item.method !== "cheque" &&
@@ -787,6 +812,7 @@ export default function SuppliersPage() {
     };
     setEditingPurchase({
       payableId: payable.id,
+      correctionId: crypto.randomUUID(),
       description: payable.description || "",
       totalAmount: String(payable.totalAmount ?? ""),
       purchaseDate: dateValue(payable.purchaseDate),
@@ -794,7 +820,11 @@ export default function SuppliersPage() {
       paymentType: payable.paymentType ||
         (Number(payable.paidAmount || 0) >= Number(payable.totalAmount || 0) ? "cash" : "credit"),
       tripId: payable.tripId || getRecordTripId(payable),
+      paymentMethod: (payable.installments || []).some(
+        (item) => item.method === "cheque" && getCheckStatus(item) === CHECK_STATUSES.ISSUED
+      ) ? "cheque" : "unchanged",
     });
+    setEditingPurchaseChecks([]);
   }
 
   async function savePurchaseEdit(event) {
@@ -804,24 +834,101 @@ export default function SuppliersPage() {
     try {
       setSavingPurchase(true);
       setError("");
-      const { payableId, ...changes } = editingPurchase;
+      const { payableId, correctionId, paymentMethod, ...changes } = editingPurchase;
+      const payable = payables.find((item) => item.id === payableId);
+      if (!payable) throw new Error("A compra selecionada não está mais disponível.");
+      const totalAmount = parseBrlAmount(changes.totalAmount);
+      if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+        throw new Error("Informe um valor total válido.");
+      }
+      const selectedTripId = String(changes.tripId || "");
       const selectedTrip = tripOptionsForPurchases.find(
-        (trip) => trip.id === changes.tripId
+        (trip) => trip.id === selectedTripId
       );
-      await editSupplierPurchase({
-        db,
-        userId: user.uid,
-        payableId,
-        changes: {
-          ...changes,
+      const purchaseChanges = {
+        ...changes,
+        totalAmount,
+      };
+      const currentTripId = payable.tripId || getRecordTripId(payable);
+      const tripSelectionChanged = selectedTripId !== currentTripId;
+      if (tripSelectionChanged) {
+        Object.assign(purchaseChanges, {
           tripId: selectedTrip?.id || "",
           tripName: selectedTrip?.name || "",
           tripNumber: selectedTrip?.tripNumber || null,
           tripYear: selectedTrip?.tripYear || null,
-        },
-      });
+        });
+      }
+      const moneyInCents = (value) => Math.round(Number(value || 0) * 100);
+      const hasPurchaseChanges =
+        String(purchaseChanges.description || "").trim() !== String(payable.description || "").trim() ||
+        moneyInCents(totalAmount) !== moneyInCents(payable.totalAmount) ||
+        purchaseChanges.purchaseDate !== dateInputValue(payable.purchaseDate) ||
+        purchaseChanges.dueDate !== dateInputValue(
+          (payable.installments || []).find(
+            (item) => item.method !== "cheque" &&
+              Number(item.amount || 0) > Number(item.paidAmount || 0)
+          )?.dueDate || payable.dueDate
+        ) ||
+        purchaseChanges.paymentType !== (payable.paymentType ||
+          (Number(payable.paidAmount || 0) >= Number(payable.totalAmount || 0) ? "cash" : "credit")) ||
+        tripSelectionChanged;
+
+      let checks = [];
+      if (editingPurchaseChecks.length > 0) {
+        if (paymentMethod !== "cheque") {
+          throw new Error("Selecione “Cheque” para registrar os cheques nas parcelas em aberto.");
+        }
+        checks = editingPurchaseChecks.map((check) => ({
+          ...check,
+          amount: parseBrlAmount(check.amount),
+          issueDate: new Date(`${check.issueDate}T12:00:00`),
+          expectedCompensationDate: new Date(
+            `${check.expectedCompensationDate}T12:00:00`
+          ),
+        }));
+        const expectedBalance = Math.max(
+          moneyInCents(totalAmount) - moneyInCents(payable.paidAmount),
+          0
+        );
+        const checksTotal = checks.reduce(
+          (sum, check) => sum + moneyInCents(check.amount),
+          0
+        );
+        if (checks.some((check) =>
+          !Number.isFinite(check.amount) ||
+          check.amount <= 0 ||
+          !check.installmentId ||
+          !check.identification.trim() ||
+          Number.isNaN(check.issueDate.getTime()) ||
+          Number.isNaN(check.expectedCompensationDate.getTime())
+        )) {
+          throw new Error("Preencha parcela, valor, número, emissão e compensação de cada cheque.");
+        }
+        if (checksTotal > expectedBalance) {
+          throw new Error("O total dos cheques não pode superar o saldo em aberto da compra.");
+        }
+      }
+
+      if (hasPurchaseChanges || checks.length > 0) {
+        await editSupplierPurchase({
+          db,
+          userId: user.uid,
+          payableId,
+          correctionId,
+          changes: purchaseChanges,
+          checks,
+        });
+      }
       setEditingPurchase(null);
-      setNotice("Compra corrigida. Saldo e parcelas foram recalculados; a versão anterior foi preservada no histórico de correções.");
+      setEditingPurchaseChecks([]);
+      setNotice(
+        editingPurchaseChecks.length
+          ? "Compra preservada; cheques vinculados ao saldo em aberto como pendentes. Nenhuma nova compra ou saída de caixa foi criada."
+          : hasPurchaseChanges
+            ? "Compra corrigida. Saldo e parcelas foram recalculados; a versão anterior foi preservada no histórico de correções."
+            : "Nenhuma alteração foi necessária."
+      );
     } catch (editError) {
       console.error("Erro ao corrigir compra do fornecedor:", editError);
       setError(`Não foi possível corrigir a compra: ${editError.message}`);
@@ -863,7 +970,7 @@ export default function SuppliersPage() {
         installmentId,
         changes: {
           ...values,
-          amount: Number(String(values.amount).replace(",", ".")),
+          amount: parseBrlAmount(values.amount),
           issueDate: new Date(`${values.issueDate}T12:00:00`),
           expectedCompensationDate: new Date(`${values.expectedCompensationDate}T12:00:00`),
         },
@@ -920,7 +1027,7 @@ export default function SuppliersPage() {
         paymentId,
         changes: {
           ...values,
-          amount: Number(String(values.amount).replace(",", ".")),
+          amount: parseBrlAmount(values.amount),
           date,
           issueDate,
           expectedCompensationDate,
@@ -947,6 +1054,16 @@ export default function SuppliersPage() {
     const date = toDate(value);
     return date ? date.toLocaleDateString("pt-BR") : "Data não informada";
   }
+
+  const editedPayable = editingPurchase
+    ? payables.find((item) => item.id === editingPurchase.payableId)
+    : null;
+  const openCheckableInstallments = (editedPayable?.installments || [])
+    .map((installment, index) => ({ installment, index }))
+    .filter(({ installment }) =>
+      installment.method !== "cheque" &&
+      Number(installment.amount || 0) > Number(installment.paidAmount || 0)
+    );
 
   return (
     <main className="suppliers-page">
@@ -1124,60 +1241,6 @@ export default function SuppliersPage() {
                                     Editar compra
                                   </button>
                                 </div>
-                                {editingPurchase?.payableId === item.id && (
-                                  <form className="supplier-correction-form" onSubmit={savePurchaseEdit}>
-                                    <h5>Corrigir compra</h5>
-                                    <label>
-                                      Descrição
-                                      <input value={editingPurchase.description} required maxLength={240}
-                                        onChange={(event) => setEditingPurchase((current) => ({ ...current, description: event.target.value }))} />
-                                    </label>
-                                    <label>
-                                      Valor total
-                                      <input type="number" min="0.01" step="0.01" value={editingPurchase.totalAmount} required
-                                        onChange={(event) => setEditingPurchase((current) => ({ ...current, totalAmount: event.target.value }))} />
-                                    </label>
-                                    <label>
-                                      Data da compra
-                                      <input type="date" value={editingPurchase.purchaseDate} required
-                                        onChange={(event) => setEditingPurchase((current) => ({ ...current, purchaseDate: event.target.value }))} />
-                                    </label>
-                                    <label>
-                                      Viagem de destino
-                                      <select
-                                        value={editingPurchase.tripId}
-                                        onChange={(event) => setEditingPurchase((current) => ({ ...current, tripId: event.target.value }))}
-                                      >
-                                        <option value="">Sem viagem definida</option>
-                                        {tripOptionsForPurchases.map((trip) => (
-                                          <option key={trip.id} value={trip.id}>
-                                            {getTripOptionLabel(trip)}
-                                          </option>
-                                        ))}
-                                      </select>
-                                    </label>
-                                    <label>
-                                      Vencimento das parcelas comuns
-                                      <input type="date" value={editingPurchase.dueDate}
-                                        onChange={(event) => setEditingPurchase((current) => ({ ...current, dueDate: event.target.value }))} />
-                                    </label>
-                                    <label>
-                                      Condição de pagamento
-                                      <select value={editingPurchase.paymentType}
-                                        onChange={(event) => setEditingPurchase((current) => ({ ...current, paymentType: event.target.value }))}>
-                                        <option value="cash">À vista</option>
-                                        <option value="credit">A prazo</option>
-                                      </select>
-                                    </label>
-                                    <div className="supplier-correction-actions">
-                                      <button type="submit" disabled={savingPurchase || readOnly}>
-                                        {savingPurchase ? "Salvando..." : "Salvar correção"}
-                                      </button>
-                                      <button type="button" onClick={() => setEditingPurchase(null)}>Cancelar</button>
-                                    </div>
-                                    <small>O total não pode ficar abaixo do que já foi pago. Cheques emitidos não são alterados junto com o vencimento comum.</small>
-                                  </form>
-                                )}
                                 {(item.installments || []).map((installment, index) => (
                                   <div className="supplier-installment" key={installment.id || index}>
                                     <span>
@@ -1218,8 +1281,8 @@ export default function SuppliersPage() {
                                     <h5>Corrigir cheque entregue</h5>
                                     <label>
                                       Valor
-                                      <input type="number" min="0.01" step="0.01" required value={editingCheck.amount}
-                                        onChange={(event) => setEditingCheck((current) => ({ ...current, amount: event.target.value }))} />
+                                      <CurrencyInput required value={editingCheck.amount}
+                                        onChange={(value) => setEditingCheck((current) => ({ ...current, amount: value }))} />
                                     </label>
                                     <label>
                                       Banco / conta
@@ -1271,8 +1334,8 @@ export default function SuppliersPage() {
                                             <h5>Corrigir pagamento</h5>
                                             <label>
                                               Valor
-                                              <input type="number" min="0.01" step="0.01" value={editingPayment.amount} required
-                                                onChange={(event) => setEditingPayment((current) => ({ ...current, amount: event.target.value }))} />
+                                              <CurrencyInput value={editingPayment.amount} required
+                                                onChange={(value) => setEditingPayment((current) => ({ ...current, amount: value }))} />
                                             </label>
                                             <label>
                                               Data
@@ -1366,6 +1429,307 @@ export default function SuppliersPage() {
         </section>
       </section>
 
+      {editingPurchase && (
+        <div
+          className="supplier-modal-backdrop"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !savingPurchase) {
+              setEditingPurchase(null);
+              setEditingPurchaseChecks([]);
+            }
+          }}
+        >
+          <section
+            className="supplier-edit-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="supplier-edit-title"
+          >
+            <header className="supplier-edit-modal-heading">
+              <div>
+                <p className="suppliers-eyebrow">Correção auditada</p>
+                <h2 id="supplier-edit-title">Editar compra</h2>
+              </div>
+              <button
+                type="button"
+                aria-label="Fechar edição"
+                onClick={() => {
+                  setEditingPurchase(null);
+                  setEditingPurchaseChecks([]);
+                }}
+                disabled={savingPurchase}
+              >
+                ×
+              </button>
+            </header>
+            <form className="supplier-edit-form" onSubmit={savePurchaseEdit}>
+              <label>
+                Descrição
+                <input
+                  value={editingPurchase.description}
+                  required
+                  maxLength={240}
+                  onChange={(event) =>
+                    setEditingPurchase((current) => ({
+                      ...current,
+                      description: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Valor total
+                <CurrencyInput
+                  value={editingPurchase.totalAmount}
+                  required
+                  onChange={(value) =>
+                    setEditingPurchase((current) => ({
+                      ...current,
+                      totalAmount: value,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Data da compra
+                <input
+                  type="date"
+                  value={editingPurchase.purchaseDate}
+                  required
+                  onChange={(event) =>
+                    setEditingPurchase((current) => ({
+                      ...current,
+                      purchaseDate: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Viagem de destino
+                <select
+                  value={editingPurchase.tripId}
+                  onChange={(event) =>
+                    setEditingPurchase((current) => ({
+                      ...current,
+                      tripId: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="">Sem viagem definida</option>
+                  {tripOptionsForPurchases.map((trip) => (
+                    <option key={trip.id} value={trip.id}>
+                      {getTripOptionLabel(trip)}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Vencimento das parcelas comuns
+                <input
+                  type="date"
+                  value={editingPurchase.dueDate}
+                  onChange={(event) =>
+                    setEditingPurchase((current) => ({
+                      ...current,
+                      dueDate: event.target.value,
+                    }))
+                  }
+                />
+              </label>
+              <label>
+                Condição de pagamento
+                <select
+                  value={editingPurchase.paymentType}
+                  onChange={(event) =>
+                    setEditingPurchase((current) => ({
+                      ...current,
+                      paymentType: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="cash">À vista</option>
+                  <option value="credit">A prazo</option>
+                </select>
+              </label>
+              <label>
+                Forma de pagamento
+                <select
+                  value={editingPurchase.paymentMethod}
+                  onChange={(event) =>
+                    setEditingPurchase((current) => ({
+                      ...current,
+                      paymentMethod: event.target.value,
+                    }))
+                  }
+                >
+                  <option value="unchanged">Manter parcelas atuais</option>
+                  <option value="cheque">Cheque</option>
+                </select>
+              </label>
+              {editingPurchase.paymentMethod === "cheque" && (
+                <section className="supplier-edit-checks">
+                  <div className="supplier-edit-checks-heading">
+                    <div>
+                      <h3>Cheques para parcelas em aberto</h3>
+                      <p>Vincule cada cheque a uma parcela em aberto. A entrega não baixa o caixa.</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setEditingPurchaseChecks((current) => [
+                          ...current,
+                          newIssuedCheck(),
+                        ])
+                      }
+                    >
+                      + Adicionar cheque
+                    </button>
+                  </div>
+                  {editingPurchaseChecks.map((check, index) => (
+                    <div className="supplier-edit-check-row" key={check.operationId}>
+                      <strong>Cheque {index + 1}</strong>
+                      <label>
+                        Parcela em aberto
+                        <select
+                          value={check.installmentId}
+                          required
+                          onChange={(event) =>
+                            setEditingPurchaseChecks((current) =>
+                              current.map((item) => item.operationId === check.operationId
+                                ? { ...item, installmentId: event.target.value }
+                                : item)
+                            )
+                          }
+                        >
+                          <option value="">Selecione uma parcela</option>
+                          {openCheckableInstallments.map(({ installment, index: installmentIndex }) => (
+                            <option key={installment.id} value={installment.id}>
+                              Parcela {installmentIndex + 1} · saldo{" "}
+                              {formatCurrency(Math.max(
+                                Number(installment.amount || 0) -
+                                  Number(installment.paidAmount || 0),
+                                0
+                              ))}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Valor
+                        <CurrencyInput
+                          value={check.amount}
+                          required
+                          onChange={(value) =>
+                            setEditingPurchaseChecks((current) =>
+                              current.map((item) => item.operationId === check.operationId
+                                ? { ...item, amount: value }
+                                : item)
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Banco / conta
+                        <select
+                          value={check.bankAccount}
+                          onChange={(event) =>
+                            setEditingPurchaseChecks((current) =>
+                              current.map((item) => item.operationId === check.operationId
+                                ? { ...item, bankAccount: event.target.value }
+                                : item)
+                            )
+                          }
+                        >
+                          <option value="bb-pf">Banco do Brasil · PF</option>
+                          <option value="bb-pj">Banco do Brasil · PJ</option>
+                        </select>
+                      </label>
+                      <label>
+                        Número do cheque
+                        <input
+                          value={check.identification}
+                          required
+                          maxLength={40}
+                          onChange={(event) =>
+                            setEditingPurchaseChecks((current) =>
+                              current.map((item) => item.operationId === check.operationId
+                                ? { ...item, identification: event.target.value }
+                                : item)
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Emissão
+                        <input
+                          type="date"
+                          value={check.issueDate}
+                          required
+                          onChange={(event) =>
+                            setEditingPurchaseChecks((current) =>
+                              current.map((item) => item.operationId === check.operationId
+                                ? { ...item, issueDate: event.target.value }
+                                : item)
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        Data prevista de compensação
+                        <input
+                          type="date"
+                          value={check.expectedCompensationDate}
+                          required
+                          onChange={(event) =>
+                            setEditingPurchaseChecks((current) =>
+                              current.map((item) => item.operationId === check.operationId
+                                ? { ...item, expectedCompensationDate: event.target.value }
+                                : item)
+                            )
+                          }
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="supplier-remove-check"
+                        onClick={() =>
+                          setEditingPurchaseChecks((current) =>
+                            current.filter((item) => item.operationId !== check.operationId)
+                          )
+                        }
+                      >
+                        Remover cheque
+                      </button>
+                    </div>
+                  ))}
+                  {editingPurchaseChecks.length === 0 && (
+                    <p className="supplier-edit-checks-empty">
+                      Adicione um ou mais cheques para associá-los ao saldo em aberto.
+                    </p>
+                  )}
+                </section>
+              )}
+              <p className="supplier-edit-warning">
+                O total não pode ficar abaixo do já pago. Pagamentos anteriores
+                são preservados; cheques entregues permanecem pendentes até a compensação.
+              </p>
+              <div className="supplier-modal-actions">
+                <button type="button" onClick={() => {
+                  setEditingPurchase(null);
+                  setEditingPurchaseChecks([]);
+                }} disabled={savingPurchase}>
+                  Cancelar
+                </button>
+                <button type="submit" disabled={savingPurchase || readOnly}>
+                  {savingPurchase ? "Salvando..." : "Salvar edição"}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      )}
+
       <section className="suppliers-purchases">
         <div className="suppliers-section-heading">
           <div>
@@ -1458,17 +1822,14 @@ export default function SuppliersPage() {
           </label>
           <label>
             Valor total *
-            <input
-              type="number"
-              min="0.01"
-              step="0.01"
+            <CurrencyInput
               value={purchase.totalAmount}
-              onChange={(event) =>
+              onChange={(value) =>
                 setPurchase((current) => ({
                   ...current,
-                  totalAmount: event.target.value,
+                  totalAmount: value,
                   ...(current.paymentType === "cash"
-                    ? { downPayment: event.target.value }
+                    ? { downPayment: value }
                     : {}),
                 }))
               }
@@ -1536,21 +1897,19 @@ export default function SuppliersPage() {
             <>
               <label>
                 {purchase.paymentMethod === "cheque" ? "Valor do cheque de entrada" : "Valor já pago (opcional)"}
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
+                <CurrencyInput
                   value={purchase.downPayment}
-                  onChange={(event) =>
+                  onChange={(value) =>
                     setPurchase((current) => ({
                       ...current,
-                      downPayment: event.target.value,
+                      downPayment: value,
                     }))
                   }
                   disabled={readOnly}
                 />
               </label>
-              {purchase.paymentMethod === "cheque" && Number(purchase.downPayment) > 0 && (
+              {purchase.paymentMethod === "cheque" &&
+                parseBrlAmount(purchase.downPayment) > 0 && (
                 <>
                   <label>
                     Banco / conta do cheque *
@@ -1622,13 +1981,10 @@ export default function SuppliersPage() {
                       <div className="supplier-installment-editor-row" key={installment.id}>
                         <label>
                           Parcela {index + 1} · valor
-                          <input
-                            type="number"
-                            min="0.01"
-                            step="0.01"
+                          <CurrencyInput
                             value={installment.amount}
-                            onChange={(event) =>
-                              updateInstallment(index, "amount", event.target.value)
+                            onChange={(value) =>
+                              updateInstallment(index, "amount", value)
                             }
                             required
                             disabled={readOnly}
@@ -1756,13 +2112,10 @@ export default function SuppliersPage() {
           </label>
           <label>
             Valor pago *
-            <input
-              type="number"
-              min="0.01"
-              step="0.01"
+            <CurrencyInput
               value={payment.amount}
-              onChange={(event) =>
-                setPayment((current) => ({ ...current, amount: event.target.value }))
+              onChange={(value) =>
+                setPayment((current) => ({ ...current, amount: value }))
               }
               required
               disabled={readOnly}

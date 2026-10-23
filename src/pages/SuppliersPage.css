@@ -102,6 +102,8 @@
 .supplier-installment-editor-row select,
 .supplier-correction-form input,
 .supplier-correction-form select,
+.supplier-edit-form input,
+.supplier-edit-form select,
 .suppliers-search {
   width: 100%;
   min-width: 0;
@@ -172,6 +174,7 @@
 }
 
 .supplier-row {
+  flex-wrap: wrap;
   align-items: flex-start;
   padding: 14px;
   border: 1px solid #e7edf4;
@@ -202,6 +205,7 @@
 .supplier-title-line h3 {
   margin: 0;
   font-size: 15px;
+  overflow-wrap: anywhere;
 }
 
 .supplier-title-line span {
@@ -419,7 +423,9 @@
 }
 
 .supplier-history {
-  flex: 1 0 100%;
+  flex: 0 0 100%;
+  width: 100%;
+  box-sizing: border-box;
   min-width: 0;
   margin-top: 10px;
   padding: 14px;
@@ -438,6 +444,7 @@
 
 .supplier-purchase {
   min-width: 0;
+  overflow-wrap: anywhere;
   padding: 13px;
   border: 1px solid #e1e8f0;
   border-radius: 12px;
@@ -571,6 +578,142 @@
   color: #65738a;
 }
 
+.supplier-modal-backdrop {
+  position: fixed;
+  z-index: 1200;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  padding: 24px;
+  background: rgba(9, 20, 38, 0.62);
+}
+
+.supplier-edit-modal {
+  width: min(760px, 100%);
+  max-height: min(90vh, 920px);
+  overflow-y: auto;
+  padding: 22px;
+  border: 1px solid #dce4f0;
+  border-radius: 18px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(4, 13, 28, 0.3);
+}
+
+.supplier-edit-modal-heading,
+.supplier-edit-checks-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.supplier-edit-modal-heading {
+  margin-bottom: 18px;
+}
+
+.supplier-edit-modal-heading h2,
+.supplier-edit-checks-heading h3 {
+  margin: 3px 0;
+  color: #142238;
+}
+
+.supplier-edit-modal-heading > button,
+.supplier-edit-checks-heading > button,
+.supplier-remove-check,
+.supplier-modal-actions button {
+  min-height: 40px;
+  padding: 9px 13px;
+  border: 1px solid #d4deea;
+  border-radius: 9px;
+  background: #fff;
+  color: #31598b;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+.supplier-edit-modal-heading > button {
+  min-width: 40px;
+  padding: 0;
+  font-size: 25px;
+  line-height: 1;
+}
+
+.supplier-edit-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 13px;
+}
+
+.supplier-edit-form > label,
+.supplier-edit-check-row > label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  color: #34435a;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.supplier-edit-checks,
+.supplier-edit-warning,
+.supplier-modal-actions {
+  grid-column: 1 / -1;
+}
+
+.supplier-edit-checks {
+  padding: 14px;
+  border: 1px solid #dce4f0;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.supplier-edit-checks-heading p {
+  margin: 5px 0 0;
+  color: #65738a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.supplier-edit-check-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid #e1e8f0;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.supplier-edit-check-row > strong,
+.supplier-edit-check-row > button {
+  grid-column: 1 / -1;
+}
+
+.supplier-edit-checks-empty,
+.supplier-edit-warning {
+  margin: 10px 0 0;
+  color: #65738a;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.supplier-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+  padding-top: 4px;
+}
+
+.supplier-modal-actions button[type="submit"] {
+  border-color: #17335b;
+  background: #10213b;
+  color: #fff;
+}
+
 .supplier-correction-history {
   margin-top: 10px;
   padding-top: 8px;
@@ -649,16 +792,70 @@
   }
 
   .supplier-row {
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: 42px minmax(0, 1fr);
   }
 
   .supplier-details {
-    flex-basis: calc(100% - 58px);
+    grid-column: 2;
+    min-width: 0;
+  }
+
+  .supplier-avatar {
+    grid-column: 1;
+    grid-row: 1;
   }
 
   .supplier-actions {
-    width: 100%;
+    grid-column: 1 / -1;
     flex-direction: row;
     justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+
+  .supplier-history {
+    grid-column: 1 / -1;
+    margin-top: 0;
+    padding: 14px 0 0;
+  }
+
+  .supplier-installment {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .supplier-modal-backdrop {
+    place-items: end center;
+    padding: 0;
+  }
+
+  .supplier-edit-modal {
+    width: 100%;
+    max-height: 94dvh;
+    padding: 17px;
+    border-radius: 18px 18px 0 0;
+  }
+
+  .supplier-edit-form,
+  .supplier-edit-check-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .supplier-edit-check-row > strong,
+  .supplier-edit-check-row > button,
+  .supplier-edit-checks,
+  .supplier-edit-warning,
+  .supplier-modal-actions {
+    grid-column: auto;
+  }
+
+  .supplier-edit-checks-heading {
+    flex-direction: column;
+  }
+
+  .supplier-edit-checks-heading > button,
+  .supplier-remove-check,
+  .supplier-modal-actions button {
+    width: 100%;
   }
 }
