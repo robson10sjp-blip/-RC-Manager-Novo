@@ -10,8 +10,6 @@ import { auth, db } from "../firebase/config";
 import {
   calculateConsolidatedReceivables,
   calculateTripFinancialSummary,
-  organizeSalesByTrip2026,
-  selectSalesForTrip,
 } from "../domain/sales";
 import {
   filterPayablesByTrip,
@@ -21,7 +19,11 @@ import {
 import { toDate } from "../utils/dates";
 import {
   buildTripOptions,
+  buildTripReview,
   getTripOptionLabel,
+  getTripSelectionLabel,
+  filterRecordsByTrip,
+  getRecordTripId,
   tripMatchesRecord,
 } from "../domain/tripIdentity.js";
 import {
@@ -48,11 +50,6 @@ import {
 } from "react-icons/lu";
 import "./DashboardPayables.css";
 import "./DashboardPremium.css";
-
-const LEGACY_CLASSIFIED_TRIPS = [
-  { tripName: "3ª viagem/2026", tripNumber: 3, tripYear: 2026 },
-  { tripName: "4ª viagem/2026", tripNumber: 4, tripYear: 2026 },
-];
 
 export default function DashboardPage() {
   const { hidden: financialValuesHidden } = useFinancialPrivacy();
@@ -244,60 +241,35 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const tripOrganization = useMemo(
-    () => organizeSalesByTrip2026(sales),
-    [sales]
-  );
-  const tripBySaleId = useMemo(
-    () => new Map([
-      ...tripOrganization.thirdTrip.sales,
-      ...tripOrganization.fourthTrip.sales,
-    ].map((sale) => [sale.id, sale.tripNumber])),
-    [tripOrganization]
-  );
-  const salesWithSuggestedTrip = useMemo(
-    () => sales.map((sale) => {
-      const suggestedNumber = tripBySaleId.get(sale.id);
-      if (sale.tripId || sale.tripNumber || sale.tripName || !suggestedNumber) {
-        return sale;
-      }
-      return {
-        ...sale,
-        tripNumber: suggestedNumber,
-        tripYear: 2026,
-        tripName: `${suggestedNumber}ª viagem/2026`,
-      };
-    }),
-    [sales, tripBySaleId]
-  );
+  const tripReviewSaleIds = useMemo(() => new Set(
+    buildTripReview({ trips, sales }).filter((row) => row.collection === "sales")
+      .map((row) => row.recordId)
+  ), [trips, sales]);
   const tripOptions = useMemo(
     () => buildTripOptions({
       trips,
-      sales: [...salesWithSuggestedTrip, ...LEGACY_CLASSIFIED_TRIPS],
+      sales,
       payables,
       expenses,
     }),
-    [expenses, payables, salesWithSuggestedTrip, trips]
+    [expenses, payables, sales, trips]
   );
   const selectedTripOption = tripOptions.find((trip) => trip.id === tripFilter);
   const selectedSales = useMemo(
     () => {
       if (tripFilter === "all") return sales;
-      if (tripFilter === "review") return tripOrganization.review.sales;
-      if (selectedTripOption) {
-        return salesWithSuggestedTrip.filter((sale) =>
-          tripMatchesRecord(sale, selectedTripOption)
-        );
-      }
-      return selectSalesForTrip(tripOrganization, tripFilter);
+      if (tripFilter === "review") return sales.filter((sale) => tripReviewSaleIds.has(sale.id));
+      return filterRecordsByTrip(sales, tripFilter, tripOptions);
     },
-    [sales, salesWithSuggestedTrip, selectedTripOption, tripFilter, tripOrganization]
+    [sales, tripOptions, tripFilter, tripReviewSaleIds]
   );
   const selectedExpenses = useMemo(
     () =>
       tripFilter === "all"
         ? expenses
-        : tripFilter === "review" || tripFilter === "unassigned"
+        : tripFilter === "unassigned"
+          ? expenses.filter((expense) => !getRecordTripId(expense))
+          : tripFilter === "review"
           ? []
           : selectedTripOption
             ? expenses.filter((expense) =>
@@ -518,15 +490,12 @@ export default function DashboardPage() {
     { name: "Pendente", value: Math.max(dashboard.totalPending, 0), color: "#b8892f" },
   ];
 
-  const tripComparison = [
-    { key: "third", name: "3ª viagem" },
-    { key: "fourth", name: "4ª viagem" },
-  ].map(({ key, name }) => {
-    const tripSales = selectSalesForTrip(tripOrganization, key);
+  const tripComparison = tripOptions.map((trip) => {
+    const tripSales = filterRecordsByTrip(sales, trip.id, tripOptions);
     const sold = tripSales.reduce((sum, sale) => sum + Number(sale.total || 0), 0);
     const received = tripSales.reduce((sum, sale) => sum + Number(sale.amountPaid || 0), 0);
     return {
-      name,
+      name: getTripSelectionLabel(trip, tripOptions),
       Vendido: sold,
       Recebido: received,
       Pendente: Math.max(sold - received, 0),
@@ -563,8 +532,7 @@ export default function DashboardPage() {
               <div>
                 <h2>Resultado das vendas por viagem</h2>
                 <p>
-                  Classificação proposta pela data da venda ou, se ausente,
-                  pela criação do registro. Nenhum dado foi alterado.
+                  Vínculos registrados por identificador, número e ano. Nenhum dado foi alterado.
                   {" "}Despesas vinculadas acompanham a viagem selecionada.
                 </p>
               </div>
@@ -578,7 +546,7 @@ export default function DashboardPage() {
                   <option value="all">Geral</option>
                   {tripOptions.map((trip) => (
                     <option key={trip.id} value={trip.id}>
-                      {getTripOptionLabel(trip)}
+                      {getTripSelectionLabel(trip, tripOptions)}
                     </option>
                   ))}
                   <option value="unassigned">Sem viagem definida</option>
@@ -669,8 +637,8 @@ export default function DashboardPage() {
 
             {tripFilter !== "all" && (
               <p className="dash-notice">
-                Esta visão usa a classificação proposta e ainda não confirmada.
-                Apenas despesas explicitamente vinculadas são incluídas.
+                Apenas registros do vínculo selecionado são incluídos.
+                Anos ausentes não são inferidos pela data.
               </p>
             )}
           </section>

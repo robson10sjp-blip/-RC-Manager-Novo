@@ -75,7 +75,6 @@ import {
   analyzeLegacyBalances,
   calculateConsolidatedReceivables,
   isSaleOverdue,
-  organizeSalesByTrip2026,
   prepareSaleReceipt,
 } from "../domain/sales";
 import { getSalePendingAmount } from "../domain/financeReceivables";
@@ -83,7 +82,7 @@ import ReceiptViewer from "../components/receipts/ReceiptViewer.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
 import TripSelector from "../components/TripSelector.jsx";
 import useClientTrips from "../hooks/useClientTrips.js";
-import { buildTripOptions } from "../domain/tripIdentity.js";
+import { buildTripOptions, getRecordTripId, getTripOptionLabel, getTripSelectionLabel } from "../domain/tripIdentity.js";
 import "./ClientsPremium.css";
 
 const emptyForm = {
@@ -369,24 +368,22 @@ export default function ClientsPage() {
     [clients, sales]
   );
 
-  const tripOrganization = useMemo(
-    () => organizeSalesByTrip2026(sales),
-    [sales]
+  const knownTrips = useMemo(
+    () => buildTripOptions({ trips, sales, visits: visitRecords }),
+    [trips, sales, visitRecords]
   );
 
   const clientRows = useMemo(() => {
     const tripsByClient = new Map();
-    const addTrips = (list, key) => {
+    const addTrips = (list) => {
       for (const sale of list) {
         if (!sale.clientId) continue;
         const set = tripsByClient.get(sale.clientId) || new Set();
-        set.add(key);
+        set.add(getRecordTripId(sale) || "unassigned");
         tripsByClient.set(sale.clientId, set);
       }
     };
-    addTrips(tripOrganization.thirdTrip.sales, "third");
-    addTrips(tripOrganization.fourthTrip.sales, "fourth");
-    addTrips(tripOrganization.review.sales, "review");
+    addTrips(sales);
 
     const balances = new Map(
       receivables.clients.map((entry) => [entry.clientId, entry])
@@ -417,7 +414,7 @@ export default function ClientsPage() {
         trips: tripsByClient.get(client.id) || new Set(),
       };
     });
-  }, [clients, receivables, tripOrganization]);
+  }, [clients, receivables, sales]);
 
   const cities = useMemo(
     () =>
@@ -514,14 +511,6 @@ export default function ClientsPage() {
 
   const visibleVisitRows = visitRows.filter(
     (entry) => entry.status === visitStatusFilter
-  );
-
-  const knownTrips = useMemo(
-    () => buildTripOptions({
-      trips: [...trips, ...(visitTripId ? [{ id: visitTripId, name: visitTripName }] : [])],
-      sales, visits: visitRecords,
-    }),
-    [trips, sales, visitRecords, visitTripId, visitTripName]
   );
 
   const clientRecordWritesBlocked =
@@ -1466,6 +1455,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
           <label>
             Cidade
             <select
+              aria-label="Filtrar clientes por cidade"
               value={cityFilter}
               onChange={(event) => setCityFilter(event.target.value)}
             >
@@ -1494,13 +1484,15 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
           <label>
             Histórico de compras por viagem
             <select
+              aria-label="Filtrar clientes por viagem"
               value={tripFilter}
               onChange={(event) => setTripFilter(event.target.value)}
             >
               <option value="all">Todas as viagens</option>
-              <option value="third">3ª viagem</option>
-              <option value="fourth">4ª viagem</option>
-              <option value="review">Revisão necessária</option>
+              {knownTrips.map((trip) => (
+                <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, knownTrips)}</option>
+              ))}
+              <option value="unassigned">Sem viagem definida</option>
             </select>
           </label>
 
@@ -1737,11 +1729,8 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                             );
                             const financeStatus =
                               pending <= 0 ? "Pago" : received > 0 ? "Parcial" : "Pendente";
-                            const tripLabel =
-                              purchase.tripName ||
-                              (purchase.tripNumber
-                                ? `${purchase.tripNumber}ª viagem`
-                                : purchase.tripCity || "Viagem não informada");
+                            const tripLabel = getRecordTripId(purchase)
+                              ? getTripOptionLabel(purchase, knownTrips) : "Sem viagem definida";
 
                             return (
                               <article className="cl-purchase" key={purchase.id}>
@@ -1798,7 +1787,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                                 setVisitTripName(trip?.name || "");
                               }}>
                               <option value="">Sem viagem vinculada</option>
-                              {knownTrips.map((trip) => <option key={trip.id} value={trip.id}>{trip.name} · {trip.id}</option>)}
+                              {knownTrips.map((trip) => <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, knownTrips)}</option>)}
                             </select>
                           </label>
                         </div>
@@ -1869,7 +1858,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                                 {toDate(entry.actionDate || entry.changedAt || record.actionDate || record.updatedAt)?.toLocaleDateString("pt-BR") || "Data não informada"}
                                 {" · "}{entry.status === "not_purchased" ? "Não comprou" : "Marcação desfeita"}
                                 {" · "}{record.city}
-                                {" · "}{record.tripName || "Sem viagem vinculada"}
+                                {" · "}{getRecordTripId(record) ? getTripOptionLabel(record, knownTrips) : "Sem viagem definida"}
                               </p>
                             ))}
                           </article>
@@ -2023,6 +2012,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
       {selectedReceiptSale && (
         <ReceiptViewer
           sale={selectedReceiptSale}
+          tripOptions={knownTrips}
           onClose={() => setSelectedReceiptSale(null)}
         />
       )}
@@ -2143,7 +2133,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                     <div>
                       <strong>{gift.productName || "Produto"}</strong>
                       <span>
-                        {gift.quantity} unidade(s) · {gift.tripName || "Sem viagem vinculada"} · {gift.tripCity}
+                        {gift.quantity} unidade(s) · {getRecordTripId(gift) ? getTripOptionLabel(gift, knownTrips) : "Sem viagem definida"} · {gift.tripCity}
                       </span>
                       <span>
                         Data: {toDate(gift.actionDate || gift.giftDate)?.toLocaleDateString("pt-BR") || "Não informada"}

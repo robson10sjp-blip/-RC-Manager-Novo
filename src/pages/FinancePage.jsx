@@ -22,7 +22,6 @@ import {
   calculateConsolidatedReceivables,
   calculateTripFinancialSummary,
   isSaleOverdue,
-  organizeSalesByTrip2026,
   prepareSaleReceipt,
   reusePaymentOperation,
 } from "../domain/sales";
@@ -31,6 +30,8 @@ import {
   getRecordTripId,
   getTripOptionLabel,
   tripMatchesRecord,
+  getTripSelectionLabel,
+  filterRecordsByTrip,
 } from "../domain/tripIdentity.js";
 import {
   getSalePendingAmount,
@@ -57,6 +58,7 @@ import { toDate } from "../utils/dates";
 import { getExpenseCategoryLabel, isPersonalWithdrawal } from "../domain/expenses.js";
 import ReceiptViewer from "../components/receipts/ReceiptViewer.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
+import TripReview from "../components/TripReview.jsx";
 import { useFinancialPrivacy } from "../context/financialPrivacy.js";
 import "./FinancePayables.css";
 import "./FinancePremium.css";
@@ -67,7 +69,7 @@ const emptyExpense = {
   description: "",
   value: "",
   date: todayInput(),
-  tripNumber: "",
+  tripId: "",
   city: "",
   paymentMethod: "",
 };
@@ -95,16 +97,6 @@ const emptyPayablePayment = {
   identification: "",
 };
 
-const LEGACY_TRIP_NUMBER_OPTIONS = [
-  { value: "1", label: "1ª viagem (ano não informado)" },
-  { value: "2", label: "2ª viagem (ano não informado)" },
-  { value: "3", label: "3ª viagem (julho a setembro de 2026)" },
-  { value: "4", label: "4ª viagem (outubro a dezembro de 2026)" },
-];
-const LEGACY_CLASSIFIED_TRIPS = [
-  { tripName: "3ª viagem/2026", tripNumber: 3, tripYear: 2026 },
-  { tripName: "4ª viagem/2026", tripNumber: 4, tripYear: 2026 },
-];
 
 export default function FinancePage() {
   const { hidden: financialValuesHidden } = useFinancialPrivacy();
@@ -417,54 +409,19 @@ export default function FinancePage() {
     [clients, sales]
   );
 
-  const tripOrganization = useMemo(
-    () => organizeSalesByTrip2026(sales),
-    [sales]
-  );
-
-  const tripBySaleId = useMemo(() => new Map(
-    [
-      ...tripOrganization.thirdTrip.sales,
-      ...tripOrganization.fourthTrip.sales,
-    ].map((sale) => [sale.id, sale.tripNumber])
-  ), [tripOrganization]);
-
-  const salesWithSuggestedTrip = useMemo(
-    () => sales.map((sale) => {
-      const suggestedNumber = tripBySaleId.get(sale.id);
-      if (
-        sale.tripId ||
-        sale.tripNumber ||
-        sale.tripName ||
-        !suggestedNumber
-      ) return sale;
-      return {
-        ...sale,
-        tripNumber: suggestedNumber,
-        tripYear: 2026,
-        tripName: `${suggestedNumber}ª viagem/2026`,
-      };
-    }),
-    [sales, tripBySaleId]
-  );
-
   const tripOptions = useMemo(
     () => buildTripOptions({
       trips,
-      sales: [...salesWithSuggestedTrip, ...LEGACY_CLASSIFIED_TRIPS],
+      sales,
       payables,
       expenses,
     }),
-    [trips, salesWithSuggestedTrip, payables, expenses]
+    [trips, sales, payables, expenses]
   );
   const selectedTripOption = tripOptions.find((trip) => trip.id === tripFilter);
   const selectedTripSales = useMemo(() => {
-    if (tripFilter === "all") return sales;
-    if (tripFilter === "unassigned" || !selectedTripOption) return [];
-    return salesWithSuggestedTrip.filter((sale) =>
-      tripMatchesRecord(sale, selectedTripOption)
-    );
-  }, [sales, salesWithSuggestedTrip, selectedTripOption, tripFilter]);
+    return filterRecordsByTrip(sales, tripFilter, tripOptions);
+  }, [sales, tripOptions, tripFilter]);
 
   const selectedTripExpenses = useMemo(
     () =>
@@ -635,10 +592,7 @@ export default function FinancePage() {
         description: [
           `Compra #${sale.id}`,
           `${(sale.items || []).length} item(ns)`,
-          tripBySaleId.has(sale.id)
-            ? `Classificação proposta: ${tripBySaleId.get(sale.id)}ª viagem`
-            : "",
-          sale.tripName,
+          getRecordTripId(sale) ? getTripOptionLabel(sale, tripOptions) : "Sem viagem definida",
           sale.tripCity,
         ]
           .filter(Boolean)
@@ -661,9 +615,7 @@ export default function FinancePage() {
           expense.description || "Despesa",
           expense.city || "",
           expense.paymentMethod || "",
-          expense.tripNumber
-            ? `${expense.tripNumber}ª viagem`
-            : "Sem viagem",
+          getRecordTripId(expense) ? getTripOptionLabel(expense, tripOptions) : "Sem viagem definida",
         ].filter(Boolean).join(" • "),
         value: Number(expense.value || 0),
         personalWithdrawal: isPersonalWithdrawal(expense),
@@ -677,7 +629,7 @@ export default function FinancePage() {
       const secondTime = second.date?.getTime?.() || 0;
       return secondTime - firstTime;
     });
-  }, [selectedTripSales, selectedTripExpenses, tripBySaleId]);
+  }, [selectedTripSales, selectedTripExpenses, tripOptions]);
 
   function formatCurrency(value) {
     return Number(value || 0).toLocaleString("pt-BR", {
@@ -725,7 +677,7 @@ export default function FinancePage() {
       description: expense.description || "",
       value: String(expense.value ?? ""),
       date: expenseDate ? `${year}-${month}-${day}` : "",
-      tripNumber: expense.tripNumber ? String(expense.tripNumber) : "",
+      tripId: getRecordTripId(expense),
       city: expense.city || "",
       paymentMethod: expense.paymentMethod || "",
     });
@@ -762,8 +714,8 @@ export default function FinancePage() {
       return;
     }
 
-    if (expenseForm.tripNumber &&
-        !LEGACY_TRIP_NUMBER_OPTIONS.some((trip) => trip.value === expenseForm.tripNumber)) {
+    const selectedExpenseTrip = tripOptions.find((trip) => trip.id === expenseForm.tripId);
+    if (expenseForm.tripId && !selectedExpenseTrip) {
       alert("Selecione uma viagem válida ou deixe sem viagem.");
       return;
     }
@@ -786,9 +738,15 @@ export default function FinancePage() {
         description: expenseForm.description.trim(),
         value,
         expenseDate: selectedDate,
-        tripNumber: expenseForm.tripNumber
-          ? Number(expenseForm.tripNumber)
-          : null,
+        ...(editingExpenseId &&
+          getRecordTripId(expenses.find((expense) => expense.id === editingExpenseId)) === expenseForm.tripId
+          ? {}
+          : {
+              tripId: selectedExpenseTrip?.id || "",
+              tripName: selectedExpenseTrip?.name || "",
+              tripNumber: selectedExpenseTrip?.tripNumber || null,
+              tripYear: selectedExpenseTrip?.tripYear || null,
+            }),
         city: expenseForm.city.trim(),
         paymentMethod: expenseForm.paymentMethod || null,
         updatedAt: serverTimestamp(),
@@ -1490,6 +1448,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
         <label className="fin-filter" style={styles.filterLabel}>
           Viagem
           <select
+            aria-label="Filtrar financeiro por viagem"
             value={tripFilter}
             onChange={(event) => setTripFilter(event.target.value)}
             style={styles.periodSelect}
@@ -1497,15 +1456,17 @@ Qualquer dúvida estou à disposição. Obrigado!`;
             <option value="all">Todas as viagens</option>
             {tripOptions.map((trip) => (
               <option key={trip.id} value={trip.id}>
-                {getTripOptionLabel(trip)}
+                {getTripSelectionLabel(trip, tripOptions)}
               </option>
             ))}
-            <option value="unassigned">Sem viagem</option>
+            <option value="unassigned">Sem viagem definida</option>
           </select>
         </label>
       </PageHeader>
 
       <section className="fin-summary" style={styles.tripSummarySection}>
+        <TripReview key={auth.currentUser?.uid || "signed-out"} userId={auth.currentUser?.uid}
+          trips={trips} sales={sales} payables={payables} expenses={expenses} />
         <div style={styles.tripSummaryHeader}>
           <div>
             <h2 style={styles.cardTitle}>
@@ -1518,12 +1479,12 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                     : "Resumo da viagem"}
             </h2>
             <p style={styles.helperText}>
-              Vendas agrupadas pela data original ou, quando ausente, pela
-              criação do registro. A classificação permanece como proposta.
+              Viagens separadas pelos vínculos registrados. Registros sem ano
+              ou sem cadastro permanecem disponíveis para revisão, sem atribuição pela data.
             </p>
           </div>
           <span style={styles.proposalBadge}>
-            Classificação das vendas proposta
+            Vínculos de viagem preservados
           </span>
         </div>
         <div className="fin-cards" style={styles.tripSummaryGrid}>
@@ -1957,7 +1918,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                   <select name="tripId" value={payableForm.tripId} onChange={handlePayableFormChange}>
                     <option value="">Sem viagem vinculada</option>
                     {tripOptions.map((trip) => (
-                      <option key={trip.id} value={trip.id}>{getTripOptionLabel(trip)}</option>
+                      <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, tripOptions)}</option>
                     ))}
                   </select>
                 </label>
@@ -2223,11 +2184,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                 <div className="payable-card-meta">
                   <span>Total: <FinancialValue>{formatCurrency(payable.totalAmount)}</FinancialValue></span>
                   <span>Pago: <FinancialValue>{formatCurrency(payable.paidAmount)}</FinancialValue></span>
-                  <span>{getRecordTripId(payable) ? getTripOptionLabel({
-                    tripName: payable.tripName,
-                    tripNumber: payable.tripNumber,
-                    tripYear: payable.tripYear,
-                  }) : "Sem viagem"}</span>
+                  <span>{getRecordTripId(payable) ? getTripOptionLabel(payable, tripOptions) : "Sem viagem definida"}</span>
                   <span>{payable.purchaseType === "operational" ? "Despesa operacional" : "Estoque / mercadorias"}</span>
                   <span>{(payable.installments || []).length} parcela(s)/título(s)</span>
                 </div>
@@ -2336,17 +2293,17 @@ Qualquer dúvida estou à disposição. Obrigado!`;
           <label style={styles.label}>
             Viagem
             <select
-              name="tripNumber"
-              value={expenseForm.tripNumber}
+              name="tripId"
+              value={expenseForm.tripId}
               onChange={handleExpenseChange}
               style={styles.input}
             >
               <option value="">
-                Sem viagem
+                Sem viagem definida
               </option>
-              {LEGACY_TRIP_NUMBER_OPTIONS.map((trip) => (
-                <option key={trip.value} value={trip.value}>
-                  {trip.label}
+              {tripOptions.map((trip) => (
+                <option key={trip.id} value={trip.id}>
+                  {getTripSelectionLabel(trip, tripOptions)}
                 </option>
               ))}
             </select>
@@ -2538,15 +2495,9 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                                     ? ` • ${isOverdue ? "Vencida" : "Vence"} ${formatDate(dueDate)}`
                                     : " • Vencimento não informado"}
                                 </p>
-                                {tripBySaleId.has(openSale.id) && (
-                                  <p style={styles.saleDebtMeta}>
-                                    Classificação proposta:{" "}
-                                    {tripBySaleId.get(openSale.id)}ª viagem
-                                  </p>
-                                )}
                                 {(openSale.tripName || openSale.tripCity) && (
                                   <p style={styles.saleDebtMeta}>
-                                    Viagem registrada: {openSale.tripName || "Sem nome"}
+                                    Viagem registrada: {getRecordTripId(openSale) ? getTripOptionLabel(openSale, tripOptions) : "Sem viagem definida"}
                                     {openSale.tripCity
                                       ? ` • ${openSale.tripCity}`
                                       : ""}
@@ -2704,6 +2655,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
       {selectedReceiptSale && (
         <ReceiptViewer
           sale={selectedReceiptSale}
+          tripOptions={tripOptions}
           onClose={() => setSelectedReceiptSale(null)}
         />
       )}

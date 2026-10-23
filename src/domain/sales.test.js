@@ -202,6 +202,18 @@ test("groups sales totals by trip and city", () => {
   );
 });
 
+test("trip report keeps distinct IDs with equal names and separates years", () => {
+  const report = summarizeTrips([
+    { tripId: "a", tripName: "4 viagem", tripCity: "Tucumã", total: 100 },
+    { tripId: "b", tripName: "4 viagem", tripCity: "Tucumã", total: 200 },
+    { tripId: "year-26", tripName: "4 viagem/2026", tripCity: "Tucumã", total: 300 },
+    { tripId: "year-27", tripName: "4 viagem/2027", tripCity: "Tucumã", total: 400 },
+  ]);
+  assert.equal(report.length, 4);
+  assert.equal(report.reduce((sum, trip) => sum + trip.sold, 0), 1000);
+  assert.equal(report[0].name, "4ª viagem de 2027");
+});
+
 test("proposes 2026 trip candidates from original sale dates and separates conflicts", () => {
   const sales = [
     { id: "jul", saleDate: "2026-07-01", tripName: "", total: 100, amountPaid: 25, pendingAmount: 75, clientId: "client-a" },

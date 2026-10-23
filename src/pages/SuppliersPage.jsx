@@ -34,6 +34,7 @@ import {
   buildTripOptions,
   getRecordTripId,
   getTripOptionLabel,
+  getTripSelectionLabel,
 } from "../domain/tripIdentity.js";
 import { toDate } from "../utils/dates";
 import {
@@ -1227,12 +1228,8 @@ export default function SuppliersPage() {
                                   <span>Pago: <FinancialValue>{formatCurrency(item.paidAmount)}</FinancialValue></span>
                                   <span>
                                     Viagem: {getRecordTripId(item)
-                                      ? getTripOptionLabel({
-                                          tripName: item.tripName,
-                                          tripNumber: item.tripNumber,
-                                          tripYear: item.tripYear,
-                                        })
-                                      : "Sem viagem"}
+                                      ? getTripOptionLabel(item, tripOptionsForPurchases)
+                                      : "Sem viagem definida"}
                                   </span>
                                   <span>Parcelas: {(item.installments || []).length}</span>
                                 </div>
@@ -1519,7 +1516,7 @@ export default function SuppliersPage() {
                   <option value="">Sem viagem definida</option>
                   {tripOptionsForPurchases.map((trip) => (
                     <option key={trip.id} value={trip.id}>
-                      {getTripOptionLabel(trip)}
+                      {getTripSelectionLabel(trip, tripOptionsForPurchases)}
                     </option>
                   ))}
                 </select>
@@ -1796,7 +1793,7 @@ export default function SuppliersPage() {
               <option value="">Sem viagem definida</option>
               {tripOptionsForPurchases.map((trip) => (
                 <option key={trip.id} value={trip.id}>
-                  {getTripOptionLabel(trip)}
+                  {getTripSelectionLabel(trip, tripOptionsForPurchases)}
                   {trip.id === suggestedTripId
                     ? " · sugestão (última cadastrada)"
                     : ""}

@@ -1,7 +1,7 @@
 import { toDate } from "../utils/dates.js";
 import { getClientCityDisplay } from "./clientCities.js";
 import { getSalePendingAmount } from "./financeReceivables.js";
-import { organizeSalesByTrip2026, selectSalesForTrip } from "./sales.js";
+import { buildTripOptions, filterRecordsByTrip } from "./tripIdentity.js";
 
 const money = (value) =>
   Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -97,13 +97,13 @@ export function buildCollectionsReport({
   sales = [],
   today = new Date(),
   trip = "all",
+  trips = [],
 } = {}) {
   const day = startOfDay(today);
   const clientsById = new Map(clients.map((client) => [client.id, client]));
   const isAll = trip === "all" || trip === null || trip === undefined;
-  const scopedSales = isAll
-    ? sales
-    : selectSalesForTrip(organizeSalesByTrip2026(sales), String(trip));
+  const scope = /^[1-4]$/.test(String(trip)) ? `legacy-number-${trip}` : trip;
+  const scopedSales = filterRecordsByTrip(sales, scope, buildTripOptions({ trips, sales }));
 
   const groups = {
     overdue: emptyGroup(),

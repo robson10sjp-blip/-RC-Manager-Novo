@@ -20,7 +20,10 @@ import ReceiptTemplate from "../components/receipts/ReceiptTemplate";
 import FinancialValue from "../components/FinancialValue.jsx";
 import TripSelector from "../components/TripSelector.jsx";
 import useClientTrips from "../hooks/useClientTrips.js";
-import { buildTripOptions, getRecordTripId } from "../domain/tripIdentity.js";
+import {
+  buildTripOptions, buildTripReview, getRecordTripId, getSaleTripEditFields,
+  getTripOptionLabel, getTripSelectionLabel, filterRecordsByTrip,
+} from "../domain/tripIdentity.js";
 import {
   buildReceiptImageFile,
   buildReceiptPdfFile,
@@ -36,7 +39,6 @@ import {
   calculateSaleAmounts,
   formatItemLabel,
   isSaleOverdue as checkSaleOverdue,
-  organizeSalesByTrip2026,
   prepareSaleReceipt,
   reusePaymentOperation,
   updateStockAfterSale,
@@ -92,7 +94,7 @@ export default function SalesPage() {
   const { trips, visits, loading: loadingTrips, error: tripLoadError } = useClientTrips(userId);
   const location = useLocation();
   const requestedClientId = location.state?.newSaleClientId || "";
-  const [tripFilter, setTripFilter] = useState("fourth");
+  const [tripFilter, setTripFilter] = useState("all");
   const [searchText, setSearchText] = useState("");
   const [clientSearch, setClientSearch] = useState("");
   const [receiptPdf, setReceiptPdf] = useState({ key: null, status: "idle", file: null });
@@ -109,6 +111,8 @@ export default function SalesPage() {
   const [showSaleForm, setShowSaleForm] = useState(Boolean(requestedClientId));
   const [saving, setSaving] = useState(false);
   const [creatingTrip, setCreatingTrip] = useState(false);
+  const [tripChanged, setTripChanged] = useState(false);
+  const [tripSelectorVersion, setTripSelectorVersion] = useState(0);
   const [loading, setLoading] = useState(true);
   const [editingSaleId, setEditingSaleId] = useState(null);
   const [quickMode, setQuickMode] = useState(false);
@@ -116,9 +120,9 @@ export default function SalesPage() {
   const receivingSaleLock = useRef(false);
   const pendingPaymentOperation = useRef(null);
   const knownTrips = useMemo(() => buildTripOptions({
-    trips: [...trips, ...(sale.tripId ? [{ id: sale.tripId, name: sale.tripName }] : [])],
+    trips,
     sales, visits,
-  }), [trips, sales, visits, sale.tripId, sale.tripName]);
+  }), [trips, sales, visits]);
 
   useEffect(() => {
     let unsubscribeClients = null;
@@ -298,41 +302,20 @@ export default function SalesPage() {
     );
   }, [sales]);
 
-  const tripOrganization = useMemo(
-    () => organizeSalesByTrip2026(sales),
-    [sales]
-  );
-
-  const tripClassificationById = useMemo(() => {
-    const classified = new Map();
-    for (const sale of [
-      ...tripOrganization.thirdTrip.sales,
-      ...tripOrganization.fourthTrip.sales,
-      ...tripOrganization.review.sales,
-    ]) {
-      classified.set(sale.id, sale);
-    }
-    return classified;
-  }, [tripOrganization]);
+  const tripReviewBySaleId = useMemo(() => new Map(
+    buildTripReview({ trips, sales }).filter((row) => row.collection === "sales")
+      .map((row) => [row.recordId, row])
+  ), [trips, sales]);
 
   const displayedSales = useMemo(() => {
-    let filteredSales;
-    if (tripFilter === "third") filteredSales = tripOrganization.thirdTrip.sales;
-    else if (tripFilter === "fourth") filteredSales = tripOrganization.fourthTrip.sales;
-    else if (tripFilter === "review") filteredSales = tripOrganization.review.sales;
-    else {
-      filteredSales = sales.map((sale) => {
-      const classification = tripClassificationById.get(sale.id);
-      return {
+    const filteredSales = (tripFilter === "review"
+      ? sales.filter((sale) => tripReviewBySaleId.has(sale.id))
+      : filterRecordsByTrip(sales, tripFilter, knownTrips)).map((sale) => ({
         ...sale,
-        originalSaleDate: classification?.originalSaleDate || null,
-        dateSource: classification?.dateSource || null,
-        tripNumber: classification?.tripNumber || null,
-        reviewReason:
-          classification?.reviewReason || "Não foi possível avaliar esta venda.",
-      };
-      });
-    }
+        originalSaleDate: toDate(sale.saleDate) || toDate(sale.createdAt),
+        dateSource: toDate(sale.saleDate) ? "saleDate" : "createdAt",
+        reviewReason: tripReviewBySaleId.get(sale.id)?.reason || "",
+      }));
 
     const search = searchText.trim().toLocaleLowerCase("pt-BR");
     return filteredSales
@@ -355,8 +338,8 @@ export default function SalesPage() {
   }, [
     sales,
     tripFilter,
-    tripOrganization,
-    tripClassificationById,
+    tripReviewBySaleId,
+    knownTrips,
     clientsById,
     searchText,
     sortOrder,
@@ -576,6 +559,8 @@ export default function SalesPage() {
 
   function clearSale() {
     setCreatingTrip(false);
+    setTripChanged(false);
+    setTripSelectorVersion((version) => version + 1);
     setQuickMode(false);
     setSale(createEmptySale());
     setClientSearch("");
@@ -585,7 +570,10 @@ export default function SalesPage() {
   }
 
   function handleEditSale(currentSale) {
+    currentSale = sales.find((record) => record.id === currentSale.id) || currentSale;
     setCreatingTrip(false);
+    setTripChanged(false);
+    setTripSelectorVersion((version) => version + 1);
     const saleDate =
       toDate(currentSale.saleDate) ||
       toDate(currentSale.createdAt) ||
@@ -1365,8 +1353,7 @@ export default function SalesPage() {
             dueDate: sale.dueDate
               ? new Date(`${sale.dueDate}T12:00:00`)
               : null,
-            tripName: sale.tripName.trim(),
-            tripId: sale.tripId,
+            ...getSaleTripEditFields(sale, true),
             tripCity: sale.tripCity.trim() || clientData.city || "",
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
@@ -1634,9 +1621,8 @@ export default function SalesPage() {
         dueDate: sale.dueDate
           ? new Date(`${sale.dueDate}T12:00:00`)
           : null,
-        tripName: sale.tripName.trim(),
-        tripId: sale.tripId,
         tripCity: sale.tripCity.trim(),
+        ...getSaleTripEditFields(sale, tripChanged && sale.tripId !== getRecordTripId(oldSale)),
         updatedAt: serverTimestamp(),
       });
     });
@@ -1644,19 +1630,12 @@ export default function SalesPage() {
 
   const tripFilterLabels = {
     all: "Todas as vendas",
-    third: "3ª viagem (proposta)",
-    fourth: "4ª viagem (proposta)",
     review: "Em revisão",
+    unassigned: "Sem viagem definida",
+    ...Object.fromEntries(knownTrips.map((trip) => [trip.id, getTripSelectionLabel(trip, knownTrips)])),
   };
 
-  const displayedTotals = displayedSales.reduce(
-    (summary, currentSale) => ({
-      sold: summary.sold + Number(currentSale.total || 0),
-      received: summary.received + Number(currentSale.amountPaid || 0),
-      pending: summary.pending + Number(currentSale.pendingAmount || 0),
-    }),
-    { sold: 0, received: 0, pending: 0 }
-  );
+  const displayedTotals = getSalesSummary(displayedSales);
 
   const clientSearchTerm = clientSearch.trim().toLocaleLowerCase("pt-BR");
   const clientOptions = clients.filter((client) => {
@@ -1668,14 +1647,10 @@ export default function SalesPage() {
     );
   });
 
-  const tripScopeSummary =
-    tripFilter === "third"
-      ? tripOrganization.thirdTrip
-      : tripFilter === "fourth"
-        ? tripOrganization.fourthTrip
-        : tripFilter === "review"
-          ? tripOrganization.review
-          : null;
+  const scopedSales = tripFilter === "review"
+    ? sales.filter((sale) => tripReviewBySaleId.has(sale.id))
+    : filterRecordsByTrip(sales, tripFilter, knownTrips);
+  const tripScopeSummary = tripFilter === "all" ? null : getSalesSummary(scopedSales);
 
   const scopeTotals = tripScopeSummary
     ? {
@@ -1840,14 +1815,20 @@ export default function SalesPage() {
 
           <div style={styles.itemGrid}>
             <TripSelector
+              key={tripSelectorVersion}
+              allowUnregistered={false}
               userId={userId}
               options={knownTrips}
               value={sale.tripId}
               onPendingChange={setCreatingTrip}
               disabled={saving || loadingTrips || Boolean(tripLoadError)}
-              onChange={(trip) => setSale((current) => ({
-                ...current, tripId: trip.id, tripName: trip.name,
-              }))}
+              onChange={(trip) => {
+                setTripChanged(true);
+                setSale((current) => ({
+                  ...current, tripId: trip.id, tripName: trip.name,
+                  tripNumber: trip.tripNumber, tripYear: trip.tripYear,
+                }));
+              }}
             />
 
             <label style={styles.label}>
@@ -2186,9 +2167,8 @@ export default function SalesPage() {
         <div className="sl-heading">
           <h2>Vendas registradas</h2>
           <p>
-            Classificação por viagem é apenas uma proposta, baseada na data da
-            venda (ou na data de criação do registro). Nada será alterado até
-            sua aprovação.
+            Viagens separadas pelos vínculos registrados. Ano ausente ou cadastro
+            não encontrado permanece para revisão, sem atribuição pela data.
           </p>
         </div>
 
@@ -2198,9 +2178,13 @@ export default function SalesPage() {
           <div className="cl-empty" role="alert"><strong>{salesLoadError}</strong></div>
         ) : (
           <div className="sl-trips">
-            <TripSummaryCard title="3ª viagem" period="jul-set/2026" summary={tripOrganization.thirdTrip} />
-            <TripSummaryCard title="4ª viagem" period="out-dez/2026" summary={tripOrganization.fourthTrip} />
-            <TripSummaryCard title="Revisão necessária" period="data ou valores a conferir" summary={tripOrganization.review} review />
+            {knownTrips.map((trip) => (
+              <TripSummaryCard key={trip.id} title={getTripSelectionLabel(trip, knownTrips)}
+                period="Vínculo registrado" summary={getSalesSummary(filterRecordsByTrip(sales, trip.id, knownTrips))}
+                review={trip.reviewRequired} />
+            ))}
+            <TripSummaryCard title="Sem viagem definida" period="Nenhuma atribuição automática"
+              summary={getSalesSummary(filterRecordsByTrip(sales, "unassigned", knownTrips))} review />
           </div>
         )}
 
@@ -2209,8 +2193,10 @@ export default function SalesPage() {
             Viagem
             <select value={tripFilter} onChange={(event) => setTripFilter(event.target.value)}>
               <option value="all">Todas as vendas</option>
-              <option value="third">Candidatas à 3ª viagem</option>
-              <option value="fourth">Candidatas à 4ª viagem</option>
+              {knownTrips.map((trip) => (
+                <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, knownTrips)}</option>
+              ))}
+              <option value="unassigned">Sem viagem definida</option>
               <option value="review">Separadas para revisão</option>
             </select>
           </label>
@@ -2295,17 +2281,10 @@ export default function SalesPage() {
                   </div>
 
                   <div className="sl-tags">
-                    <span className={currentSale.tripNumber ? "sl-tag-trip" : "sl-tag-review"}>
-                      {currentSale.tripNumber
-                        ? `${currentSale.tripNumber}ª viagem (proposta)`
-                        : "Revisar"}
-                    </span>
-                    {currentSale.tripName && (
-                      <span>
-                        {currentSale.tripName}
+                      <span className={currentSale.reviewReason ? "sl-tag-review" : "sl-tag-trip"}>
+                        {getRecordTripId(currentSale) ? getTripOptionLabel(currentSale, knownTrips) : "Sem viagem definida"}
                         {currentSale.tripCity ? ` • ${currentSale.tripCity}` : ""}
                       </span>
-                    )}
                     {currentSale.dueDate && (
                       <span className={overdue ? "sl-tag-overdue" : ""}>
                         {overdue ? "Vencida em" : "Vence em"} {formatDateOnly(currentSale.dueDate)}
@@ -2314,7 +2293,7 @@ export default function SalesPage() {
                     <span title={currentSale.id}>Compra #{String(currentSale.id).slice(-6)}</span>
                   </div>
 
-                  {!currentSale.tripNumber && (
+                  {currentSale.reviewReason && (
                     <p className="sl-review-note">
                       Revisar: {currentSale.reviewReason || "A data original ou os valores da venda precisam ser conferidos."}
                     </p>
@@ -2388,6 +2367,7 @@ export default function SalesPage() {
               <ReceiptTemplate
                 ref={receiptRef}
                 sale={selectedReceiptSale}
+                tripOptions={knownTrips}
                 receiptNumber={selectedReceiptSale.receiptNumber}
                 sellerName="Robson Henrique"
                 companyName="RC Confecções"
@@ -2464,6 +2444,15 @@ export default function SalesPage() {
       )}
     </div>
   );
+}
+
+function getSalesSummary(records) {
+  return records.reduce((summary, record) => ({
+    count: summary.count + 1,
+    sold: summary.sold + Number(record.total || 0),
+    received: summary.received + Number(record.amountPaid || 0),
+    pending: summary.pending + Number(record.pendingAmount || 0),
+  }), { count: 0, sold: 0, received: 0, pending: 0 });
 }
 
 function TripSummaryCard({ title, period, summary, review = false }) {

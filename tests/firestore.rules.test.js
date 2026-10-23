@@ -170,18 +170,18 @@ test("supplier purchase edits, payment corrections and check compensation are at
   const trip2027 = await createClientTrip({
     db,
     userId: USER_A,
-    name: "1ª viagem/2027",
+    tripNumber: 1, tripYear: 2027,
   });
   const trip2028 = await createClientTrip({
     db,
     userId: USER_A,
-    name: "1ª viagem/2028",
+    tripNumber: 1, tripYear: 2028,
   });
   const otherUserDb = testEnv.authenticatedContext(USER_B).firestore();
   const privateTrip = await createClientTrip({
     db: otherUserDb,
     userId: USER_B,
-    name: "2ª viagem/2027",
+    tripNumber: 2, tripYear: 2027,
   });
   const payableRef = ref(db, "payables", "supplier-fake");
   const paymentsRef = collection(db, "users", USER_A, "payables", "supplier-fake", "payments");
@@ -723,7 +723,7 @@ test("denies malformed visits, incomplete gift cancellations and legacy prego wr
 });
 
 async function giftInput(db, overrides = {}) {
-  const trip = await createClientTrip({ db, userId: USER_A, name: "Brindes outubro" });
+  const trip = await createClientTrip({ db, userId: USER_A, tripNumber: 4, tripYear: 2026 });
   return {
     db, userId: USER_A, operationId: crypto.randomUUID(),
     clientId: "client-1", productId: "product-1", quantity: 2,
@@ -1003,7 +1003,7 @@ test("calendar actions persist chosen dates without a trip, preserve client city
 
 test("real visit service: mark, reload from another session, undo, counts and idempotent retry", async () => {
   const db = ownerDb();
-  const trip = await createClientTrip({ db, userId: USER_A, name: "Rota Sul" });
+  const trip = await createClientTrip({ db, userId: USER_A, tripNumber: 4, tripYear: 2026 });
   const input = {
     db, userId: USER_A, clientId: "client-1", city: "Tucumã",
     tripId: trip.id, tripName: trip.name, status: "not_purchased",
@@ -1035,10 +1035,11 @@ test("real visit service: mark, reload from another session, undo, counts and id
   assert.deepEqual((await getDoc(ref(db, "sales", "sale-open"))).data(), originalSale);
 });
 
-test("equal-name new trips stay separate; sales and visits share the saved trip ID", async () => {
+test("number and year trips stay separate; duplicate creation is rejected and sales share the saved ID", async () => {
   const db = ownerDb();
-  const first = await createClientTrip({ db, userId: USER_A, name: "3" });
-  const second = await createClientTrip({ db, userId: USER_A, name: "3" });
+  const first = await createClientTrip({ db, userId: USER_A, tripNumber: 3, tripYear: 2026 });
+  const second = await createClientTrip({ db, userId: USER_A, tripNumber: 3, tripYear: 2027 });
+  await assert.rejects(createClientTrip({ db, userId: USER_A, tripNumber: 3, tripYear: 2026 }), /Já existe/);
   assert.notEqual(first.id, second.id);
   const visit = {
     db, userId: USER_A, clientId: "client-1", city: "Tucumã",
@@ -1060,9 +1061,64 @@ test("equal-name new trips stay separate; sales and visits share the saved trip 
   await assertFails(updateDoc(ref(db, "sales", "sale-open"), { tripName: "Other label" }));
 });
 
+test("annual trip creation rejects concurrent duplicates, malformed slots and cross-owner access", async () => {
+  const db = ownerDb();
+  const input = { db, userId: USER_A, tripNumber: 4, tripYear: 2027 };
+  const results = await Promise.allSettled([createClientTrip(input), createClientTrip(input)]);
+  assert.equal(results.filter((result) => result.status === "fulfilled").length, 1);
+  assert.equal((await getDocs(collection(db, "users", USER_A, "trips"))).size, 1);
+  const data = {
+    name: "4ª viagem de 2027", tripNumber: 4, tripYear: 2027, createdAt: serverTimestamp(),
+  };
+  await assertFails(setDoc(ref(db, "trips", "random-id"), data));
+  await assertFails(setDoc(ref(db, "trips", "trip-2027-5"), { ...data, tripNumber: 5 }));
+  await assertFails(setDoc(ref(db, "trips", "trip-2027-3"), { ...data, tripNumber: 3 }));
+  await assertFails(updateDoc(ref(db, "trips", "trip-2027-4"), { name: "Other" }));
+  const foreign = testEnv.authenticatedContext(USER_B).firestore();
+  await assertFails(getDoc(doc(foreign, "users", USER_A, "trips", "trip-2027-4")));
+  await assertFails(setDoc(doc(foreign, "users", USER_A, "trips", "trip-2027-4"), data));
+});
+
+test("an existing UUID trip with explicit number/year prevents a new duplicate without rewriting it", async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await setDoc(ref(context.firestore(), "trips", "old-uuid"), { name: "2ª viagem/2027" });
+  });
+  const db = ownerDb();
+  await assert.rejects(createClientTrip({ db, userId: USER_A, tripNumber: 2, tripYear: 2027 }), /Já existe/);
+  assert.deepEqual((await getDoc(ref(db, "trips", "old-uuid"))).data(), { name: "2ª viagem/2027" });
+  assert.equal((await getDocs(collection(db, "users", USER_A, "trips"))).size, 1);
+});
+
+test("sale updates preserve legacy and missing-trip references, payments and trip document count", async () => {
+  await testEnv.withSecurityRulesDisabled(async (context) => {
+    await updateDoc(ref(context.firestore(), "sales", "sale-open"), {
+      tripId: "missing-trip-id", tripName: "4 viagem", tripCity: "Tucumã",
+    });
+    await updateDoc(ref(context.firestore(), "sales", "sale-paid"), {
+      tripName: "4 viagem",
+    });
+  });
+  const db = ownerDb();
+  const tripsBefore = (await getDocs(collection(db, "users", USER_A, "trips"))).size;
+  const before = (await getDoc(ref(db, "sales", "sale-open"))).data();
+  const payment = (await getDoc(doc(db, "users", USER_A, "sales", "sale-open", "payments", "pay-1"))).data();
+  await assertSucceeds(updateDoc(ref(db, "sales", "sale-open"), {
+    saleDate: new Date("2026-10-02T12:00:00Z"), updatedAt: serverTimestamp(),
+  }));
+  await assertSucceeds(updateDoc(ref(db, "sales", "sale-paid"), {
+    dueDate: new Date("2026-12-02T12:00:00Z"), updatedAt: serverTimestamp(),
+  }));
+  const after = (await getDoc(ref(db, "sales", "sale-open"))).data();
+  for (const field of ["tripId", "tripName", "tripCity", "clientId", "total", "amountPaid", "pendingAmount", "items"]) {
+    assert.deepEqual(after[field], before[field]);
+  }
+  assert.deepEqual((await getDoc(doc(db, "users", USER_A, "sales", "sale-open", "payments", "pay-1"))).data(), payment);
+  assert.equal((await getDocs(collection(db, "users", USER_A, "trips"))).size, tripsBefore);
+});
+
 test("visit rules deny other users, malformed scope, identity changes, deletions and forged bought", async () => {
   const db = ownerDb();
-  const trip = await createClientTrip({ db, userId: USER_A, name: "Rota" });
+  const trip = await createClientTrip({ db, userId: USER_A, tripNumber: 4, tripYear: 2026 });
   await recordClientVisit({
     db, userId: USER_A, clientId: "client-1", city: "Tucumã",
     tripId: trip.id, tripName: trip.name, status: "not_purchased",

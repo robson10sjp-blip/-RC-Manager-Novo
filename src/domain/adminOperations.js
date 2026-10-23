@@ -158,7 +158,9 @@ export function validateExpense(fields, { now = new Date() } = {}) {
   if (!category) errors.category = "Escolha a categoria da despesa.";
 
   const trip = Number(fields.tripNumber);
-  if (!TRIP_LABELS[trip]) errors.tripNumber = "Informe a viagem da despesa.";
+  if (!fields.tripConfirmed && !fields.tripId) {
+    errors.tripNumber = "Selecione uma viagem cadastrada com número e ano ou confirme Sem viagem definida.";
+  }
 
   const date = fields.date instanceof Date ? fields.date : parseDateInput(fields.date, now);
   if (!date) errors.date = "Informe uma data válida para a despesa.";
@@ -172,7 +174,10 @@ export function validateExpense(fields, { now = new Date() } = {}) {
       description: String(fields.description || category?.label || "").trim(),
       value,
       expenseDate: date,
-      tripNumber: trip,
+      tripId: fields.tripId || "",
+      tripName: fields.tripId ? fields.tripName || "" : "",
+      tripNumber: fields.tripId && TRIP_LABELS[trip] ? trip : null,
+      tripYear: fields.tripId ? fields.tripYear || null : null,
     },
   };
 }

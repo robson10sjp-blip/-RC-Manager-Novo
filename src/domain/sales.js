@@ -1,5 +1,6 @@
 import { toDate } from "../utils/dates.js";
 import { isPersonalWithdrawal } from "./expenses.js";
+import { getRecordTripId, getTripOptionLabel } from "./tripIdentity.js";
 
 function money(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -153,12 +154,13 @@ export function summarizeTrips(sales = []) {
   const trips = new Map();
 
   for (const sale of sales) {
-    const name = String(sale.tripName || "").trim();
+    const tripId = getRecordTripId(sale);
+    const name = tripId ? getTripOptionLabel(sale) : "";
     const city = String(sale.tripCity || "").trim();
 
     if (!name && !city) continue;
 
-    const key = `${name.toLocaleLowerCase("pt-BR")}|${city.toLocaleLowerCase("pt-BR")}`;
+    const key = `${tripId}|${city.toLocaleLowerCase("pt-BR")}`;
     const current = trips.get(key) || {
       name: name || "Viagem sem nome",
       city,

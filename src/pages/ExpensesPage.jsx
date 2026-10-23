@@ -4,6 +4,8 @@ import { collection, doc, onSnapshot } from "firebase/firestore";
 import { LuReceipt, LuWallet } from "react-icons/lu";
 import PageHeader from "../components/PageHeader.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
+import useClientTrips from "../hooks/useClientTrips.js";
+import { buildTripOptions, getRecordTripId, getTripOptionLabel, getTripSelectionLabel } from "../domain/tripIdentity.js";
 import { auth, db } from "../firebase/config.js";
 import { isFirestoreReadOnly } from "../firebase/writePolicy.js";
 import { MAX_MONEY } from "../domain/adminOperations.js";
@@ -33,12 +35,6 @@ const PAYMENT_METHODS = [
   ["boleto", "Boleto"],
   ["outros", "Outros"],
 ];
-const TRIPS = [
-  ["1", "1ª viagem"],
-  ["2", "2ª viagem"],
-  ["3", "3ª viagem"],
-  ["4", "4ª viagem"],
-];
 
 function todayInput() {
   const today = new Date();
@@ -67,12 +63,15 @@ function createEmptyForm(paymentMethod = "") {
     date: todayInput(),
     paymentMethod,
     city: "",
-    tripNumber: "",
+    tripId: "",
   };
 }
 
 export default function ExpensesPage() {
   const [expenses, setExpenses] = useState([]);
+  const [userId, setUserId] = useState("");
+  const { trips } = useClientTrips(userId);
+  const tripOptions = useMemo(() => buildTripOptions({ trips, expenses }), [trips, expenses]);
   const [form, setForm] = useState(() => createEmptyForm(
     window.localStorage.getItem(PAYMENT_METHOD_STORAGE_KEY) || ""
   ));
@@ -90,6 +89,7 @@ export default function ExpensesPage() {
     let authGeneration = 0;
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       const generation = ++authGeneration;
+      setUserId(user?.uid || "");
       unsubscribeExpenses?.();
       setExpenses([]);
       setLoading(Boolean(user));
@@ -166,7 +166,7 @@ export default function ExpensesPage() {
       date: toDateInputValue(expenseDate(expense)) || todayInput(),
       paymentMethod: expense.paymentMethod || "",
       city: expense.city || "",
-      tripNumber: expense.tripNumber ? String(expense.tripNumber) : "",
+      tripId: getRecordTripId(expense),
     });
     setError("");
     setNotice("");
@@ -178,7 +178,7 @@ export default function ExpensesPage() {
     setForm((current) => ({
       ...createEmptyForm(current.paymentMethod),
       city: current.city,
-      tripNumber: current.tripNumber,
+      tripId: current.tripId,
     }));
     setError("");
     setNotice("");
@@ -206,10 +206,10 @@ export default function ExpensesPage() {
       setError("Informe uma data válida.");
       return;
     }
-    const selectedTrip = form.tripNumber
-      ? TRIPS.find(([number]) => number === form.tripNumber)
+    const selectedTrip = form.tripId
+      ? tripOptions.find((trip) => trip.id === form.tripId)
       : null;
-    if (form.tripNumber && !selectedTrip) {
+    if (form.tripId && !selectedTrip) {
       setError("Selecione uma viagem válida ou deixe sem viagem.");
       return;
     }
@@ -221,7 +221,14 @@ export default function ExpensesPage() {
       expenseDate: date,
       paymentMethod: form.paymentMethod || null,
       city: form.city.trim(),
-      tripNumber: selectedTrip ? Number(selectedTrip[0]) : null,
+      ...(editingExpenseId && getRecordTripId(expenses.find((expense) => expense.id === editingExpenseId)) === form.tripId
+        ? {}
+        : {
+            tripId: selectedTrip?.id || "",
+            tripName: selectedTrip?.name || "",
+            tripNumber: selectedTrip?.tripNumber || null,
+            tripYear: selectedTrip?.tripYear || null,
+          }),
     };
     if (isFirestoreReadOnly()) {
       setError("A gravação está bloqueada no modo somente leitura.");
@@ -437,13 +444,13 @@ export default function ExpensesPage() {
                 <span>Viagem</span>
                 <select
                   aria-label="Viagem"
-                  value={form.tripNumber}
-                  onChange={(event) => setField("tripNumber", event.target.value)}
+                  value={form.tripId}
+                  onChange={(event) => setField("tripId", event.target.value)}
                   disabled={saving || isFirestoreReadOnly()}
                 >
-                  <option value="">Sem viagem</option>
-                  {TRIPS.map(([value, label]) => (
-                    <option key={value} value={value}>{label}</option>
+                  <option value="">Sem viagem definida</option>
+                  {tripOptions.map((trip) => (
+                    <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, tripOptions)}</option>
                   ))}
                 </select>
               </label>
@@ -482,7 +489,6 @@ export default function ExpensesPage() {
               {recentExpenses.map((expense) => {
                 const personal = isPersonalWithdrawal(expense);
                 const date = expenseDate(expense);
-                const trip = TRIPS.find(([number]) => Number(number) === Number(expense.tripNumber));
                 return (
                   <article className={`expenses-recent-item${personal ? " is-personal" : ""}`} key={expense.id}>
                     <div className="expenses-recent-main">
@@ -493,7 +499,7 @@ export default function ExpensesPage() {
                       <p>
                         {date?.toLocaleDateString("pt-BR") || "Data não informada"}
                         {expense.city ? ` · ${expense.city}` : ""}
-                        {trip ? ` · ${trip[1]}` : ""}
+                        {getRecordTripId(expense) ? ` · ${getTripOptionLabel(expense, tripOptions)}` : ""}
                       </p>
                       <small>Pagamento: {paymentMethodLabel(expense.paymentMethod)}</small>
                     </div>

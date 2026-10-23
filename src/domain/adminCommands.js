@@ -1,18 +1,17 @@
 import {
   EXPENSE_CATEGORIES,
   PRODUCT_CATEGORIES,
-  TRIP_LABELS,
   findCategory,
   findProductMatches,
   formatDate,
   formatMoney,
-  getCurrentTrip,
   normalizeText,
   parseDateInput,
   validateExpense,
   validateNewProduct,
   validateStockEntry,
 } from "./adminOperations.js";
+import { getTripNumberYear, getTripOptionLabel } from "./tripIdentity.js";
 
 export const OPERATION_TITLES = {
   expense: "Registrar despesa",
@@ -22,7 +21,7 @@ export const OPERATION_TITLES = {
 
 const ORDINALS = { primeira: 1, segunda: 2, terceira: 3, quarta: 4 };
 const TRIP_RE =
-  /\b([1-4])\s*[ªaº°]?\s*viagem\b|\bviagem\s*(?:n[ºo°.]?\s*)?([1-4])\b|\b(primeira|segunda|terceira|quarta)\s+viagem\b/i;
+  /(?:\b([1-4])\s*[ªaº°]?\s*viagem\b|\bviagem\s*(?:n[ºo°.]?\s*)?([1-4])\b|\b(primeira|segunda|terceira|quarta)\s+viagem\b)(?:\s*(?:de|\/)\s*(20\d{2}))?/i;
 const DATE_RE = /\b(hoje|ontem)\b|(?<![\d/])(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)(?![\d/])/i;
 const CANCEL_RE = /^(cancelar?|cancela|desistir|esquece|deixa pra la|nao quero)\b/;
 const CONFIRM_RE = /^(sim|confirmo|confirmar|confirma|ok|pode|pode gravar|salvar|grave|gravar|isso)\b/;
@@ -39,7 +38,7 @@ function takeTrip(text) {
   const match = TRIP_RE.exec(text);
   if (!match) return { trip: null, rest: text };
   const trip = match[1] || match[2] || ORDINALS[normalizeText(match[3])];
-  return { trip: Number(trip), rest: text.replace(match[0], " ") };
+  return { trip: Number(trip), tripYear: match[4] ? Number(match[4]) : null, rest: text.replace(match[0], " ") };
 }
 
 const cleanMoneyText = (value) =>
@@ -84,6 +83,7 @@ function extractExpense(text, now) {
   let rest = text;
   const trip = takeTrip(rest);
   if (trip.trip) fields.tripNumber = trip.trip;
+  if (trip.tripYear) fields.tripYear = trip.tripYear;
   rest = trip.rest;
 
   const dateMatch = DATE_RE.exec(rest);
@@ -301,17 +301,26 @@ function evaluate(draft, ctx) {
 
   if (next.type === "expense") {
     const fields = next.fields;
+    if (!fields.tripConfirmed && !fields.tripId && fields.tripNumber && fields.tripYear) {
+      const matches = (ctx.trips || []).filter((trip) => {
+        const identity = getTripNumberYear(trip);
+        return identity.tripNumber === fields.tripNumber && identity.tripYear === fields.tripYear;
+      });
+      if (matches.length === 1) {
+        Object.assign(fields, { tripId: matches[0].id, tripName: matches[0].name, tripConfirmed: true });
+      }
+    }
     const validation = validateExpense(
       { ...fields, date: fields.date === "invalid" ? "x" : fields.date || new Date(ctx.now.getFullYear(), ctx.now.getMonth(), ctx.now.getDate()) },
       { now: ctx.now }
     );
     const pending = first([...EXPENSE_ORDER, "date"], validation.errors);
-    next.tripSuggestion = pending === "tripNumber" || !fields.tripNumber ? getCurrentTrip(ctx.now) : null;
+    next.tripSuggestion = null;
     next.pending = pending || null;
     next.status = pending ? "collecting" : "ready";
     next.question = pending ? question("expense", pending, validation.errors) : null;
-    if (pending === "tripNumber" && next.tripSuggestion) {
-      next.question = `Em qual viagem devo registrar? Sugiro a ${TRIP_LABELS[next.tripSuggestion]} (viagem atual), mas preciso da sua confirmação: toque em "Usar ${TRIP_LABELS[next.tripSuggestion]}" ou escolha outra.`;
+    if (pending === "tripNumber") {
+      next.question = "Selecione uma viagem cadastrada com número e ano, ou confirme Sem viagem definida. Não atribuo viagem pela data.";
     }
     if (validation.valid) {
       const v = validation.values;
@@ -321,7 +330,7 @@ function evaluate(draft, ctx) {
           ["Categoria", v.categoryLabel],
           ["Descrição", v.description],
           ["Data", formatDate(v.expenseDate)],
-          ["Viagem", TRIP_LABELS[v.tripNumber]],
+          ["Viagem", v.tripId ? getTripOptionLabel(v) : "Sem viagem definida"],
         ],
         warnings: [],
       };
@@ -457,6 +466,13 @@ export function isDraftActive(draft) {
 
 function mergeFields(draft, parsed) {
   const fields = { ...draft.fields };
+  if (draft.type === "expense" &&
+      ((parsed.tripNumber && parsed.tripNumber !== fields.tripNumber) ||
+       (parsed.tripYear && parsed.tripYear !== fields.tripYear))) {
+    delete fields.tripId;
+    delete fields.tripName;
+    fields.tripConfirmed = false;
+  }
   for (const [key, value] of Object.entries(parsed)) {
     if (value !== undefined && value !== null && value !== "") fields[key] = value;
   }
@@ -528,8 +544,15 @@ export function chooseDraftProduct(draft, productId, ctx) {
 }
 
 export function chooseDraftTrip(draft, trip, ctx) {
-  if (draft.type !== "expense" || !isDraftActive(draft) || !TRIP_LABELS[trip]) return { draft, reply: "" };
-  const next = evaluate({ ...draft, fields: { ...draft.fields, tripNumber: Number(trip) } }, ctx);
+  if (draft.type !== "expense" || !isDraftActive(draft)) return { draft, reply: "" };
+  const selected = trip ? (ctx.trips || []).find((item) => item.id === trip.id) : null;
+  if (trip && !selected) return { draft, reply: "A viagem selecionada não está disponível. Recarregue o cadastro antes de confirmar." };
+  const next = evaluate({ ...draft, fields: {
+    ...draft.fields, tripConfirmed: true,
+    tripId: selected?.id || "", tripName: selected?.name || "",
+    tripNumber: selected ? getTripNumberYear(selected).tripNumber : null,
+    tripYear: selected ? getTripNumberYear(selected).tripYear : null,
+  } }, ctx);
   return { draft: next, reply: replyFor(next, ctx) };
 }
 

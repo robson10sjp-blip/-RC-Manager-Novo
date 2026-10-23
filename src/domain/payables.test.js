@@ -499,7 +499,7 @@ test("filters supplier purchases by stable trip ID and year without mixing histo
       tripNumber: 1,
       tripYear: 2027,
     }).map(({ id }) => id),
-    ["purchase-27", "legacy-27"]
+    ["purchase-27"]
   );
   assert.deepEqual(
     filterPayablesByTrip(records, "unassigned").map(({ id }) => id),

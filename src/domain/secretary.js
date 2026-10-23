@@ -1,8 +1,6 @@
 import {
   calculateTripFinancialSummary,
   calculateConsolidatedReceivables,
-  organizeSalesByTrip2026,
-  selectSalesForTrip,
   summarizeTrips,
 } from "./sales.js";
 import {
@@ -14,6 +12,7 @@ import { toDate } from "../utils/dates.js";
 import { buildCollectionsReport } from "./secretaryCollections.js";
 import { getSalePendingAmount } from "./financeReceivables.js";
 import { isPersonalWithdrawal } from "./expenses.js";
+import { buildTripOptions, filterRecordsByTrip, getTripOptionLabel, getTripSelectionLabel } from "./tripIdentity.js";
 
 function startOfDay(date) {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
@@ -52,13 +51,6 @@ function saleDueDate(sale) {
   );
 }
 
-const tripPeriods = {
-  1: "período sem definição cadastrada",
-  2: "período sem definição cadastrada",
-  3: "01/07 a 30/09/2026",
-  4: "01/10 a 31/12/2026",
-};
-
 function detectTripNumber(query) {
   if (/\b(viagem|periodo)\b/.test(query)) {
     if (/\b(julho|agosto|setembro)\b/.test(query)) return 3;
@@ -87,10 +79,27 @@ function isDatedReceiptQuery(query) {
 }
 
 function tripDescription(tripNumber) {
-  if (tripNumber === 3 || tripNumber === 4) {
-    return `${tripNumber}ª viagem (${tripPeriods[tripNumber]}, classificação provisória)`;
+  return getTripOptionLabel(typeof tripNumber === "object" ? tripNumber : { tripNumber });
+}
+
+function resolveQueryTrip(query, snapshot, previous) {
+  const number = detectTripNumber(query);
+  if (!number && isAllTripsQuery(query)) return { scope: "all" };
+  if (!number && previous && typeof previous === "object") return { scope: previous };
+  const tripNumber = number || Number(previous);
+  if (![1, 2, 3, 4].includes(tripNumber)) return { scope: previous === "all" ? "all" : null };
+  const year = Number(query.match(/\b(20\d{2})\b/)?.[1] || 0);
+  const candidates = (snapshot.tripOptions || []).filter((trip) =>
+    trip.tripNumber === tripNumber && (!year || trip.tripYear === year)
+  );
+  const reference = Number(query.match(/\breferencia\s+(\d+)\b/)?.[1] || 0);
+  if (candidates.length > 1 && !candidates[reference - 1]) {
+    return { error: `Há mais de um vínculo para essa viagem. Informe o ano e, se necessário, a referência: ${candidates.map((trip) => getTripSelectionLabel(trip, snapshot.tripOptions)).join("; ")}. Nenhum vínculo será unificado automaticamente.` };
   }
-  return `${tripNumber}ª viagem (${tripPeriods[tripNumber]}, vínculo registrado)`;
+  return { scope: candidates[reference - 1] || candidates[0] || {
+    id: `legacy-number-${tripNumber}${year ? `-${year}` : ""}`,
+    tripNumber, tripYear: year || null, reviewRequired: true,
+  } };
 }
 
 function expenseCategoryLabel(category) {
@@ -199,6 +208,7 @@ export function createSecretarySnapshot(
     legacyPayments = [],
     suppliers = [],
     payables = [],
+    trips = [],
   },
   now = new Date()
 ) {
@@ -365,42 +375,26 @@ export function createSecretarySnapshot(
     );
   const tripsThisMonth = summarizeTrips(salesThisMonth);
   const totalPending = receivables.totalPending;
-  const tripOrganization = organizeSalesByTrip2026(sales);
-  const tripFinancials = Object.fromEntries(
-    [1, 2, 3, 4].map((tripNumber) => [
-      tripNumber,
-      calculateTripFinancialSummary(
-        selectSalesForTrip(tripOrganization, String(tripNumber)),
-        expenses.filter(
-          (expense) => Number(expense.tripNumber) === tripNumber
-        ),
-        products,
-        filterPayablesByTrip(enrichedPayables, String(tripNumber))
-      ),
-    ])
-  );
-  const tripPending = Object.fromEntries(
-    [3, 4].map((tripNumber) => {
-      const tripSales = selectSalesForTrip(tripOrganization, String(tripNumber));
-      const open = tripSales.filter((sale) => getSalePendingAmount(sale) > 0);
-      return [
-        tripNumber,
-        {
-          amount:
-            Math.round(
-              open.reduce((sum, sale) => sum + getSalePendingAmount(sale), 0) * 100
-            ) / 100,
-          salesCount: open.length,
-        },
-      ];
-    })
-  );
-  const tripDebtors = Object.fromEntries(
-    [1, 2, 3, 4].map((tripNumber) => {
-      const tripSales = selectSalesForTrip(
-        tripOrganization,
-        String(tripNumber)
+  const tripOptions = buildTripOptions({ trips, sales, expenses, payables: enrichedPayables });
+  const scopes = [...tripOptions, ...[1, 2, 3, 4]
+    .filter((number) => !tripOptions.some((trip) => trip.id === `legacy-number-${number}`))
+    .map((tripNumber) => ({ id: `legacy-number-${tripNumber}`, tripNumber }))];
+  const tripFinancials = {};
+  const tripPending = {};
+  const tripDebtors = {};
+  const tripExpenseCategories = {};
+  const tripPersonalWithdrawals = {};
+  for (const scope of scopes) {
+      const tripSales = filterRecordsByTrip(sales, scope, tripOptions);
+      const tripExpenses = filterRecordsByTrip(expenses, scope, tripOptions);
+      tripFinancials[scope.id] = calculateTripFinancialSummary(
+        tripSales, tripExpenses, products, filterPayablesByTrip(enrichedPayables, scope)
       );
+      const open = tripSales.filter((sale) => getSalePendingAmount(sale) > 0);
+      tripPending[scope.id] = {
+        amount: Math.round(open.reduce((sum, sale) => sum + getSalePendingAmount(sale), 0) * 100) / 100,
+        salesCount: open.length,
+      };
       const tripReceivables = calculateConsolidatedReceivables(
         clients.map((client) => ({ ...client, totalDebt: 0 })),
         tripSales
@@ -419,38 +413,23 @@ export function createSecretarySnapshot(
         }))
       );
 
-      return [tripNumber, debtors.sort((first, second) => second.value - first.value)];
-    })
-  );
-  const tripExpenseCategories = Object.fromEntries(
-    [1, 2, 3, 4].map((tripNumber) => [
-      tripNumber,
-      expenses
-        .filter(
-          (expense) =>
-            Number(expense.tripNumber) === tripNumber &&
-            !isPersonalWithdrawal(expense)
-        )
+      tripDebtors[scope.id] = debtors.sort((first, second) => second.value - first.value);
+      tripExpenseCategories[scope.id] = tripExpenses
+        .filter((expense) => !isPersonalWithdrawal(expense))
         .reduce((categories, expense) => {
           const category = String(expense.category || "outros");
           categories[category] =
             (categories[category] || 0) + Number(expense.value || 0);
           return categories;
-        }, {}),
-    ])
-  );
-  const tripPersonalWithdrawals = Object.fromEntries(
-    [1, 2, 3, 4].map((tripNumber) => [
-      tripNumber,
-      expenses
-        .filter(
-          (expense) =>
-            Number(expense.tripNumber) === tripNumber &&
-            isPersonalWithdrawal(expense)
-        )
-        .reduce((total, expense) => total + Number(expense.value || 0), 0),
-    ])
-  );
+        }, {});
+      tripPersonalWithdrawals[scope.id] = tripExpenses.filter(isPersonalWithdrawal)
+        .reduce((total, expense) => total + Number(expense.value || 0), 0);
+  }
+  for (const number of [1, 2, 3, 4]) {
+    for (const summary of [tripFinancials, tripPending, tripDebtors, tripExpenseCategories, tripPersonalWithdrawals]) {
+      summary[number] = summary[`legacy-number-${number}`];
+    }
+  }
   const allTripFinancials = calculateTripFinancialSummary(
     sales,
     expenses,
@@ -505,6 +484,7 @@ export function createSecretarySnapshot(
     lowStockProducts,
     tripsThisMonth,
     tripFinancials,
+    tripOptions,
     tripPending,
     tripDebtors,
     tripExpenseCategories,
@@ -531,20 +511,8 @@ function asksCollectionsList(query) {
 function collectionsAnswer(query, snapshot, tripContext) {
   if (!asksCollectionsList(query)) return null;
 
-  const explicitTrip = detectTripNumber(query);
-  const scope = explicitTrip
-    ? explicitTrip
-    : isAllTripsQuery(query)
-      ? "all"
-      : typeof tripContext === "number"
-        ? tripContext
-        : ["1", "2", "3", "4"].includes(String(tripContext))
-          ? Number(tripContext)
-          : tripContext === "all"
-            ? "all"
-            : null;
   const focusToday = /\bhoje\b/.test(query);
-  const effectiveScope = scope ?? (focusToday ? "all" : null);
+  const effectiveScope = tripContext ?? (focusToday ? "all" : null);
   if (!effectiveScope) return null;
 
   const report = buildCollectionsReport({
@@ -552,13 +520,13 @@ function collectionsAnswer(query, snapshot, tripContext) {
     sales: snapshot.collectionSales || [],
     today: snapshot.today,
     trip: effectiveScope,
+    trips: snapshot.tripOptions,
   });
   const tripLabel =
     effectiveScope === "all"
       ? "Todas as viagens (total geral)"
       : tripDescription(effectiveScope);
-  const provisional =
-    effectiveScope === "all" || effectiveScope === 3 || effectiveScope === 4;
+  const provisional = Boolean(effectiveScope?.reviewRequired);
   const collections = { report, focusToday, tripLabel, provisional };
 
   const line = (group, name) =>
@@ -595,9 +563,9 @@ export function answerSecretaryQueryWithContext(
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toLocaleLowerCase("pt-BR");
-  const explicitTrip = detectTripNumber(query);
-  const explicitAll = !explicitTrip && isAllTripsQuery(query);
-  const tripContext = explicitTrip || (explicitAll ? "all" : previousTripContext);
+  const resolved = resolveQueryTrip(query, snapshot, previousTripContext);
+  if (resolved.error) return { answer: resolved.error, tripContext: previousTripContext };
+  const tripContext = resolved.scope;
   const collectionsResponse = collectionsAnswer(query, snapshot, tripContext);
 
   if (collectionsResponse) {
@@ -641,18 +609,11 @@ export function answerSecretaryQuery(
       query
     );
 
-  const explicitTrip = detectTripNumber(query);
-  const allTrips =
-    !explicitTrip &&
-    (isAllTripsQuery(query) || selectedTripContext === "all");
-  const tripNumber =
-    explicitTrip ||
-    (typeof selectedTripContext === "number"
-      ? selectedTripContext
-      : typeof selectedTripContext === "string" &&
-          ["1", "2", "3", "4"].includes(selectedTripContext)
-        ? Number(selectedTripContext)
-        : null);
+  const resolvedTrip = resolveQueryTrip(query, snapshot, selectedTripContext);
+  if (resolvedTrip.error) return resolvedTrip.error;
+  const tripScope = resolvedTrip.scope;
+  const allTrips = tripScope === "all";
+  const tripNumber = typeof tripScope === "object" && tripScope ? tripScope.id : null;
   const asksExpenseTotal =
     /\b(gastei|gastamos|gasto|gastos|despesa|despesas|custou|custo)\b/.test(
       query
@@ -728,11 +689,11 @@ export function answerSecretaryQuery(
       snapshot.payables || [],
       allTrips || selectedTripContext === "all"
         ? "all"
-        : tripNumber || "all"
+        : tripScope || "all"
     );
     const summary = summarizePayables(filteredPayables, snapshot.today);
     const tripLabel = tripNumber
-      ? tripDescription(tripNumber)
+      ? tripDescription(tripScope)
       : "Obrigações gerais da empresa (todas as viagens e contas sem viagem)";
     const dateRange = queryDateRange(query, snapshot.today);
     const periodMessage = tripNumber
@@ -826,11 +787,8 @@ export function answerSecretaryQuery(
   }
 
   if (asksTripComparison && (asksTripProfit || asksTripSales)) {
-    const tripsWithSales = Object.entries(snapshot.tripFinancials || {})
-      .map(([number, financials]) => ({
-        number: Number(number),
-        ...financials,
-      }))
+    const tripsWithSales = (snapshot.tripOptions || [])
+      .map((scope) => ({ scope, ...snapshot.tripFinancials[scope.id] }))
       .filter((trip) => trip.salesCount > 0);
     const trips = tripsWithSales
       .filter((trip) => !asksTripProfit || trip.hasCompleteCostData)
@@ -845,15 +803,15 @@ export function answerSecretaryQuery(
     );
     if (asksTripProfit && tripsMissingCost.length) {
       if (!bestTrip) {
-        return `Ainda não é possível comparar o lucro: faltam custos cadastrados das mercadorias nas viagens ${tripsMissingCost.map((trip) => `${trip.number}ª`).join(", ")}.`;
+        return `Ainda não é possível comparar o lucro: faltam custos cadastrados das mercadorias nas viagens ${tripsMissingCost.map((trip) => tripDescription(trip.scope)).join(", ")}.`;
       }
-      return `Não é possível identificar com segurança a viagem mais lucrativa: faltam custos cadastrados das mercadorias nas viagens ${tripsMissingCost.map((trip) => `${trip.number}ª`).join(", ")}. Entre as viagens com custo completo, a ${tripDescription(bestTrip.number)} tem o maior lucro estimado, de ${currency(bestTrip.estimatedProfit)}.`;
+      return `Não é possível identificar com segurança a viagem mais lucrativa: faltam custos cadastrados das mercadorias nas viagens ${tripsMissingCost.map((trip) => tripDescription(trip.scope)).join(", ")}. Entre as viagens com custo completo, a ${tripDescription(bestTrip.scope)} tem o maior lucro estimado, de ${currency(bestTrip.estimatedProfit)}.`;
     }
     if (!bestTrip && asksTripProfit) {
       return "Ainda não há dados completos de custo das mercadorias para comparar o lucro das viagens.";
     }
     return bestTrip
-      ? `A viagem com maior ${asksTripProfit ? "lucro estimado" : "faturamento"} é a ${tripDescription(bestTrip.number)}, com ${currency(asksTripProfit ? bestTrip.estimatedProfit : bestTrip.sold)}. Resultado provisório baseado nas despesas já vinculadas.`
+      ? `A viagem com maior ${asksTripProfit ? "lucro estimado" : "faturamento"} é a ${tripDescription(bestTrip.scope)}, com ${currency(asksTripProfit ? bestTrip.estimatedProfit : bestTrip.sold)}. Resultado baseado nos vínculos registrados.`
       : "Ainda não há vendas classificadas por viagem para comparar.";
   }
 
@@ -897,13 +855,13 @@ export function answerSecretaryQuery(
       ? snapshot.allTripFinancials
       : snapshot.tripFinancials?.[tripNumber];
     if (!financials) {
-      return `Ainda não há dados financeiros disponíveis para a ${tripNumber}ª viagem.`;
+      return `Ainda não há dados financeiros disponíveis para a ${tripDescription(tripScope)}.`;
     }
 
     const tripLabel = allTrips
       ? "Todas as viagens (total geral)"
-      : tripDescription(tripNumber);
-    const isProvisional = allTrips || tripNumber === 3 || tripNumber === 4;
+      : tripDescription(tripScope);
+    const isProvisional = Boolean(tripScope?.reviewRequired);
     const resultLabel = isProvisional
       ? "Lucro estimado provisório"
       : "Lucro estimado";
@@ -978,7 +936,7 @@ export function answerSecretaryQuery(
     }
     const periodLine = allTrips
       ? "Período: todos os registros disponíveis. Despesas sem viagem também entram apenas neste consolidado geral."
-      : `Período utilizado: ${tripDescription(tripNumber)}.`;
+      : `Período utilizado: ${tripDescription(tripScope)}.`;
     answers.push(`${periodLine}${isProvisional ? " A classificação das vendas pode mudar após confirmação." : ""}`);
     return answers.join("\n");
   }

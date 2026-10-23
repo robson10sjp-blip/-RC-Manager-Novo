@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { beforeEach } from "node:test";
-import { chooseDraftProduct, markDraftConfirming, startAdminCommand } from "../domain/adminCommands.js";
+import { chooseDraftProduct, chooseDraftTrip, markDraftConfirming, startAdminCommand } from "../domain/adminCommands.js";
 import {
   AdminOperationError,
   executeAdminOperation,
@@ -13,6 +13,7 @@ const products = [
 ];
 const now = new Date("2026-10-15T10:00:00");
 const user = { uid: "user-1" };
+const trips = [{ id: "trip-2026-4", name: "4ª viagem de 2026", tripNumber: 4, tripYear: 2026 }];
 
 function fakeApi(stored = { quantity: 7, name: "Camisa Polo", code: "C010" }) {
   const calls = { addDoc: [], update: [], set: [] };
@@ -33,7 +34,10 @@ function fakeApi(stored = { quantity: 7, name: "Camisa Polo", code: "C010" }) {
 }
 
 const confirmed = (text, productId) => {
-  let draft = startAdminCommand(text, { products, now, readOnly: false }).draft;
+  let draft = startAdminCommand(text, { products, trips, now, readOnly: false }).draft;
+  if (draft.type === "expense" && draft.pending === "tripNumber") {
+    draft = chooseDraftTrip(draft, trips[0], { products, trips, now, readOnly: false }).draft;
+  }
   if (productId) draft = chooseDraftProduct(draft, productId, { products, now, readOnly: false }).draft;
   return markDraftConfirming(draft, { trusted: true });
 };
@@ -74,7 +78,9 @@ test("despesa grava no formato da página Financeiro, só em users/{uid}", async
   assert.equal(data.value, 80.5);
   assert.equal(data.tripNumber, 4);
   assert.equal(data.expenseDate.getHours(), 12);
-  assert.deepEqual(Object.keys(data).sort(), ["category", "createdAt", "description", "expenseDate", "tripNumber", "updatedAt", "value"]);
+  assert.equal(data.tripId, "trip-2026-4");
+  assert.equal(data.tripYear, 2026);
+  assert.deepEqual(Object.keys(data).sort(), ["category", "createdAt", "description", "expenseDate", "tripId", "tripName", "tripNumber", "tripYear", "updatedAt", "value"]);
 });
 
 test("entrada de estoque atualiza quantidade e registra movimentação", async () => {

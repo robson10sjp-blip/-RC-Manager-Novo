@@ -1,5 +1,7 @@
 import {
+  collection,
   doc,
+  getDocs,
   serverTimestamp,
 } from "firebase/firestore";
 import { runTransaction } from "../firebase/firestoreAccess.js";
@@ -10,26 +12,35 @@ import {
   validateActionDate,
 } from "../domain/clientRecords.js";
 import { getClientCityKey } from "../domain/clientCities.js";
+import { buildNewTrip, getTripNumberYear } from "../domain/tripIdentity.js";
 
 export const CLIENT_GIFT_WRITES_ENABLED = true;
 export const CLIENT_VISIT_WRITES_ENABLED = true;
 
-export async function createClientTrip({ db, userId, name }) {
-  const tripName = String(name || "").trim().replace(/\s+/g, " ");
-  if (!userId || !tripName || tripName.length > 100) {
-    throw new Error("Informe um nome de viagem de até 100 caracteres e entre no sistema.");
+export async function createClientTrip({ db, userId, tripNumber, tripYear }) {
+  if (!userId) throw new Error("Entre no sistema para criar uma viagem.");
+  const trip = buildNewTrip({ tripNumber, tripYear });
+  const existing = await getDocs(collection(db, "users", userId, "trips"));
+  if (existing.docs.some((document) => {
+    const identity = getTripNumberYear(document.data());
+    return identity.tripNumber === trip.tripNumber && identity.tripYear === trip.tripYear;
+  })) {
+    throw new Error("Já existe uma viagem com esse número e ano. Selecione o cadastro existente.");
   }
-  if (!globalThis.crypto?.randomUUID) {
-    throw new Error("Este dispositivo não oferece um identificador seguro para a viagem.");
-  }
-  const tripId = `trip-${globalThis.crypto.randomUUID()}`;
+  const reference = doc(db, "users", userId, "trips", trip.id);
   await runTransaction(db, async (transaction) => {
-    transaction.set(doc(db, "users", userId, "trips", tripId), {
-      name: tripName,
+    const snapshot = await transaction.get(reference);
+    if (snapshot.exists()) {
+      throw new Error("Já existe uma viagem com esse número e ano. Selecione o cadastro existente.");
+    }
+    transaction.set(reference, {
+      name: trip.name,
+      tripNumber: trip.tripNumber,
+      tripYear: trip.tripYear,
       createdAt: serverTimestamp(),
     });
   });
-  return { id: tripId, name: tripName };
+  return trip;
 }
 
 export async function recordClientVisit({

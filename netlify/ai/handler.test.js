@@ -54,6 +54,7 @@ const docs = {
         total: num(500),
         amountPaid: num(100),
         pendingAmount: num(400),
+        tripNumber: num(4),
         saleDate: str("2026-10-05"),
         dueDate: str("2026-10-10"),
         balanceModel: str("per-sale"),
@@ -270,8 +271,8 @@ test("collections tool matches the system calculation (partial payments, paid sa
     {
       clients: [{ id: "c1", name: "Ana", city: "Xinguara - PA" }],
       sales: [
-        { id: "a", clientId: "c1", total: 500, amountPaid: 100, pendingAmount: 400, saleDate: "2026-10-05", dueDate: "2026-10-10", balanceModel: "per-sale" },
-        { id: "b", clientId: "c1", total: 300, amountPaid: 300, pendingAmount: 0, saleDate: "2026-10-05", dueDate: "2026-10-01", balanceModel: "per-sale" },
+        { id: "a", clientId: "c1", tripNumber: 4, total: 500, amountPaid: 100, pendingAmount: 400, saleDate: "2026-10-05", dueDate: "2026-10-10", balanceModel: "per-sale" },
+        { id: "b", clientId: "c1", tripNumber: 4, total: 300, amountPaid: 300, pendingAmount: 0, saleDate: "2026-10-05", dueDate: "2026-10-01", balanceModel: "per-sale" },
       ],
       products: [], expenses: [], suppliers: [], payables: [],
     },
@@ -281,4 +282,19 @@ test("collections tool matches the system calculation (partial payments, paid sa
   assert.equal(result.vencidas.quantidade, 1);
   assert.equal(result.vencidas.total, 400);
   assert.equal(result.vencidas.itens[0].dias_de_atraso, 8);
+});
+
+test("existing report tools separate annual IDs and refuse ambiguous travel numbers", () => {
+  const context = createToolContext({
+    clients: [], products: [], expenses: [], suppliers: [], payables: [],
+    sales: [
+      { id: "a", tripId: "2026-four", tripNumber: 4, tripYear: 2026, total: 100, amountPaid: 10 },
+      { id: "b", tripId: "2027-four", tripNumber: 4, tripYear: 2027, total: 300, amountPaid: 20 },
+      { id: "no-trip", saleDate: "2026-10-01", total: 900, amountPaid: 0 },
+    ],
+  });
+  assert.throws(() => runTool("resumo_vendas", { viagem: "4" }, context), /ambígua/);
+  assert.equal(runTool("resumo_vendas", { viagem: "4", ano: 2027 }, context).result.total_vendido, 300);
+  assert.equal(runTool("listar_cobrancas", { viagem: "4", ano: 2026 }, context).result.sem_vencimento_confiavel.total, 90);
+  assert.equal(runTool("resumo_vendas", { viagem: "todas" }, context).result.total_vendido, 1300);
 });

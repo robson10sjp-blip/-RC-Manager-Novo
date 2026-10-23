@@ -9,7 +9,7 @@ import {
 } from "./generateReceiptPdf";
 import "./ReceiptViewer.css";
 
-export default function ReceiptViewer({ sale, onClose }) {
+export default function ReceiptViewer({ sale, onClose, tripOptions = [] }) {
   const receiptRef = useRef(null);
   const [pdf, setPdf] = useState({ status: "preparing", file: null });
   const [notice, setNotice] = useState("");
@@ -92,6 +92,7 @@ export default function ReceiptViewer({ sale, onClose }) {
 
         <div className="receipt-viewer-preview">
           <ReceiptTemplate
+            tripOptions={tripOptions}
             ref={receiptRef}
             sale={sale}
             receiptNumber={sale.receiptNumber}

@@ -1,4 +1,5 @@
 import "./AdminOperationCard.css";
+import { buildTripOptions, getTripSelectionLabel } from "../domain/tripIdentity.js";
 
 const STATUS_LABELS = {
   collecting: "Aguardando informações",
@@ -12,8 +13,6 @@ const STATUS_LABELS = {
   error: "Não concluída",
 };
 
-const TRIP_LABELS = { 1: "1ª viagem", 2: "2ª viagem", 3: "3ª viagem", 4: "4ª viagem" };
-
 export default function AdminOperationCard({
   draft,
   readOnly,
@@ -21,8 +20,11 @@ export default function AdminOperationCard({
   onCancel,
   onChooseProduct,
   onChooseTrip,
+  trips = [],
+  loadingTrips = false,
 }) {
   const open = ["collecting", "choosing", "ready"].includes(draft.status);
+  const tripOptions = buildTripOptions({ trips });
 
   return (
     <section className={`admin-card admin-card-${draft.status}`} aria-label={draft.title}>
@@ -72,22 +74,12 @@ export default function AdminOperationCard({
 
       {draft.status === "collecting" && draft.pending === "tripNumber" && (
         <div className="admin-card-trips">
-          {draft.tripSuggestion && (
-            <button
-              type="button"
-              className="admin-card-trip-primary"
-              onClick={() => onChooseTrip(draft.tripSuggestion)}
-            >
-              Usar {TRIP_LABELS[draft.tripSuggestion]}
+          {tripOptions.map((trip) => (
+            <button key={trip.id} type="button" disabled={loadingTrips} onClick={() => onChooseTrip(trip)}>
+              {getTripSelectionLabel(trip, tripOptions)}
             </button>
-          )}
-          {[1, 2, 3, 4]
-            .filter((trip) => trip !== draft.tripSuggestion)
-            .map((trip) => (
-              <button key={trip} type="button" onClick={() => onChooseTrip(trip)}>
-                {TRIP_LABELS[trip]}
-              </button>
-            ))}
+          ))}
+          <button type="button" onClick={() => onChooseTrip(null)}>Sem viagem definida</button>
         </div>
       )}
 

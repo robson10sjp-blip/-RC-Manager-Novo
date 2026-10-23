@@ -15,14 +15,16 @@ const products = [
   { id: "b", code: "V002", name: "Vestido Floral", size: "G", color: "Azul", quantity: 2, costPrice: 30, salePrice: 70, category: "feminino" },
   { id: "c", code: "C010", name: "Camisa Polo", size: "M", color: "Preto", quantity: 7, costPrice: 20, salePrice: 50, category: "masculino" },
 ];
-const ctx = { products, now: new Date("2026-10-15T10:00:00"), readOnly: true };
+const trips = [{ id: "trip-2026-4", name: "4ª viagem de 2026", tripNumber: 4, tripYear: 2026 }];
+const ctx = { products, trips, now: new Date("2026-10-15T10:00:00"), readOnly: true };
 
 test("valores monetários em formato brasileiro", () => {
   assert.equal(parseMoney("R$ 1.250,50"), 1250.5);
   assert.equal(parseMoney("80"), 80);
   assert.equal(parseMoney("12,5"), 12.5);
   for (const bad of ["-5", "abc", ""]) assert.ok(Number.isNaN(parseMoney(bad)), bad);
-  const base = { category: "hotel", description: "x", date: new Date("2026-10-15T12:00:00"), tripNumber: 4 };
+  const base = { category: "hotel", description: "x", date: new Date("2026-10-15T12:00:00"), tripNumber: 4,
+    tripId: trips[0].id, tripName: trips[0].name, tripYear: 2026 };
   for (const bad of ["0", "2000000", "abc"]) assert.equal(validateExpense({ ...base, value: bad }).valid, false, bad);
   assert.equal(validateExpense({ ...base, value: "R$ 1.250,50" }).valid, true);
 });
@@ -38,21 +40,26 @@ test("viagem atual é calculada pela data, sem viagem fixa", () => {
   assert.equal(getCurrentTrip(new Date("2026-10-15T12:00:00")), 4);
 });
 
-test("despesa sem viagem sugere a viagem atual mas exige confirmação", () => {
+test("despesa exige escolha explícita de vínculo anual ou Sem viagem definida, sem inferir pela data", () => {
   const { draft } = startAdminCommand("registrar despesa de R$ 150,50 com combustível", ctx);
   assert.equal(draft.status, "collecting");
-  assert.equal(draft.tripSuggestion, 4);
+  assert.equal(draft.tripSuggestion, null);
   assert.equal(draft.fields.tripNumber, undefined);
   assert.throws(() => markDraftConfirming(draft, { trusted: true }));
   const later = startAdminCommand("registrar despesa de R$ 150,50 com combustível", { ...ctx, now: new Date("2026-08-10T10:00:00") });
-  assert.equal(later.draft.tripSuggestion, 3);
-  const chosen = chooseDraftTrip(draft, 4, ctx).draft;
+  assert.equal(later.draft.tripSuggestion, null);
+  const chosen = chooseDraftTrip(draft, trips[0], ctx).draft;
   assert.equal(chosen.status, "ready");
   assert.equal(chosen.fields.tripNumber, 4);
+  assert.equal(chosen.fields.tripId, "trip-2026-4");
+  const unassigned = chooseDraftTrip(draft, null, ctx).draft;
+  assert.equal(unassigned.status, "ready");
+  assert.equal(unassigned.fields.tripId, "");
+  assert.equal(unassigned.fields.tripYear, null);
 });
 
 test("despesa completa gera prévia e pede confirmação", () => {
-  const { draft, reply } = startAdminCommand("registrar despesa de 80 reais em hotel na 4ª viagem hoje", ctx);
+  const { draft, reply } = startAdminCommand("registrar despesa de 80 reais em hotel na 4ª viagem de 2026 hoje", ctx);
   assert.equal(draft.status, "ready");
   assert.ok(draft.preview.rows.some(([k, v]) => k === "Valor" && v.includes("80,00")));
   assert.match(reply, /Confirmar operação/);
@@ -120,7 +127,7 @@ test("produto duplicado é bloqueado", () => {
 });
 
 test("confirmação exige clique confiável; frase 'confirmo' não confirma", () => {
-  const { draft } = startAdminCommand("registrar despesa de 80 reais em hotel na 4ª viagem hoje", ctx);
+  const { draft } = startAdminCommand("registrar despesa de 80 reais em hotel na 4ª viagem de 2026 hoje", ctx);
   assert.throws(() => markDraftConfirming(draft), /clique/);
   assert.throws(() => markDraftConfirming(draft, { trusted: false }), /clique/);
   for (const phrase of ["sim", "confirmo", "pode gravar", "ok"]) {
@@ -146,12 +153,14 @@ test("regressão: 'gastei R$ 180 de combustível hoje na 4ª viagem' abre cartã
   assert.ok(step, "deve ser reconhecido como cadastro, não consulta");
   const { draft } = step;
   assert.equal(draft.type, "expense");
-  assert.equal(draft.status, "ready");
-  const row = (k) => draft.preview.rows.find(([label]) => label === k)[1].replace(/\s/g, " ");
+  assert.equal(draft.status, "collecting");
+  const chosen = chooseDraftTrip(draft, trips[0], today).draft;
+  assert.equal(chosen.status, "ready");
+  const row = (k) => chosen.preview.rows.find(([label]) => label === k)[1].replace(/\s/g, " ");
   assert.equal(row("Valor"), "R$ 180,00");
   assert.equal(row("Categoria"), "Combustível");
   assert.equal(row("Data"), "18/10/2026");
-  assert.equal(row("Viagem"), "4ª viagem");
+  assert.equal(row("Viagem"), "4ª viagem de 2026");
   assert.throws(() => markDraftConfirming(draft), /clique/);
 });
 

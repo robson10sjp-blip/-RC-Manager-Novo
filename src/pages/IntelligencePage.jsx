@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { LuBot } from "react-icons/lu";
 import PageHeader from "../components/PageHeader.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
+import useClientTrips from "../hooks/useClientTrips.js";
+import { getTripSelectionLabel } from "../domain/tripIdentity.js";
 import { maskFinancialText, useFinancialPrivacy } from "../context/financialPrivacy.js";
 import { onAuthStateChanged, signInWithEmailAndPassword } from "firebase/auth";
 import { collection, doc, onSnapshot, serverTimestamp } from "firebase/firestore";
@@ -163,6 +165,7 @@ export default function IntelligencePage() {
   const messageId = useRef(0);
   const messagesEndRef = useRef(null);
   const tripContext = useRef(null);
+  const { trips, loading: loadingTrips } = useClientTrips(auth.currentUser?.uid || "");
   const monthlyGoal = 30000;
   const recognition = useSpeechRecognition({ onTranscript: setDraft });
   const synthesis = useSpeechSynthesis();
@@ -513,6 +516,7 @@ export default function IntelligencePage() {
         expenses,
         suppliers,
         payables,
+        trips,
         payments: Object.values(paymentsBySale).flat(),
         legacyPayments: Object.values(legacyPaymentsByClient).flat(),
       }),
@@ -523,6 +527,7 @@ export default function IntelligencePage() {
       expenses,
       suppliers,
       payables,
+      trips,
       paymentsBySale,
       legacyPaymentsByClient,
     ]
@@ -605,14 +610,14 @@ export default function IntelligencePage() {
   function handleChooseProduct(id, productId) {
     const current = adminDrafts[id];
     if (!current) return;
-    const step = chooseDraftProduct(current, productId, { products, now: new Date(), readOnly: isFirestoreReadOnly() });
+    const step = chooseDraftProduct(current, productId, { products, trips, now: new Date(), readOnly: isFirestoreReadOnly() });
     updateAdminDraft(id, () => step.draft, step.reply);
   }
 
   function handleChooseTrip(id, trip) {
     const current = adminDrafts[id];
     if (!current) return;
-    const step = chooseDraftTrip(current, trip, { products, now: new Date(), readOnly: isFirestoreReadOnly() });
+    const step = chooseDraftTrip(current, trip, { products, trips, now: new Date(), readOnly: isFirestoreReadOnly() });
     updateAdminDraft(id, () => step.draft, step.reply);
   }
 
@@ -626,7 +631,7 @@ export default function IntelligencePage() {
     const readOnly = isFirestoreReadOnly();
     let confirming;
     try {
-      const fresh = revalidateDraft(current, { products, now: new Date(), readOnly });
+      const fresh = revalidateDraft(current, { products, trips, now: new Date(), readOnly });
       confirming = markDraftConfirming(fresh, { trusted: event?.isTrusted === true });
     } catch (error) {
       updateAdminDraft(id, (draftValue) => ({
@@ -668,7 +673,7 @@ export default function IntelligencePage() {
     if (recognition.status !== "idle") recognition.stop();
     synthesis.stop();
 
-    const adminContext = () => ({ products, now: new Date(), readOnly: isFirestoreReadOnly() });
+    const adminContext = () => ({ products, trips, now: new Date(), readOnly: isFirestoreReadOnly() });
     const previousDraft = activeDraftId.current ? adminDrafts[activeDraftId.current] : null;
     let adminStep = startAdminCommand(question, adminContext());
     if (adminStep && previousDraft && isDraftActive(previousDraft)) {
@@ -1171,11 +1176,11 @@ export default function IntelligencePage() {
                   <span>classificação provisória</span>
                 </header>
                 <div className="secretary-trip-pending-grid">
-                  {[3, 4].map((tripNumber) => {
-                    const trip = secretarySnapshot.tripPending?.[tripNumber];
+                  {secretarySnapshot.tripOptions.map((scope) => {
+                    const trip = secretarySnapshot.tripPending?.[scope.id];
                     return (
-                      <div key={tripNumber}>
-                        <span>{tripNumber}ª viagem</span>
+                      <div key={scope.id}>
+                        <span>{getTripSelectionLabel(scope, secretarySnapshot.tripOptions)}</span>
                         <strong><FinancialValue>{formatCurrency(trip?.amount)}</FinancialValue></strong>
                         <small>{trip?.salesCount || 0} venda(s) em aberto</small>
                       </div>
@@ -1277,6 +1282,8 @@ export default function IntelligencePage() {
                         .slice(index + 1)
                         .some((later) => later.adminDraftId === message.adminDraftId) && (
                         <AdminOperationCard
+                          trips={trips}
+                          loadingTrips={loadingTrips}
                           draft={adminDrafts[message.adminDraftId]}
                           readOnly={isFirestoreReadOnly()}
                           onConfirm={(event) => handleConfirmDraft(message.adminDraftId, event)}

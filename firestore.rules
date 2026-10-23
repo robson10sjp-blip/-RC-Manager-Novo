@@ -395,11 +395,14 @@ service cloud.firestore {
       match /trips/{tripId} {
         allow read: if owner(uid);
         allow create: if owner(uid)
-          && tripId.matches('^trip-[a-f0-9-]{36}$')
-          && request.resource.data.keys().hasOnly(['name', 'createdAt'])
-          && request.resource.data.name is string
-          && request.resource.data.name.size() > 0
-          && request.resource.data.name.size() <= 100
+          && request.resource.data.keys().hasOnly(['name', 'tripNumber', 'tripYear', 'createdAt'])
+          && request.resource.data.tripNumber is int
+          && request.resource.data.tripNumber in [1, 2, 3, 4]
+          && request.resource.data.tripYear is int
+          && request.resource.data.tripYear >= 2000
+          && request.resource.data.tripYear <= 2100
+          && tripId == 'trip-' + string(request.resource.data.tripYear) + '-' + string(request.resource.data.tripNumber)
+          && request.resource.data.name == string(request.resource.data.tripNumber) + 'ª viagem de ' + string(request.resource.data.tripYear)
           && request.resource.data.createdAt == request.time;
         allow update, delete: if false;
       }

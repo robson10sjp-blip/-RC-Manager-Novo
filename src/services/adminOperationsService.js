@@ -92,6 +92,9 @@ export async function executeAdminOperation(draft, { user, readOnly, products = 
         value: values.value,
         expenseDate: new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12),
         tripNumber: values.tripNumber,
+        tripId: values.tripId,
+        tripName: values.tripName,
+        tripYear: values.tripYear,
         updatedAt: serverTimestamp(),
         createdAt: serverTimestamp(),
       });

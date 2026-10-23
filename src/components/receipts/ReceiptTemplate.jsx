@@ -1,4 +1,5 @@
 import { forwardRef } from 'react';
+import { getRecordTripId, getTripOptionLabel } from '../../domain/tripIdentity.js';
 import './ReceiptTemplate.css';
 
 const SINGLE_PAGE_ROWS = 9;
@@ -115,6 +116,7 @@ const getPaymentMethod = (method) => {
 const ReceiptTemplate = forwardRef(function ReceiptTemplate(
   {
     sale = {},
+    tripOptions = [],
     receiptNumber,
     companyName = 'RC Confecções',
   },
@@ -232,7 +234,7 @@ const number = String(savedNumber || "")
   const receiptCode = /^\d+$/.test(number)
     ? number.padStart(6, '0')
     : number.toUpperCase() || 'Não informado';
-  const tripLabel = [sale.tripName, sale.tripCity].filter(Boolean).join(' • ');
+  const tripLabel = [getRecordTripId(sale) ? getTripOptionLabel(sale, tripOptions) : '', sale.tripCity].filter(Boolean).join(' • ');
 
   return (
     <div className="rcp-wrapper">

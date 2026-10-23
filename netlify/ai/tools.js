@@ -9,12 +9,12 @@ import {
 } from "../../src/domain/financeReceivables.js";
 import {
   calculateConsolidatedReceivables,
-  organizeSalesByTrip2026,
-  selectSalesForTrip,
+  calculateTripFinancialSummary,
 } from "../../src/domain/sales.js";
 import { filterPayablesByTrip, summarizePayables } from "../../src/domain/payables.js";
 import { getStockThresholds, getSuggestedRestock } from "../../src/domain/stock.js";
 import { getClientCityDisplay } from "../../src/domain/clientCities.js";
+import { filterRecordsByTrip, getTripOptionLabel, getTripSelectionLabel } from "../../src/domain/tripIdentity.js";
 
 const MAX_ITEMS = 25;
 const money = (value) =>
@@ -30,8 +30,7 @@ const normalize = (value) =>
     .toLocaleLowerCase("pt-BR")
     .trim();
 
-const TRIP_PERIODS = { 3: "01/07 a 30/09/2026", 4: "01/10 a 31/12/2026" };
-const TRIP_ENUM = ["3", "4", "todas"];
+const TRIP_ENUM = ["1", "2", "3", "4", "todas"];
 const EXPENSE_CATEGORIES = [
   "combustivel", "alimentacao", "hotel", "manutencao",
   "transporte", "mercadoria", "outros",
@@ -44,16 +43,34 @@ export class ToolInputError extends Error {
   }
 }
 
-function parseTrip(value, fallback = "todas") {
-  const trip = value === undefined || value === null ? fallback : String(value);
+function parseTrip(args, snapshot) {
+  const trip = args.viagem === undefined || args.viagem === null ? "todas" : String(args.viagem);
   if (!TRIP_ENUM.includes(trip)) throw new ToolInputError("viagem inválida");
-  return trip === "todas" ? "all" : Number(trip);
+  if (trip === "todas") return "all";
+  if (args.ano !== undefined && (!Number.isInteger(args.ano) || args.ano < 2000 || args.ano > 2100)) {
+    throw new ToolInputError("ano da viagem inválido");
+  }
+  const candidates = snapshot.tripOptions.filter((option) =>
+    option.tripNumber === Number(trip) && (!args.ano || option.tripYear === args.ano)
+  );
+  if (args.referencia) {
+    const selected = candidates.find((option) => option.id === args.referencia);
+    if (!selected) throw new ToolInputError("referência de viagem inválida");
+    return selected;
+  }
+  if (candidates.length > 1) throw new ToolInputError(
+    `Viagem ambígua; confirme ano e referência: ${candidates.map((option) => getTripSelectionLabel(option, snapshot.tripOptions)).join("; ")}`
+  );
+  return candidates[0] || {
+    id: `legacy-number-${trip}${args.ano ? `-${args.ano}` : ""}`,
+    tripNumber: Number(trip), tripYear: args.ano || null, reviewRequired: true,
+  };
 }
 
 function tripLabel(trip) {
   return trip === "all"
     ? "Todas as viagens (total geral)"
-    : `${trip}ª viagem (${TRIP_PERIODS[trip]}, classificação provisória)`;
+    : getTripOptionLabel(trip);
 }
 
 function limited(items) {
@@ -66,7 +83,12 @@ function limited(items) {
 const tripProperty = {
   type: "string",
   enum: TRIP_ENUM,
-  description: "Viagem consultada: 3, 4 ou todas.",
+  description: "Número da viagem consultada: 1, 2, 3, 4 ou todas. Use ano quando informado.",
+};
+const tripProperties = {
+  viagem: tripProperty,
+  ano: { type: "integer", minimum: 2000, maximum: 2100 },
+  referencia: { type: "string", description: "ID existente, somente para distinguir vínculos ambíguos; nunca deduza pela data." },
 };
 
 export const TOOL_DEFINITIONS = [
@@ -77,7 +99,7 @@ export const TOOL_DEFINITIONS = [
     parameters: {
       type: "object",
       properties: {
-        viagem: tripProperty,
+        ...tripProperties,
         foco: {
           type: "string",
           enum: ["hoje", "todas"],
@@ -90,7 +112,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: "resumo_pendente_por_viagem",
-    description: "Total pendente geral e saldo pendente da 3ª e da 4ª viagem.",
+    description: "Total pendente geral e saldo separado por vínculo de viagem e ano.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -99,7 +121,7 @@ export const TOOL_DEFINITIONS = [
       "Valores a receber e já recebidos por cidade cadastrada do cliente, com os clientes devedores de cada cidade.",
     parameters: {
       type: "object",
-      properties: { viagem: tripProperty },
+      properties: tripProperties,
       required: ["viagem"],
       additionalProperties: false,
     },
@@ -110,7 +132,7 @@ export const TOOL_DEFINITIONS = [
       "Vendas, recebido, pendente, despesas, lucro estimado e fluxo de caixa de uma viagem. Lucro estimado não é dinheiro em caixa.",
     parameters: {
       type: "object",
-      properties: { viagem: tripProperty },
+      properties: tripProperties,
       required: ["viagem"],
       additionalProperties: false,
     },
@@ -143,7 +165,7 @@ export const TOOL_DEFINITIONS = [
     parameters: {
       type: "object",
       properties: {
-        viagem: tripProperty,
+        ...tripProperties,
         categoria: { type: "string", enum: EXPENSE_CATEGORIES },
       },
       required: ["viagem"],
@@ -156,7 +178,7 @@ export const TOOL_DEFINITIONS = [
       "Contas a pagar a fornecedores: total devido, vencidas, a vencer e saldo por fornecedor.",
     parameters: {
       type: "object",
-      properties: { viagem: tripProperty },
+      properties: tripProperties,
       additionalProperties: false,
     },
   },
@@ -221,7 +243,7 @@ function collectionItems(items, kind) {
 
 const handlers = {
   listar_cobrancas(args, { snapshot, now }) {
-    const trip = parseTrip(args.viagem);
+    const trip = parseTrip(args, snapshot);
     const focus = args.foco === "hoje" ? "hoje" : "todas";
     const report = buildCollectionsReport({
       clients: snapshot.collectionClients,
@@ -238,7 +260,7 @@ const handlers = {
     return {
       result: {
         escopo: tripLabel(trip),
-        classificacao_provisoria: true,
+        classificacao_provisoria: Boolean(trip?.reviewRequired),
         foco: focus,
         vencidas: group(report.overdue, "overdue"),
         vencem_hoje: group(report.today, "today"),
@@ -255,7 +277,7 @@ const handlers = {
         report: sanitizeReportForUi(report),
         focusToday: focus === "hoje",
         tripLabel: tripLabel(trip),
-        provisional: true,
+        provisional: Boolean(trip?.reviewRequired),
       },
     };
   },
@@ -266,19 +288,20 @@ const handlers = {
         total_pendente_geral: money(snapshot.totalPending),
         terceira_viagem: snapshot.tripPending[3],
         quarta_viagem: snapshot.tripPending[4],
-        classificacao_provisoria: true,
+        viagens: snapshot.tripOptions.map((trip) => ({
+          referencia: trip.id, viagem: getTripSelectionLabel(trip, snapshot.tripOptions),
+          ...snapshot.tripPending[trip.id],
+        })),
+        classificacao_provisoria: snapshot.tripOptions.some((trip) => trip.reviewRequired),
         observacao:
-          "O total geral pode incluir saldos antigos e vendas em revisão fora da 3ª e 4ª viagens.",
+          "O total geral inclui saldos antigos e vendas sem viagem; anos não são deduzidos de datas.",
       },
     };
   },
 
-  recebimentos_por_cidade(args, { data }) {
-    const trip = parseTrip(args.viagem);
-    const sales =
-      trip === "all"
-        ? data.sales
-        : selectSalesForTrip(organizeSalesByTrip2026(data.sales), String(trip));
+  recebimentos_por_cidade(args, { data, snapshot }) {
+    const trip = parseTrip(args, snapshot);
+    const sales = filterRecordsByTrip(data.sales, trip, snapshot.tripOptions);
     const cities = groupReceivablesByCity(data.clients, sales, trip === "all");
     return {
       result: {
@@ -297,10 +320,14 @@ const handlers = {
     };
   },
 
-  resumo_vendas(args, { snapshot }) {
-    const trip = parseTrip(args.viagem);
+  resumo_vendas(args, { snapshot, data }) {
+    const trip = parseTrip(args, snapshot);
     const financials =
-      trip === "all" ? snapshot.allTripFinancials : snapshot.tripFinancials[trip];
+      trip === "all" ? snapshot.allTripFinancials : calculateTripFinancialSummary(
+        filterRecordsByTrip(data.sales, trip, snapshot.tripOptions),
+        filterRecordsByTrip(data.expenses, trip, snapshot.tripOptions),
+        data.products, filterPayablesByTrip(snapshot.payables, trip)
+      );
     return {
       result: {
         escopo: tripLabel(trip),
@@ -402,12 +429,11 @@ const handlers = {
     return { result };
   },
 
-  despesas(args, { data }) {
-    const trip = parseTrip(args.viagem);
+  despesas(args, { data, snapshot }) {
+    const trip = parseTrip(args, snapshot);
     const category = EXPENSE_CATEGORIES.includes(args.categoria) ? args.categoria : null;
-    const expenses = data.expenses.filter(
+    const expenses = filterRecordsByTrip(data.expenses, trip, snapshot.tripOptions).filter(
       (expense) =>
-        (trip === "all" || Number(expense.tripNumber) === trip) &&
         (!category || String(expense.category || "outros") === category)
     );
     const byCategory = {};
@@ -427,10 +453,10 @@ const handlers = {
   },
 
   fornecedores_contas_a_pagar(args, { snapshot, now }) {
-    const trip = parseTrip(args.viagem);
+    const trip = parseTrip(args, snapshot);
     const payables = filterPayablesByTrip(
       snapshot.payables,
-      trip === "all" ? "all" : String(trip)
+      trip
     );
     const summary = summarizePayables(payables, now);
     const grouped = new Map();
