@@ -11,7 +11,7 @@ import {
   calculateConsolidatedReceivables,
   calculateTripFinancialSummary,
 } from "../../src/domain/sales.js";
-import { filterPayablesByTrip, summarizePayables } from "../../src/domain/payables.js";
+import { summarizePayables } from "../../src/domain/payables.js";
 import { getStockThresholds, getSuggestedRestock } from "../../src/domain/stock.js";
 import { getClientCityDisplay } from "../../src/domain/clientCities.js";
 import { filterRecordsByTrip, getTripOptionLabel, getTripSelectionLabel } from "../../src/domain/tripIdentity.js";
@@ -46,10 +46,10 @@ export class ToolInputError extends Error {
 function parseTrip(args, snapshot) {
   const trip = args.viagem === undefined || args.viagem === null ? "todas" : String(args.viagem);
   if (!TRIP_ENUM.includes(trip)) throw new ToolInputError("viagem inválida");
-  if (trip === "todas") return "all";
   if (args.ano !== undefined && (!Number.isInteger(args.ano) || args.ano < 2000 || args.ano > 2100)) {
     throw new ToolInputError("ano da viagem inválido");
   }
+  if (trip === "todas") return args.ano ? { id: `year-${args.ano}`, tripYear: args.ano } : "all";
   const candidates = snapshot.tripOptions.filter((option) =>
     option.tripNumber === Number(trip) && (!args.ano || option.tripYear === args.ano)
   );
@@ -68,6 +68,7 @@ function parseTrip(args, snapshot) {
 }
 
 function tripLabel(trip) {
+  if (String(trip?.id || "").startsWith("year-")) return `Todas as viagens de ${trip.tripYear}`;
   return trip === "all"
     ? "Todas as viagens (total geral)"
     : getTripOptionLabel(trip);
@@ -294,7 +295,7 @@ const handlers = {
         })),
         classificacao_provisoria: snapshot.tripOptions.some((trip) => trip.reviewRequired),
         observacao:
-          "O total geral inclui saldos antigos e vendas sem viagem; anos não são deduzidos de datas.",
+          "Viagens das vendas seguem o mês e ano da data comercial original. O total geral inclui saldos antigos e vendas sem data recuperável.",
       },
     };
   },
@@ -326,7 +327,7 @@ const handlers = {
       trip === "all" ? snapshot.allTripFinancials : calculateTripFinancialSummary(
         filterRecordsByTrip(data.sales, trip, snapshot.tripOptions),
         filterRecordsByTrip(data.expenses, trip, snapshot.tripOptions),
-        data.products, filterPayablesByTrip(snapshot.payables, trip)
+        data.products, filterRecordsByTrip(snapshot.payables, trip, snapshot.tripOptions)
       );
     return {
       result: {
@@ -454,9 +455,10 @@ const handlers = {
 
   fornecedores_contas_a_pagar(args, { snapshot, now }) {
     const trip = parseTrip(args, snapshot);
-    const payables = filterPayablesByTrip(
+    const payables = filterRecordsByTrip(
       snapshot.payables,
-      trip
+      trip,
+      snapshot.tripOptions
     );
     const summary = summarizePayables(payables, now);
     const grouped = new Map();

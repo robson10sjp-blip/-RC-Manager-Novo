@@ -1,5 +1,5 @@
 import { normalizeSearchText } from "./clientCities.js";
-import { getSaleTrip, isSaleRecord } from "./saleTrip.js";
+import { getSaleTrip, getSaleYearTrips, isSaleRecord } from "./saleTrip.js";
 
 export function getTripNumberYear(record = {}) {
   if (isSaleRecord(record)) {
@@ -7,13 +7,14 @@ export function getTripNumberYear(record = {}) {
     return { tripNumber: trip?.tripNumber || null, tripYear: trip?.tripYear || null };
   }
   const name = normalizeSearchText(record.tripName || record.name);
+  const canonicalId = String(record.tripId || record.id || "").match(/^trip-(\d{4})-([1-4])$/);
   const numberMatch =
     name.match(/\b([1-9]\d*)\s*(?:a|o)?\s*viagem\b/) ||
     name.match(/\bviagem(?:\s+(?:n|no|numero))?\s*([1-9]\d*)\b/) ||
     name.match(/^([1-9]\d*)$/);
   const yearMatch = name.match(/\b(20\d{2})\b/);
-  const tripNumber = Number(record.tripNumber || numberMatch?.[1] || 0);
-  const year = Number(record.tripYear || record.year || yearMatch?.[1] || 0);
+  const tripNumber = Number(record.tripNumber || numberMatch?.[1] || canonicalId?.[2] || 0);
+  const year = Number(record.tripYear || record.year || yearMatch?.[1] || canonicalId?.[1] || 0);
   return {
     tripNumber: Number.isInteger(tripNumber) && tripNumber > 0 ? tripNumber : null,
     tripYear: Number.isInteger(year) && year >= 2000 && year <= 2100 ? year : null,
@@ -139,16 +140,22 @@ export function buildTripOptions({
     });
   }
   if (report) {
-    for (const option of [...options.values()]) {
-      if (!option.tripNumber || !option.tripYear) continue;
+    const annualOptions = new Map();
+    for (const option of options.values()) {
+      if (!option.tripNumber || !option.tripYear || option.identityConflict) {
+        annualOptions.set(option.id, option);
+        continue;
+      }
       const id = `trip-${option.tripYear}-${option.tripNumber}`;
-      const existing = options.get(id);
-      options.delete(option.id);
-      options.set(id, {
-        ...option, id, linkedTripIds: [...(existing?.linkedTripIds || []), option.id],
+      const existing = annualOptions.get(id);
+      annualOptions.set(id, {
+        ...option, id,
+        linkedTripIds: [...new Set([...(existing?.linkedTripIds || []), option.id])],
         name: getTripOptionLabel(option), reviewRequired: false, identityConflict: false,
       });
     }
+    options.clear();
+    for (const [id, option] of annualOptions) options.set(id, option);
   }
   for (const trip of saleOptions) options.set(trip.id, { ...options.get(trip.id), ...trip, reviewRequired: false });
   return [...options.values()].sort((a, b) =>
@@ -186,12 +193,90 @@ export function getTripSelectionLabel(trip, options = []) {
 
 export function filterRecordsByTrip(records, selection, options = []) {
   if (!selection || selection === "all") return records;
+  const scopeId = typeof selection === "object" ? selection.id : selection;
+  const period = String(scopeId).match(/^trip-(\d{4})-([1-4])$/);
+  if (period) {
+    return records.filter((record) => {
+      const identity = resolveTripPeriod(record, options);
+      return identity?.tripYear === Number(period[1]) && identity?.tripNumber === Number(period[2]);
+    });
+  }
+  if (scopeId === "review" || /^year-\d{4}$/.test(scopeId)) {
+    return records.filter((record) => {
+      const year = resolveTripYear(record, options);
+      return scopeId === "review"
+        ? Boolean(getRecordTripId(record)) && !resolveTripPeriod(record, options)
+        : year === Number(scopeId.slice(5));
+    });
+  }
   if (selection === "unassigned") {
     return records.filter((record) => !getRecordTripId(record));
   }
   const selected = typeof selection === "object"
     ? selection : options.find((trip) => trip.id === selection) || { id: selection };
   return records.filter((record) => tripMatchesRecord(record, selected));
+}
+
+export function resolveTripPeriod(record, options = []) {
+  const identity = resolveTripIdentity(record, options);
+  return identity && [1, 2, 3, 4].includes(identity.tripNumber) && identity.tripYear
+    ? identity : null;
+}
+
+export function resolveTripYear(record, options = []) {
+  return resolveTripIdentity(record, options)?.tripYear || null;
+}
+
+export function resolveTripIdentity(record, options = []) {
+  if (isSaleRecord(record)) return getSaleTrip(record);
+  const id = getRecordTripId(record);
+  const linked = options.filter((option) =>
+    option.id === id || option.linkedTripIds?.includes(id));
+  if (linked.some((option) => option.identityConflict)) return null;
+  const known = linked.map(getTripNumberYear);
+  const saved = getTripNumberYear(record);
+  const tripNumbers = new Set([...known.map(({ tripNumber }) => tripNumber), saved.tripNumber].filter(Boolean));
+  const tripYears = new Set([...known.map(({ tripYear }) => tripYear), saved.tripYear].filter(Boolean));
+  if (tripNumbers.size > 1 || tripYears.size > 1) return null;
+  const tripNumber = tripNumbers.size === 1 ? [...tripNumbers][0] : null;
+  const tripYear = tripYears.size === 1 ? [...tripYears][0] : null;
+  return tripYear ? { tripNumber, tripYear } : null;
+}
+
+export function sameTripPeriod(first, second, options = []) {
+  const firstId = getRecordTripId(first);
+  const secondId = getRecordTripId(second);
+  if (firstId && firstId === secondId) return true;
+  const a = resolveTripPeriod(first, options);
+  const b = resolveTripPeriod(second, options);
+  return Boolean(a && b && a.tripNumber === b.tripNumber && a.tripYear === b.tripYear);
+}
+
+export function buildPeriodOptions(options, year) {
+  return getSaleYearTrips(year).map((period) => ({
+    ...period,
+    linkedTripIds: [...new Set(options.filter((option) =>
+      !option.identityConflict && option.tripNumber === period.tripNumber &&
+      option.tripYear === period.tripYear
+    ).flatMap((option) => option.linkedTripIds || [option.id]))],
+  }));
+}
+
+export function changeTripScopeYear(selection, year) {
+  const match = String(selection).match(/^trip-\d{4}-([1-4])$/);
+  return match ? `trip-${year}-${match[1]}` : `year-${year}`;
+}
+
+export function normalizeTripScopeSelection(selection) {
+  if (selection === "all" || /^year-\d{4}$/.test(selection) ||
+    /^trip-\d{4}-[1-4]$/.test(selection)) return selection;
+  return "all";
+}
+
+export function getTripScopeLabel(selection, year) {
+  if (selection === "all") return "Geral · todos os anos";
+  if (String(selection).startsWith("year-")) return `Todas as viagens de ${selection.slice(5)}`;
+  return getTripOptionLabel({ id: selection, tripYear: year });
 }
 
 export function getSaleTripEditFields(form, changed) {
@@ -230,6 +315,14 @@ export function buildTripReview({ trips = [], ...collections }) {
   }
   for (const [collection, records] of Object.entries(collections)) {
     for (const record of records) {
+      if (collection === "sales" && isSaleRecord(record)) {
+        if (!getSaleTrip(record)) rows.push({
+          collection, recordId: record.id, tripId: "", tripName: "",
+          label: "Data da venda não informada ou inválida",
+          reason: "Revisar a data comercial em Vendas; não associar viagem manualmente",
+        });
+        continue;
+      }
       const tripId = getRecordTripId(record);
       if (!tripId) {
         rows.push({
@@ -244,10 +337,7 @@ export function buildTripReview({ trips = [], ...collections }) {
         (identity.tripNumber && trip.tripNumber && identity.tripNumber !== trip.tripNumber) ||
         (identity.tripYear && trip.tripYear && identity.tripYear !== trip.tripYear)
       );
-      const peers = options.filter((item) =>
-        item.tripNumber === trip?.tripNumber && item.tripYear === trip?.tripYear
-      );
-      if (!trip?.registered || trip.reviewRequired || peers.length > 1 || conflictingIdentity) {
+      if (!trip?.registered || trip.reviewRequired || conflictingIdentity) {
         rows.push({
           collection,
           recordId: record.id,

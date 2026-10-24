@@ -2,16 +2,41 @@ import { useEffect, useRef, useState } from "react";
 import { db } from "../firebase/config.js";
 import { isFirestoreReadOnly } from "../firebase/writePolicy.js";
 import { createClientTrip } from "../services/clientRecords.js";
-import { getTripSelectionLabel, getTripOptionLabel } from "../domain/tripIdentity.js";
+import { getTripOptionLabel, getTripNumberYear } from "../domain/tripIdentity.js";
+import "./TripPeriodFilter.css";
 
-export default function TripSelector({ userId, options, value, onChange, onPendingChange, disabled = false, allowUnregistered = true }) {
-  const [creating, setCreating] = useState(false);
-  const [tripNumber, setTripNumber] = useState("1");
-  const [tripYear, setTripYear] = useState(String(new Date().getFullYear()));
+export default function TripSelector({ userId, options, value, onChange, onPendingChange, disabled = false, label = "Escolher ano e viagem", allowCreate = true }) {
+  const [draft, setDraft] = useState(() => ({
+    value, year: "", number: "", destinationId: "", started: false,
+  }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const lock = useRef(false);
   const active = useRef(true);
+  const current = options.find((trip) => trip.id === value);
+  const currentIdentity = getTripNumberYear(current || {});
+  const activeDraft = draft.value === value
+    ? draft
+    : { value, year: "", number: "", destinationId: "", started: false };
+  function updateDraft(changes) {
+    setDraft((previous) => ({
+      ...(previous.value === value ? previous : { value, year: "", number: "", destinationId: "", started: false }),
+      ...changes,
+      value,
+    }));
+  }
+  const selectedYear = activeDraft.year || String(currentIdentity.tripYear || "");
+  const selectedNumber = activeDraft.started ? activeDraft.number : activeDraft.number || (selectedYear && Number(currentIdentity.tripYear) === Number(selectedYear)
+    ? String(currentIdentity.tripNumber || "") : "");
+  const years = [...new Set([new Date().getFullYear() - 1, new Date().getFullYear(), new Date().getFullYear() + 1,
+    ...options.map((trip) => getTripNumberYear(trip).tripYear).filter(Boolean)])].sort((a, b) => b - a);
+  const candidates = selectedYear && selectedNumber ? options.filter((trip) => {
+    const identity = getTripNumberYear(trip);
+    return trip.registered && !trip.identityConflict &&
+      identity.tripYear === Number(selectedYear) && identity.tripNumber === Number(selectedNumber);
+  }) : [];
+  const target = candidates.find((trip) => trip.id === activeDraft.destinationId) ||
+    (candidates.length === 1 ? candidates[0] : null);
 
   useEffect(() => {
     active.current = true;
@@ -24,10 +49,10 @@ export default function TripSelector({ userId, options, value, onChange, onPendi
     setSaving(true);
     setError("");
     try {
-      const trip = await createClientTrip({ db, userId, tripNumber, tripYear });
+      const trip = await createClientTrip({ db, userId, tripNumber: selectedNumber, tripYear: selectedYear });
       if (!active.current) return;
       onChange(trip);
-      setCreating(false);
+      updateDraft({ started: false });
       onPendingChange?.(false);
     } catch (error) {
       console.error("Erro ao criar viagem:", error);
@@ -41,64 +66,78 @@ export default function TripSelector({ userId, options, value, onChange, onPendi
   return (
     <div className="cl-trip-selector">
       <label>
-        Viagem
+        Ano
+        <select aria-label={`Ano · ${label}`} value={selectedYear} disabled={disabled || saving}
+          onChange={(event) => {
+            updateDraft({
+              year: event.target.value, number: "", destinationId: "",
+              started: Boolean(event.target.value),
+            });
+            onPendingChange?.(Boolean(value && event.target.value));
+          }}>
+          <option value="">Escolher ano</option>
+          {years.filter(Number.isFinite).map((year) => <option key={year} value={year}>{year}</option>)}
+        </select>
+      </label>
+      <label>
+        {label}
         <select
           aria-label="Viagem"
-          value={creating ? "__new__" : value}
-          disabled={disabled || saving}
+          value={selectedNumber}
+          disabled={disabled || saving || !selectedYear}
           onChange={(event) => {
             setError("");
-            setCreating(event.target.value === "__new__");
-            onPendingChange?.(event.target.value === "__new__");
-            if (event.target.value !== "__new__") {
-              onChange(options.find((trip) => trip.id === event.target.value) || { id: "", name: "" });
+            const number = event.target.value;
+            updateDraft({ number, destinationId: "", started: Boolean(number) });
+            const matches = options.filter((trip) => {
+              const identity = getTripNumberYear(trip);
+              return trip.registered && !trip.identityConflict &&
+                identity.tripYear === Number(selectedYear) && identity.tripNumber === Number(number);
+            });
+            if (matches.length === 1) {
+              onChange(matches[0]);
+              updateDraft({ started: false });
+              onPendingChange?.(false);
+            } else {
+              onPendingChange?.(Boolean(number));
             }
           }}
         >
-          <option value="">Selecione uma viagem</option>
-          {value && !options.some((trip) => trip.id === value) && (
-            <option value={value}>Viagem original preservada · revisar cadastro</option>
-          )}
-          {options.map((trip) => (
-            <option key={trip.id} value={trip.id} disabled={!allowUnregistered && !trip.registered && trip.id !== value}>
-              {getTripSelectionLabel(trip, options)}
-            </option>
+          <option value="">Escolher viagem</option>
+          {[1, 2, 3, 4].map((number) => (
+            <option key={number} value={number}>{number}ª viagem de {selectedYear}</option>
           ))}
-          <option value="__new__">Criar nova viagem</option>
         </select>
       </label>
-      {creating && (
-        <div>
-          <label>
-            Número da viagem
-            <select aria-label="Número da viagem" value={tripNumber} onChange={(event) => setTripNumber(event.target.value)}
-              disabled={disabled || saving}>
-              {[1, 2, 3, 4].map((number) => <option key={number} value={number}>{number}</option>)}
-            </select>
-          </label>
-          <label>
-            Ano da viagem
-            <input aria-label="Ano da viagem" type="number" min="2000" max="2100" step="1"
-              value={tripYear} onChange={(event) => setTripYear(event.target.value)}
-              disabled={disabled || saving} />
-          </label>
-          <p>{getTripOptionLabel({ tripNumber, tripYear })}</p>
-          <p>Referência: 1ª jan–mar; 2ª abr–jun; 3ª jul–set; 4ª out–dez. Nenhum registro antigo será reclassificado.</p>
-          <button type="button" className="cl-btn cl-btn-gold"
-            disabled={disabled || saving || !tripYear || isFirestoreReadOnly()}
-            onClick={createTrip}>
-            {saving ? "Criando viagem..." : "Confirmar nova viagem"}
-          </button>
-          <button type="button" className="cl-btn cl-btn-soft" disabled={saving}
-            onClick={() => {
-              setCreating(false);
-              onPendingChange?.(false);
-            }}>Cancelar</button>
-        </div>
+      {candidates.length > 1 && (
+        <label>
+          Cadastro da viagem
+          <select aria-label="Cadastro da viagem" value={target?.id || ""}
+            onChange={(event) => {
+              const chosen = candidates.find((trip) => trip.id === event.target.value);
+              updateDraft({ destinationId: event.target.value });
+              if (chosen) {
+                onChange(chosen);
+                updateDraft({ started: false });
+                onPendingChange?.(false);
+              }
+            }}>
+            <option value="">Escolher cadastro</option>
+            {candidates.map((trip) => <option key={trip.id} value={trip.id}>{trip.name || trip.id} · {trip.id}</option>)}
+          </select>
+        </label>
       )}
-      {!creating && value && (!options.find((trip) => trip.id === value)?.registered ||
-        options.find((trip) => trip.id === value)?.reviewRequired) && (
-        <p role="status">Referência original preservada. Cadastro ou ano precisa de revisão; nenhuma viagem será criada ao salvar.</p>
+      {value && (!current?.registered || current?.reviewRequired) && (
+        <p role="status">Vínculo atual preservado. Para alterá-lo, escolha ano e viagem.</p>
+      )}
+      {activeDraft.started && selectedNumber && !target && candidates.length === 0 && (
+        <div>
+          <p role="status">{getTripOptionLabel({ tripNumber: selectedNumber, tripYear: selectedYear })} ainda não tem cadastro.</p>
+          {allowCreate && userId && <button type="button" className="cl-btn cl-btn-gold"
+            disabled={disabled || saving || isFirestoreReadOnly()} onClick={createTrip}>
+            {saving ? "Criando..." : "Cadastrar viagem"}
+          </button>}
+        </div>
       )}
       {error && <p role="alert" className="cl-record-error">{error}</p>}
     </div>

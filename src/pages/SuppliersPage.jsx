@@ -3,6 +3,9 @@ import { LuTruck } from "react-icons/lu";
 import PageHeader from "../components/PageHeader.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
 import CurrencyInput from "../components/CurrencyInput.jsx";
+import TripSelector from "../components/TripSelector.jsx";
+import TripPeriodFilter from "../components/TripPeriodFilter.jsx";
+import useTripScope, { useViewState } from "../hooks/useTripScope.js";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -32,9 +35,9 @@ import {
 } from "../domain/suppliers";
 import {
   buildTripOptions,
+  filterRecordsByTrip,
   getRecordTripId,
   getTripOptionLabel,
-  getTripSelectionLabel,
 } from "../domain/tripIdentity.js";
 import { toDate } from "../utils/dates";
 import {
@@ -109,7 +112,7 @@ export default function SuppliersPage() {
   const [editingPayment, setEditingPayment] = useState(null);
   const [editingCheck, setEditingCheck] = useState(null);
   const [expandedSupplierId, setExpandedSupplierId] = useState(null);
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useViewState("suppliers:search", "");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
@@ -119,8 +122,6 @@ export default function SuppliersPage() {
   const [compensatingCheckId, setCompensatingCheckId] = useState(null);
   const savingLock = useRef(false);
   const purchaseLock = useRef(false);
-  const suggestedTripRef = useRef("");
-  const tripSelectionTouched = useRef(false);
   const paymentLock = useRef(false);
   const paymentOperation = useRef(null);
   const compensatingCheckLock = useRef(new Set());
@@ -149,8 +150,6 @@ export default function SuppliersPage() {
       setCorrectionsByPayable({});
       setForm(emptyForm);
       setPurchase({ ...emptyPurchase, purchaseDate: todayInput() });
-      suggestedTripRef.current = "";
-      tripSelectionTouched.current = false;
       setInstallments([]);
       setPayment({ ...emptyPayment, date: todayInput() });
       setEditingId(null);
@@ -161,7 +160,6 @@ export default function SuppliersPage() {
       compensatingCheckLock.current.clear();
       setCompensatingCheckId(null);
       setExpandedSupplierId(null);
-      setSearch("");
       setLoading(Boolean(user));
       setError("");
       setNotice("");
@@ -296,23 +294,6 @@ export default function SuppliersPage() {
             ...item.data(),
           }));
           setTrips(records);
-          const latestTrip = records
-            .slice()
-            .sort(
-              (first, second) =>
-                (toDate(second.createdAt)?.getTime() || 0) -
-                (toDate(first.createdAt)?.getTime() || 0)
-            )[0];
-          if (!tripSelectionTouched.current) {
-            setPurchase((current) => ({
-              ...current,
-              tripId:
-                !current.tripId || current.tripId === suggestedTripRef.current
-                  ? latestTrip?.id || ""
-                  : current.tripId,
-            }));
-          }
-          suggestedTripRef.current = latestTrip?.id || "";
         },
         (loadError) => {
           if (currentGeneration !== generation) return;
@@ -339,17 +320,9 @@ export default function SuppliersPage() {
     () => buildTripOptions({ trips, payables }),
     [trips, payables]
   );
-  const suggestedTripId = useMemo(
-    () =>
-      trips
-        .slice()
-        .sort(
-          (first, second) =>
-            (toDate(second.createdAt)?.getTime() || 0) -
-            (toDate(first.createdAt)?.getTime() || 0)
-        )[0]?.id || "",
-    [trips]
-  );
+  const tripScope = useTripScope("suppliers", tripOptionsForPurchases);
+  const scopedPayables = useMemo(() => filterRecordsByTrip(payables, tripScope.selection, tripScope.filterOptions),
+    [payables, tripScope.selection, tripScope.filterOptions]);
 
   const visibleSuppliers = useMemo(() => {
     const searchTerm = search.trim().toLocaleLowerCase("pt-BR");
@@ -468,13 +441,13 @@ export default function SuppliersPage() {
   }
 
   const payableSummary = useMemo(
-    () => summarizePayables(payables),
-    [payables]
+    () => summarizePayables(scopedPayables),
+    [scopedPayables]
   );
   const upcomingAccountCount = new Set(
     payableSummary.upcomingItems.map((item) => item.payableId)
   ).size;
-  const paidPayableCount = payables.filter(
+  const paidPayableCount = scopedPayables.filter(
     (payable) => getPayableBalance(payable) === 0
   ).length;
   const readOnly = isFirestoreReadOnly();
@@ -622,10 +595,8 @@ export default function SuppliersPage() {
       setPurchase({
         ...emptyPurchase,
         purchaseDate: todayInput(),
-        tripId: suggestedTripId,
+        tripId: "",
       });
-      suggestedTripRef.current = suggestedTripId;
-      tripSelectionTouched.current = false;
       setInstallments([]);
       setError("");
       setNotice("Compra registrada em Contas a pagar e vinculada ao fornecedor.");
@@ -1078,6 +1049,7 @@ export default function SuppliersPage() {
           <span>fornecedor(es)</span>
         </div>
       </PageHeader>
+      <TripPeriodFilter scope={tripScope} label="Compras de fornecedores" />
 
       {readOnly && (
         <div className="suppliers-readonly" role="status">
@@ -1179,10 +1151,10 @@ export default function SuppliersPage() {
                     </p>
                     {supplier.notes && <p className="supplier-notes">{supplier.notes}</p>}
                     <small>
-                      {payables.filter((item) => item.supplierId === supplier.id).length} compra(s) ·{" "}
+                      {scopedPayables.filter((item) => item.supplierId === supplier.id).length} compra(s) ·{" "}
                       <FinancialValue>
                         {formatCurrency(
-                          payables
+                          scopedPayables
                             .filter((item) => item.supplierId === supplier.id)
                             .reduce((sum, item) => sum + getPayableBalance(item), 0)
                         )}{" "}
@@ -1200,11 +1172,11 @@ export default function SuppliersPage() {
                   {expandedSupplierId === supplier.id && (
                     <div className="supplier-history">
                       <h4>Compras, parcelas e pagamentos</h4>
-                      {payables.filter((item) => item.supplierId === supplier.id).length === 0 ? (
+                      {scopedPayables.filter((item) => item.supplierId === supplier.id).length === 0 ? (
                         <p>Nenhuma compra registrada para este fornecedor.</p>
                       ) : (
                         <div className="supplier-purchase-list">
-                          {payables
+                          {scopedPayables
                             .filter((item) => item.supplierId === supplier.id)
                             .sort((first, second) =>
                               (toDate(second.purchaseDate)?.getTime() || 0) -
@@ -1502,25 +1474,9 @@ export default function SuppliersPage() {
                   }
                 />
               </label>
-              <label>
-                Viagem de destino
-                <select
-                  value={editingPurchase.tripId}
-                  onChange={(event) =>
-                    setEditingPurchase((current) => ({
-                      ...current,
-                      tripId: event.target.value,
-                    }))
-                  }
-                >
-                  <option value="">Sem viagem definida</option>
-                  {tripOptionsForPurchases.map((trip) => (
-                    <option key={trip.id} value={trip.id}>
-                      {getTripSelectionLabel(trip, tripOptionsForPurchases)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <TripSelector options={tripOptionsForPurchases} value={editingPurchase.tripId}
+                allowCreate={false} disabled={readOnly || savingPurchase}
+                onChange={(trip) => setEditingPurchase((current) => ({ ...current, tripId: trip.id }))} />
               <label>
                 Vencimento das parcelas comuns
                 <input
@@ -1777,31 +1733,14 @@ export default function SuppliersPage() {
               disabled={readOnly}
             />
           </label>
-          <label>
-            Viagem de destino (opcional)
-            <select
-              value={purchase.tripId}
-              onChange={(event) => {
-                tripSelectionTouched.current = true;
+          <TripSelector userId={auth.currentUser?.uid} options={tripOptionsForPurchases} value={purchase.tripId}
+              disabled={readOnly || savingPurchase}
+              onChange={(trip) => {
                 setPurchase((current) => ({
                   ...current,
-                  tripId: event.target.value,
+                  tripId: trip.id,
                 }));
-              }}
-              disabled={readOnly}
-            >
-              <option value="">Sem viagem definida</option>
-              {tripOptionsForPurchases.map((trip) => (
-                <option key={trip.id} value={trip.id}>
-                  {getTripSelectionLabel(trip, tripOptionsForPurchases)}
-                  {trip.id === suggestedTripId
-                    ? " · sugestão (última cadastrada)"
-                    : ""}
-                </option>
-              ))}
-            </select>
-            <small>Você pode alterar a sugestão antes de salvar. A viagem não é inferida pela data da compra.</small>
-          </label>
+              }} />
           <label className="supplier-purchase-wide">
             Descrição da mercadoria *
             <input

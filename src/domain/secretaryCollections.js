@@ -2,6 +2,7 @@ import { toDate } from "../utils/dates.js";
 import { getClientCityDisplay } from "./clientCities.js";
 import { getSalePendingAmount } from "./financeReceivables.js";
 import { buildTripOptions, filterRecordsByTrip } from "./tripIdentity.js";
+import { getSaleDate } from "./saleTrip.js";
 
 const money = (value) =>
   Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -46,7 +47,7 @@ function hasRegisteredDueValue(sale) {
 
 // Same rule the old receipt used (prepareSaleReceipt): legacy sales on credit
 // with no stored due date get saleDate + 90 days. Query-only; never saved.
-// createdAt is not used: it is a record timestamp, not the original sale date.
+// Original-schema sales recover their commercial date through the shared resolver.
 export function resolveDueDate(sale) {
   const registered = getReliableDueDate(sale);
   if (registered) return { date: registered, source: "registered" };
@@ -55,7 +56,7 @@ export function resolveDueDate(sale) {
   if (sale.balanceModel === "per-sale" || sale.paymentMethod !== "prazo") {
     return { date: null, source: null };
   }
-  const saleDate = toDate(sale.saleDate);
+  const saleDate = getSaleDate(sale);
   const year = saleDate?.getFullYear();
   if (!saleDate || year < MIN_RELIABLE_YEAR || year > MAX_RELIABLE_YEAR) {
     return { date: null, source: null };
@@ -90,7 +91,7 @@ function finishGroup(group) {
  * @param {Array} options.clients
  * @param {Array} options.sales
  * @param {Date} options.today
- * @param {number|string|null} options.trip 1, 2, 3, 4 or "all"
+ * @param {object|number|string|null} options.trip Annual scope, 1, 2, 3, 4 or "all"
  */
 export function buildCollectionsReport({
   clients = [],
@@ -197,7 +198,7 @@ export function buildCollectionsReport({
   groups.noDueDate.items.sort(byAmount);
 
   return {
-    trip: isAll ? "all" : Number(trip),
+    trip: isAll ? "all" : scope,
     overdue: finishGroup(groups.overdue),
     today: finishGroup(groups.today),
     upcoming: finishGroup(groups.upcoming),

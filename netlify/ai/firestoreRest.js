@@ -16,25 +16,26 @@ export const COLLECTION_SPECS = {
       "clientId", "clientName", "total", "amountPaid", "pendingAmount",
       "paymentMethod", "balanceModel", "saleDate", "createdAt", "dueDate",
       "paymentDueDate", "collectionDate", "dataCobranca", "dataVencimento",
-      "tripName", "tripCity", "tripNumber", "status",
+      "tripId", "tripName", "tripCity", "tripNumber", "tripYear", "status",
     ],
     arrays: {
       items: ["productId", "quantity", "unitPrice", "subtotal", "costPrice", "size"],
     },
   },
   expenses: {
-    fields: ["category", "value", "expenseDate", "createdAt", "tripNumber"],
+    fields: ["category", "kind", "value", "expenseDate", "createdAt", "tripId", "tripName", "tripNumber", "tripYear"],
   },
   suppliers: { fields: ["name"] },
   payables: {
     fields: [
       "supplierId", "supplierName", "description", "totalAmount",
-      "paidAmount", "purchaseType", "tripNumber",
+      "paidAmount", "purchaseType", "tripId", "tripName", "tripNumber", "tripYear",
     ],
     arrays: {
       installments: ["amount", "paidAmount", "dueDate", "method", "identification"],
     },
   },
+  trips: { fields: ["name", "tripNumber", "tripYear", "year"] },
 };
 
 export class FirestoreAccessError extends Error {

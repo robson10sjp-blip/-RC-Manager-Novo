@@ -2,12 +2,53 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildCollectionsReport } from "./secretaryCollections.js";
+import { buildTripOptions, filterRecordsByTrip } from "./tripIdentity.js";
+import { calculateTripFinancialSummary } from "./sales.js";
+import { resolveClientTripVisitStatus } from "./clientRecords.js";
 import {
   answerSecretaryQueryWithContext,
   createSecretarySnapshot,
 } from "./secretary.js";
 
 const today = new Date(2026, 9, 18, 10, 0);
+
+test("all twelve months and year changes share the same sales, client, finance and collection scopes", () => {
+  const clients = [
+    { id: "a", name: "Maria", city: "Tucumã" },
+    { id: "b", name: "Maria", city: "Xinguara" },
+  ];
+  const sales = [2026, 2027].flatMap((year) => Array.from({ length: 12 }, (_, index) => ({
+    id: `${year}-${index + 1}`, clientId: index % 2 ? "b" : "a",
+    saleDate: `${year}-${String(index + 1).padStart(2, "0")}-15`,
+    tripId: "stale-fourth-trip", tripNumber: 4, tripYear: 2025,
+    total: 100, amountPaid: 20, pendingAmount: 80, balanceModel: "per-sale",
+    payments: [{ id: `payment-${year}-${index}`, saleId: `${year}-${index + 1}`, date: "2028-12-01", amount: 20 }],
+  })));
+  const before = JSON.stringify({ clients, sales });
+  const options = buildTripOptions({ sales, salesOnly: true });
+  const financeOptions = buildTripOptions({ sales, report: true });
+  assert.equal(options.length, 8);
+  assert.deepEqual(financeOptions.map((option) => option.id), options.map((option) => option.id));
+  for (const option of options) {
+    const expectedIds = [1, 2, 3].map((offset) => `${option.tripYear}-${(option.tripNumber - 1) * 3 + offset}`);
+    const filtered = filterRecordsByTrip(sales, option.id, options);
+    assert.deepEqual(filtered.map((sale) => sale.id), expectedIds);
+    const finance = calculateTripFinancialSummary(filtered, []);
+    assert.equal(finance.sold, 300);
+    assert.equal(finance.received, 60);
+    assert.equal(finance.pending, 240);
+    const report = buildCollectionsReport({ clients, sales, today, trip: option.id });
+    assert.deepEqual(report.noDueDate.items.map((item) => item.saleId).sort(), [...expectedIds].sort());
+    assert.equal(report.noDueDate.total, 240);
+    for (const client of clients) {
+      assert.equal(resolveClientTripVisitStatus({ client, city: client.city, tripId: option.id, sales }), "bought");
+      const citySales = filtered.filter((sale) => sale.clientId === client.id);
+      assert.ok(citySales.length > 0);
+      assert.ok(citySales.every((sale) => expectedIds.includes(sale.id)));
+    }
+  }
+  assert.equal(JSON.stringify({ clients, sales }), before);
+});
 
 test("collections classify original sale dates, keeping years and undated records separate", () => {
   const records = [
@@ -16,6 +57,8 @@ test("collections classify original sale dates, keeping years and undated record
     { id: "no-trip", clientId: "c", total: 600, amountPaid: 0 },
   ];
   const report = buildCollectionsReport({ sales: records, today, trip: { id: "trip-2026-4" } });
+  assert.deepEqual(report.trip, { id: "trip-2026-4" });
+  assert.equal(buildCollectionsReport({ sales: records, today, trip: "trip-2026-4" }).trip, "trip-2026-4");
   assert.equal(report.noDueDate.total, 80);
   assert.equal(buildCollectionsReport({ sales: records, today, trip: "unassigned" }).noDueDate.total, 600);
   const all = buildCollectionsReport({ sales: records, today, trip: "all" });

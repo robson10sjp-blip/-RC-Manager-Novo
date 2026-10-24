@@ -21,11 +21,15 @@ export async function createClientTrip({ db, userId, tripNumber, tripYear }) {
   if (!userId) throw new Error("Entre no sistema para criar uma viagem.");
   const trip = buildNewTrip({ tripNumber, tripYear });
   const existing = await getDocs(collection(db, "users", userId, "trips"));
-  if (existing.docs.some((document) => {
-    const identity = getTripNumberYear(document.data());
+  const matching = existing.docs.filter((document) => {
+    const identity = getTripNumberYear({ ...document.data(), id: document.id });
     return identity.tripNumber === trip.tripNumber && identity.tripYear === trip.tripYear;
-  })) {
-    throw new Error("Já existe uma viagem com esse número e ano. Selecione o cadastro existente.");
+  });
+  if (matching.length === 1) {
+    return { ...matching[0].data(), id: matching[0].id, registered: true };
+  }
+  if (matching.length > 1) {
+    throw new Error("Há mais de um cadastro com esse número e ano. Selecione explicitamente o ID existente.");
   }
   const reference = doc(db, "users", userId, "trips", trip.id);
   await runTransaction(db, async (transaction) => {
@@ -52,6 +56,7 @@ export async function recordClientVisit({
   tripName = "",
   actionDate,
   status,
+  existingRecord = null,
 }) {
   if (!["not_purchased", "unvisited"].includes(status)) {
     throw new Error("Situação de visita inválida.");
@@ -60,7 +65,11 @@ export async function recordClientVisit({
   if (!userId || (!actionDate && (!tripName?.trim() || !tripId))) {
     throw new Error("Selecione uma viagem confirmada ou uma data no calendário e entre no sistema.");
   }
-  const recordId = createVisitRecordId(clientId, tripId, city, actionDate);
+  if (existingRecord && (existingRecord.clientId !== clientId ||
+    getClientCityKey(existingRecord.city) !== getClientCityKey(city))) {
+    throw new Error("O histórico selecionado não pertence à cliente/cidade.");
+  }
+  const recordId = existingRecord?.id || createVisitRecordId(clientId, tripId, city, actionDate);
   const reference = doc(db, "users", userId, "clientVisits", recordId);
 
   return runTransaction(db, async (transaction) => {
@@ -71,6 +80,10 @@ export async function recordClientVisit({
     }
     const snapshot = await transaction.get(reference);
     const saved = snapshot.exists() ? snapshot.data() : {};
+    if (existingRecord && (!snapshot.exists() || saved.clientId !== clientId ||
+      saved.tripId !== existingRecord.tripId || saved.tripName !== existingRecord.tripName)) {
+      throw new Error("O histórico de visita mudou. Atualize a consulta antes de confirmar.");
+    }
     if (saved.status === status) return false;
 
     transaction.set(
@@ -79,8 +92,8 @@ export async function recordClientVisit({
         clientId,
         city: clientSnapshot.data().city,
         cityKey: getClientCityKey(city),
-        tripId,
-        tripName: tripName.trim(),
+        tripId: existingRecord ? saved.tripId || "" : tripId,
+        tripName: existingRecord ? saved.tripName || "" : tripName.trim(),
         ...(actionDate ? { actionDate } : {}),
         status,
         history: [

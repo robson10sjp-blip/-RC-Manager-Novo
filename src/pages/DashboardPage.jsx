@@ -12,18 +12,17 @@ import {
   calculateTripFinancialSummary,
 } from "../domain/sales";
 import {
-  filterPayablesByTrip,
   getPayableBalance,
   summarizePayables,
 } from "../domain/payables";
 import { toDate } from "../utils/dates";
-import { getSaleTrip, getSaleYearTrips, saleDateInput } from "../domain/saleTrip.js";
+import { getSaleDate } from "../domain/saleTrip.js";
+import TripPeriodFilter from "../components/TripPeriodFilter.jsx";
+import useTripScope from "../hooks/useTripScope.js";
 import {
   buildTripOptions,
-  getTripOptionLabel,
   getTripSelectionLabel,
   filterRecordsByTrip,
-  tripMatchesRecord,
 } from "../domain/tripIdentity.js";
 import {
   Bar,
@@ -58,8 +57,6 @@ export default function DashboardPage() {
   const [expenses, setExpenses] = useState([]);
   const [payables, setPayables] = useState([]);
   const [trips, setTrips] = useState([]);
-  const [tripFilter, setTripFilter] = useState("all");
-  const [tripYear, setTripYear] = useState(() => Number(saleDateInput(new Date()).slice(0, 4)));
   const [showSupplierPurchases, setShowSupplierPurchases] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -160,12 +157,10 @@ export default function DashboardPage() {
 
           list.sort((first, second) => {
             const firstDate =
-              toDate(first.saleDate)?.getTime() ||
-              first.createdAt?.toMillis?.() ||
+              getSaleDate(first)?.getTime() ||
               0;
             const secondDate =
-              toDate(second.saleDate)?.getTime() ||
-              second.createdAt?.toMillis?.() ||
+              getSaleDate(second)?.getTime() ||
               0;
             return secondDate - firstDate;
           });
@@ -251,40 +246,24 @@ export default function DashboardPage() {
     }),
     [expenses, payables, sales, trips]
   );
-  const tripOptions = useMemo(() => getSaleYearTrips(tripYear), [tripYear]);
-  const tripYears = useMemo(() => [...new Set([
-    tripYear,
-    Number(saleDateInput(new Date()).slice(0, 4)),
-    ...sales.map((sale) => getSaleTrip(sale)?.tripYear).filter(Boolean),
-  ])].sort((a, b) => b - a), [sales, tripYear]);
-  const selectedTripOption = financialTripOptions.find((trip) => trip.id === tripFilter)
-    || tripOptions.find((trip) => trip.id === tripFilter);
+  const tripScope = useTripScope("dashboard", financialTripOptions);
+  const tripFilter = tripScope.selection;
+  const tripOptions = tripScope.options;
   const selectedSales = useMemo(
     () => {
       if (tripFilter === "all") return sales;
-      return filterRecordsByTrip(sales, tripFilter, tripOptions);
+      return filterRecordsByTrip(sales, tripFilter, tripScope.filterOptions);
     },
-    [sales, tripOptions, tripFilter]
+    [sales, tripScope.filterOptions, tripFilter]
   );
   const selectedExpenses = useMemo(
     () =>
-      tripFilter === "all"
-        ? expenses
-        : selectedTripOption
-            ? expenses.filter((expense) =>
-              tripMatchesRecord(expense, selectedTripOption)
-            )
-            : [],
-    [expenses, selectedTripOption, tripFilter]
+      filterRecordsByTrip(expenses, tripFilter, tripScope.filterOptions),
+    [expenses, tripScope.filterOptions, tripFilter]
   );
   const selectedPayables = useMemo(
-    () => filterPayablesByTrip(
-          payables,
-          tripFilter === "all"
-            ? tripFilter
-            : selectedTripOption || tripFilter
-        ),
-    [payables, selectedTripOption, tripFilter]
+    () => filterRecordsByTrip(payables, tripFilter, tripScope.filterOptions),
+    [payables, tripScope.filterOptions, tripFilter]
   );
   const tripFinancials = useMemo(
     () => calculateTripFinancialSummary(
@@ -356,7 +335,7 @@ export default function DashboardPage() {
     for (const sale of selectedSales) {
       const amountPaid = Number(sale.amountPaid || 0);
       const total = Number(sale.total || 0);
-      const saleDate = toDate(sale.saleDate) || toDate(sale.createdAt);
+      const saleDate = getSaleDate(sale);
       sold += total;
       received += amountPaid;
 
@@ -528,42 +507,9 @@ export default function DashboardPage() {
             <div className="dash-panel-head">
               <div>
                 <h2>Resultado das vendas por viagem</h2>
-                <p>
-                  Vendas por trimestre e ano da data da venda.
-                  {" "}Despesas e compras mantêm seus próprios vínculos de viagem.
-                </p>
               </div>
 
-              <label className="dash-filter">
-                Ano
-                <select
-                  aria-label="Ano das viagens do Dashboard"
-                  value={tripYear}
-                  onChange={(event) => {
-                    const year = Number(event.target.value);
-                    const selected = tripOptions.find((trip) => trip.id === tripFilter);
-                    setTripYear(year);
-                    setTripFilter(selected ? `trip-${year}-${selected.tripNumber}` : "all");
-                  }}
-                >
-                  {tripYears.map((year) => <option key={year} value={year}>{year}</option>)}
-                </select>
-              </label>
-              <label className="dash-filter">
-                Viagem
-                <select
-                  aria-label="Filtrar Dashboard por viagem"
-                  value={tripFilter}
-                  onChange={(event) => setTripFilter(event.target.value)}
-                >
-                  <option value="all">Geral</option>
-                  {tripOptions.map((trip) => (
-                    <option key={trip.id} value={trip.id}>
-                      {getTripSelectionLabel(trip, tripOptions)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <TripPeriodFilter scope={tripScope} label="Dashboard" />
             </div>
 
             <div className="dash-kpis">
@@ -607,11 +553,7 @@ export default function DashboardPage() {
                   <div>
                     <h3>Compras de mercadorias da viagem</h3>
                     <p>
-                      {tripFilter === "all"
-                        ? "Total geral de todas as viagens."
-                        : tripFilter === "unassigned"
-                          ? "Registros antigos sem viagem definida."
-                          : `Compras vinculadas a ${getTripOptionLabel(selectedTripOption || {})}.`}
+                      {tripFilter === "all" ? "Total geral, todos os anos." : `Período: ${tripScope.label}.`}
                       {" "}Inclui compras ainda não pagas.
                     </p>
                   </div>

@@ -68,12 +68,12 @@ test("visit status is isolated by client, city and explicitly named trip", () =>
   );
 });
 
-test("an explicitly linked sale takes precedence as purchased", () => {
+test("a sale's calendar trip takes precedence as purchased", () => {
   assert.equal(
     resolveClientTripVisitStatus({
       client: { id: "client-1", city: "Tucumã – PA" },
       city: "Tucumã – PA",
-      tripName: "Rota Sul 2026",
+      tripId: "trip-2026-3",
       visitRecords: [{
         clientId: "client-1",
         city: "Tucumã – PA",
@@ -82,6 +82,7 @@ test("an explicitly linked sale takes precedence as purchased", () => {
       }],
       sales: [{
         clientId: "client-1",
+        saleDate: "2026-08-15",
         tripName: "Rota Sul 2026",
         tripCity: "Tucumã – PA",
       }],
@@ -98,12 +99,13 @@ test("visit counts isolate cities, client IDs, equal-name trips and cancelled sa
   ];
   const records = [{ clientId: "a", city: "Tucumã", tripId: "trip-one", status: "not_purchased" }];
   const input = {
-    clients, city: "Tucumã", tripId: "trip-one", visitRecords: records,
+    clients, city: "Tucumã", tripId: "trip-2026-3",
+    visitRecords: records.map((record) => ({ ...record, tripId: "trip-2026-3" })),
     sales: [
-      { clientId: "b", tripId: "trip-one", tripCity: "Tucumã" },
-      { clientId: "a", tripId: "trip-other", tripCity: "Tucumã" },
-      { clientId: "a", tripId: "trip-one", tripCity: "Xinguara" },
-      { clientId: "a", tripId: "trip-one", status: "cancelled" },
+      { clientId: "b", saleDate: "2026-08-15", tripId: "trip-one", tripCity: "Tucumã" },
+      { clientId: "a", saleDate: "2026-10-23", tripId: "trip-other", tripCity: "Tucumã" },
+      { clientId: "a", saleDate: "2026-08-15", tripId: "trip-one", tripCity: "Xinguara" },
+      { clientId: "a", saleDate: "2026-08-15", tripId: "trip-one", status: "cancelled" },
     ],
   };
   assert.deepEqual(buildClientVisitSummary(input).counts, { unvisited: 0, not_purchased: 1, bought: 1 });
@@ -115,7 +117,7 @@ test("visit counts isolate cities, client IDs, equal-name trips and cancelled sa
     { unvisited: 0, not_purchased: 0, bought: 0 });
 });
 
-test("canonical undo overrides a legacy marker and ordinal labels match legacy sales", () => {
+test("canonical undo overrides a legacy marker but undated sales never invent a trip", () => {
   const client = { id: "a", city: "Tucumã" };
   const visitRecords = [
     { clientId: "a", city: "Tucumã", tripName: "3", status: "not_purchased" },
@@ -125,11 +127,42 @@ test("canonical undo overrides a legacy marker and ordinal labels match legacy s
   assert.equal(resolveClientTripVisitStatus(input), "unvisited");
   assert.equal(resolveClientTripVisitStatus({
     ...input, sales: [{ clientId: "a", tripName: "3ª viagem" }],
-  }), "bought");
+  }), "unvisited");
   assert.equal(resolveClientTripVisitStatus({
     ...input, tripId: "trip-new-same-name", tripName: "3",
     sales: [{ clientId: "a", tripName: "3ª viagem" }],
   }), "unvisited");
+});
+
+test("client purchases follow only each sale's date and client ID, never its stale travel link", () => {
+  const client = { id: "a", city: "Tucumã" };
+  const sales = [
+    { clientId: "a", saleDate: "15/08/2026", tripId: "trip-2026-4" },
+    { clientId: "a", saleDate: "10/01/2027", tripId: "trip-2026-3" },
+    { clientId: "b", saleDate: "23/10/2026", tripId: "trip-2026-4" },
+    { clientId: "a", createdAt: "2026-10-23", tripId: "trip-2026-4" },
+  ];
+  const input = { client, city: client.city, sales };
+  for (const tripId of ["trip-2026-3", "trip-2027-1"]) {
+    assert.equal(resolveClientTripVisitStatus({ ...input, tripId }), "bought");
+  }
+  for (const tripId of ["trip-2026-4", "trip-2027-3"]) {
+    assert.equal(resolveClientTripVisitStatus({ ...input, tripId }), "unvisited");
+  }
+  assert.equal(resolveClientTripVisitStatus({ ...input, tripId: "trip-2026-3", city: "Xinguara" }), "unvisited");
+});
+
+test("registered legacy visit IDs resolve their explicit year/number without reclassifying the sale", () => {
+  const input = {
+    client: { id: "c", city: "Tucumã" }, city: "Tucumã", tripId: "old-third",
+    tripOptions: [
+      { id: "old-third", tripNumber: 3, tripYear: 2026 },
+      { id: "old-fourth", tripNumber: 4, tripYear: 2026 },
+    ],
+    sales: [{ clientId: "c", saleDate: "2026-08-15", tripId: "old-fourth" }],
+  };
+  assert.equal(resolveClientTripVisitStatus(input), "bought");
+  assert.equal(resolveClientTripVisitStatus({ ...input, tripId: "old-fourth" }), "unvisited");
 });
 
 test("gift quantities respect available stock and record separate cost", () => {

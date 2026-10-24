@@ -4,7 +4,6 @@ import {
   summarizeTrips,
 } from "./sales.js";
 import {
-  filterPayablesByTrip,
   getPayableBalance,
   summarizePayables,
 } from "./payables.js";
@@ -12,6 +11,7 @@ import { toDate } from "../utils/dates.js";
 import { buildCollectionsReport } from "./secretaryCollections.js";
 import { getSalePendingAmount } from "./financeReceivables.js";
 import { isPersonalWithdrawal } from "./expenses.js";
+import { getSaleDate } from "./saleTrip.js";
 import { buildTripOptions, filterRecordsByTrip, getTripOptionLabel, getTripSelectionLabel } from "./tripIdentity.js";
 
 function startOfDay(date) {
@@ -79,16 +79,21 @@ function isDatedReceiptQuery(query) {
 }
 
 function tripDescription(tripNumber) {
+  if (String(tripNumber?.id || "").startsWith("year-")) {
+    return `Todas as viagens de ${tripNumber.tripYear}`;
+  }
   return getTripOptionLabel(typeof tripNumber === "object" ? tripNumber : { tripNumber });
 }
 
 function resolveQueryTrip(query, snapshot, previous) {
   const number = detectTripNumber(query);
-  if (!number && isAllTripsQuery(query)) return { scope: "all" };
+  const year = Number(query.match(/\b(20\d{2})\b/)?.[1] || 0);
+  if (!number && isAllTripsQuery(query)) return {
+    scope: year ? { id: `year-${year}`, tripYear: year } : "all",
+  };
   if (!number && previous && typeof previous === "object") return { scope: previous };
   const tripNumber = number || Number(previous);
   if (![1, 2, 3, 4].includes(tripNumber)) return { scope: previous === "all" ? "all" : null };
-  const year = Number(query.match(/\b(20\d{2})\b/)?.[1] || 0);
   const candidates = (snapshot.tripOptions || []).filter((trip) =>
     trip.tripNumber === tripNumber && (!year || trip.tripYear === year)
   );
@@ -244,7 +249,7 @@ export function createSecretarySnapshot(
       ?.reduce((sum, payment) => sum + Number(payment.value || 0), 0) || 0;
 
     return {
-      date: toDate(sale.saleDate) || toDate(sale.createdAt),
+      date: getSaleDate(sale),
       value: Math.max(Number(sale.amountPaid || 0) - recordedPayments, 0),
     };
   });
@@ -281,7 +286,7 @@ export function createSecretarySnapshot(
   const salesToday = sales
     .filter((sale) =>
       isBetween(
-        toDate(sale.saleDate) || toDate(sale.createdAt),
+        getSaleDate(sale),
         today,
         tomorrow
       )
@@ -293,7 +298,7 @@ export function createSecretarySnapshot(
   const salesThisMonth = sales
     .filter((sale) =>
       isBetween(
-        toDate(sale.saleDate) || toDate(sale.createdAt),
+        getSaleDate(sale),
         monthStart,
         nextMonthStart
       )
@@ -376,7 +381,8 @@ export function createSecretarySnapshot(
   const tripsThisMonth = summarizeTrips(salesThisMonth);
   const totalPending = receivables.totalPending;
   const tripOptions = buildTripOptions({ trips, sales, expenses, payables: enrichedPayables, report: true });
-  const scopes = tripOptions;
+  const scopes = [...tripOptions, ...[...new Set(tripOptions.map((trip) => trip.tripYear).filter(Boolean))]
+    .map((year) => ({ id: `year-${year}`, tripYear: year }))];
   const tripFinancials = {};
   const tripPending = {};
   const tripDebtors = {};
@@ -386,7 +392,7 @@ export function createSecretarySnapshot(
       const tripSales = filterRecordsByTrip(sales, scope, tripOptions);
       const tripExpenses = filterRecordsByTrip(expenses, scope, tripOptions);
       tripFinancials[scope.id] = calculateTripFinancialSummary(
-        tripSales, tripExpenses, products, filterPayablesByTrip(enrichedPayables, scope)
+        tripSales, tripExpenses, products, filterRecordsByTrip(enrichedPayables, scope, tripOptions)
       );
       const open = tripSales.filter((sale) => getSalePendingAmount(sale) > 0);
       tripPending[scope.id] = {
@@ -684,11 +690,12 @@ export function answerSecretaryQuery(
   const asksPayables = asksPayableBalance || asksWhoToPay || asksPayableOverdue || asksChecksDue;
 
   if (asksPayables) {
-    const filteredPayables = filterPayablesByTrip(
+    const filteredPayables = filterRecordsByTrip(
       snapshot.payables || [],
       allTrips || selectedTripContext === "all"
         ? "all"
-        : tripScope || "all"
+        : tripScope || "all",
+      snapshot.tripOptions
     );
     const summary = summarizePayables(filteredPayables, snapshot.today);
     const tripLabel = tripNumber

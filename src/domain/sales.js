@@ -1,9 +1,52 @@
-import { toDate } from "../utils/dates.js";
+import { toDate, toDateInputValue } from "../utils/dates.js";
 import { isPersonalWithdrawal } from "./expenses.js";
 import { getRecordTripId, getTripOptionLabel } from "./tripIdentity.js";
+import { saleDateInput, getSaleDate, getSaleDateInput, getSaleTrip, resolveSaleCalendar } from "./saleTrip.js";
 
 function money(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
+}
+
+export function createSaleEditForm(sale) {
+  return {
+    clientId: sale.clientId || "",
+    paymentMethod: sale.paymentMethod || "prazo",
+    amountPaid: String(sale.amountPaid || 0),
+    saleDate: getSaleDateInput(sale),
+    dueDate: toDateInputValue(
+      sale.dueDate || sale.paymentDueDate || sale.collectionDate || sale.dataCobranca || ""
+    ),
+    tripName: sale.tripName || "",
+    tripId: getRecordTripId(sale),
+    tripCity: sale.tripCity || "",
+    items: (sale.items || []).map((item) => ({
+      productId: item.productId || "",
+      quantity: Number(item.quantity ?? 1),
+      price: String(item.unitPrice ?? item.price ?? 0),
+    })),
+  };
+}
+
+export function buildSaleDateUpdate(stored, form) {
+  const date = saleDateInput(form.saleDate);
+  if (!date) throw new Error("Informe uma data da venda válida.");
+  const original = createSaleEditForm(stored);
+  const items = original.items.length === 0 &&
+    form.items.every((item) => !item.productId && !Number(item.price))
+    ? [] : form.items;
+  if (["clientId", "paymentMethod", "dueDate"].some((key) => original[key] !== form[key]) ||
+    original.items.length !== items.length ||
+    original.items.some((item, index) => {
+      const edited = items[index];
+      return item.productId !== edited.productId ||
+        item.quantity !== Number(edited.quantity) || Number(item.price) !== Number(edited.price);
+    })) return null;
+
+  // A calendar/city correction must not reconcile legacy debt or rewrite purchase amounts/items.
+  return {
+    ...(original.saleDate !== date ? { saleDate: new Date(`${date}T12:00:00-03:00`) } : {}),
+    ...(original.tripCity.trim() !== form.tripCity.trim() ? { tripCity: form.tripCity.trim() } : {}),
+  };
 }
 
 export function escapeReceiptText(value) {
@@ -187,9 +230,6 @@ export function summarizeTrips(sales = []) {
 }
 
 export function organizeSalesByTrip2026(sales = []) {
-  const thirdStart = new Date(2026, 6, 1);
-  const fourthStart = new Date(2026, 9, 1);
-  const fifthStart = new Date(2027, 0, 1);
   const candidates = { 3: [], 4: [] };
   const review = [];
   const amount = (value) => {
@@ -201,29 +241,18 @@ export function organizeSalesByTrip2026(sales = []) {
   };
 
   for (const sale of sales) {
-    const saleDate = toDate(sale.saleDate);
-    const createdAt = saleDate ? null : toDate(sale.createdAt);
-    const originalSaleDate = saleDate || createdAt;
+    const calendar = resolveSaleCalendar(sale);
+    const originalSaleDate = getSaleDate(sale);
     let tripNumber = null;
     let reason;
 
     if (!originalSaleDate) {
-      reason = sale.saleDate
-        ? "A data original da venda é inválida."
-        : "A venda não tem data original nem data de criação confiável.";
+      reason = "A venda não tem data comercial válida recuperável.";
     } else {
-      const saleDay = new Date(
-        originalSaleDate.getFullYear(),
-        originalSaleDate.getMonth(),
-        originalSaleDate.getDate()
-      );
-
-      if (saleDay < thirdStart) {
-        reason = "A venda é anterior a julho de 2026; a 1ª e 2ª viagens ainda precisam de definição.";
-      } else if (saleDay >= fifthStart) {
-        reason = "A data está fora dos períodos definidos para a 3ª e 4ª viagens.";
+      if (calendar.trip.tripYear !== 2026 || calendar.trip.tripNumber < 3) {
+        reason = "A venda pertence a outra viagem/ano, fora deste resumo legado de 2026.";
       } else {
-        tripNumber = saleDay >= fourthStart ? 4 : 3;
+        tripNumber = calendar.trip.tripNumber;
       }
     }
 
@@ -233,7 +262,7 @@ export function organizeSalesByTrip2026(sales = []) {
     const entry = {
       ...sale,
       originalSaleDate,
-      dateSource: saleDate ? "saleDate" : createdAt ? "createdAt" : null,
+      dateSource: calendar.source,
       total,
       amountPaid: received,
       pendingAmount: pending,
@@ -277,7 +306,7 @@ export function organizeSalesByTrip2026(sales = []) {
 }
 
 export function selectSalesForTrip(organization, trip = "all") {
-  if (trip === "unassigned") return [];
+  if (trip === "unassigned") return (organization?.allSales || []).filter((sale) => !getSaleTrip(sale));
   if (trip === "third" || String(trip) === "3") {
     return organization?.thirdTrip?.sales || [];
   }
@@ -287,7 +316,7 @@ export function selectSalesForTrip(organization, trip = "all") {
   if (trip === "review") return organization?.review?.sales || [];
   if (["1", "2"].includes(String(trip))) {
     return (organization?.allSales || []).filter(
-      (sale) => String(sale.tripNumber || "") === String(trip)
+      (sale) => getSaleTrip(sale)?.tripNumber === Number(trip)
     );
   }
   return organization?.allSales || [];
@@ -530,10 +559,7 @@ export function formatItemLabel(item = {}) {
 }
 
 export function prepareSaleReceipt(sale, now = new Date()) {
-  const saleDate =
-    toDate(sale.saleDate) ||
-    toDate(sale.createdAt) ||
-    now;
+  const saleDate = getSaleDate(sale);
 
   let dueDate =
     sale.dueDate ||
@@ -543,7 +569,7 @@ export function prepareSaleReceipt(sale, now = new Date()) {
     null;
 
   if (
-    !dueDate &&
+    saleDate && !dueDate &&
     sale.balanceModel !== "per-sale" &&
     sale.paymentMethod === "prazo"
   ) {
@@ -559,7 +585,7 @@ export function prepareSaleReceipt(sale, now = new Date()) {
     items: Array.isArray(sale.items)
       ? sale.items.map((item) => ({ ...item, name: formatItemLabel(item) }))
       : sale.items,
-    saleDate,
+    saleDate: getSaleDateInput(sale) || null,
     dueDate,
     receiptNumber:
       savedReceiptNumber && !/^0+$/.test(savedReceiptNumber)

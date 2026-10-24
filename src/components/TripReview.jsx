@@ -1,15 +1,24 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   buildNewTrip, buildTripReview, getTripOptionLabel,
 } from "../domain/tripIdentity.js";
 import { buildTripReviewPlan } from "../domain/tripReviewPlan.js";
+import { correctExpenseTrip } from "../services/expenses.js";
+import { db } from "../firebase/config.js";
+import { isFirestoreReadOnly } from "../firebase/writePolicy.js";
+import FinancialValue from "./FinancialValue.jsx";
+import { useFinancialPrivacy } from "../context/financialPrivacy.js";
+import "./TripPeriodFilter.css";
 
 export default function TripReview({ userId, trips, sales, payables, expenses }) {
+  const { hidden } = useFinancialPrivacy();
   const [recordKey, setRecordKey] = useState("");
   const [tripNumber, setTripNumber] = useState("1");
   const [tripYear, setTripYear] = useState("");
   const [destinationId, setDestinationId] = useState("");
   const [exportMessage, setExportMessage] = useState("");
+  const [saving, setSaving] = useState(false);
+  const lock = useRef(false);
   const rows = buildTripReview({ trips, sales, payables, expenses });
   const selected = rows.find((row) => `${row.collection}/${row.recordId}` === recordKey);
   const validDestination = /^[1-4]$/.test(tripNumber) &&
@@ -19,6 +28,29 @@ export default function TripReview({ userId, trips, sales, payables, expenses })
     getTripOptionLabel(trip) === destination.name
   ) : [];
   const target = candidates.find((trip) => trip.id === destinationId);
+  const expense = expenses.find((entry) => selected?.collection === "expenses" && entry.id === selected.recordId);
+  const reviewExpenses = expenses.filter((entry) => rows.some((row) =>
+    row.collection === "expenses" && row.recordId === entry.id));
+  const currency = (value) => Number(value || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+  async function applyCorrection() {
+    if (lock.current || !expense || !target) return;
+    if (!window.confirm(`Corrigir somente a viagem de ${expense.category || "despesa"} (${hidden ? "valor oculto" : currency(expense.value)}) para ${destination.name}, cadastro ${target.id}? O lançamento será preservado, com backup e histórico dos vínculos.`)) return;
+    lock.current = true;
+    setSaving(true);
+    setExportMessage("");
+    try {
+      await correctExpenseTrip({ db, userId, expected: expense, destination: target });
+      setExportMessage("Vínculo corrigido. Valores preservados; backup e histórico salvos no lançamento. Os resumos serão atualizados pela leitura do Firebase.");
+      setRecordKey("");
+    } catch (error) {
+      console.error("Erro ao corrigir vínculo de viagem:", error);
+      setExportMessage(`Não foi possível corrigir: ${error.message}`);
+    } finally {
+      lock.current = false;
+      setSaving(false);
+    }
+  }
 
   function exportReview(includeSelection) {
     try {
@@ -43,13 +75,19 @@ export default function TripReview({ userId, trips, sales, payables, expenses })
   }
 
   return (
-    <details className="fin-notice">
-      <summary>Revisar vínculos antigos de viagem ({rows.length} registros)</summary>
+    <details className="fin-notice trip-review">
+      <summary>Revisão de viagens ({rows.length} registros)</summary>
       <p>
-        Referências diferentes não são unificadas pelo nome. Esta prévia não grava,
-        não migra e não altera totais. Qualquer reparação futura exige backup,
-        confirmação do dono e trilha de auditoria.
+        Referências diferentes não são unificadas pelo nome. Nenhum ano é inferido
+        pela data da despesa. A correção individual exige confirmação e preserva
+        os valores, com backup dos campos e trilha de auditoria no lançamento.
       </p>
+      <p>Despesas para revisão: {reviewExpenses.length} · total <FinancialValue>{currency(reviewExpenses.reduce((sum, entry) => sum + Number(entry.value || 0), 0))}</FinancialValue>.
+        {" "}Consulte os lançamentos abaixo antes de escolher o destino. Sem evidência do ano, confirme com o responsável.</p>
+      {reviewExpenses.map((entry) => <p key={entry.id}>
+        {entry.category || "Despesa"} · {entry.description || entry.city || "Sem descrição"} · {entry.id}:
+        {" "}<FinancialValue>{currency(entry.value)}</FinancialValue> · vínculo {entry.tripId || entry.tripName || "ausente"}
+      </p>)}
       <button type="button" className="payables-secondary-button" disabled={!userId} onClick={() => exportReview(false)}>
         Exportar diagnóstico e backup dos vínculos
       </button>
@@ -100,6 +138,8 @@ export default function TripReview({ userId, trips, sales, payables, expenses })
               {" "}Nenhuma alteração foi aplicada.
             </p>
           )}
+          {expense && <p>Lançamento selecionado: {expense.category || "Despesa"} · {expense.id} · <FinancialValue>{currency(expense.value)}</FinancialValue>.
+            {" "}Somente este lançamento será corrigido; demais despesas da referência continuam acessíveis.</p>}
           {candidates.length > 0 && selected.collection !== "trips" && (
             <label>
               Cadastro de destino (confirme o ID)
@@ -112,13 +152,17 @@ export default function TripReview({ userId, trips, sales, payables, expenses })
               </select>
             </label>
           )}
-          {selected.collection === "trips" ? (
-            <p>O cadastro original não será alterado ou unido a outro. Revise os registros vinculados individualmente.</p>
+          {selected.collection === "trips" || selected.collection === "sales" ? (
+            <p>O cadastro original não será alterado ou unido a outro. Vendas exigem revisão da data comercial em Vendas, não seleção manual de viagem.</p>
           ) : (
             <>
               <button type="button" className="payables-secondary-button" disabled={!userId || !target}
                 onClick={() => exportReview(true)}>Exportar simulação da associação</button>
-              <p>A associação ainda não será aplicada. Para uma venda, use “Editar” em Vendas e escolha explicitamente a viagem; a referência só muda após salvar.</p>
+              {expense ? <>
+                <button type="button" className="payables-secondary-button" disabled={!userId || !target || saving || isFirestoreReadOnly()}
+                  onClick={applyCorrection}>{saving ? "Corrigindo..." : "Corrigir viagem"}</button>
+                {isFirestoreReadOnly() && <p>Somente leitura: confira o destino e exporte a simulação. Aplicar a correção está bloqueado nesta prévia.</p>}
+              </> : <p>Compras de fornecedores devem ser corrigidas no formulário próprio, que mantém o histórico financeiro existente.</p>}
             </>
           )}
         </div>

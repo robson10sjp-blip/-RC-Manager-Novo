@@ -4,8 +4,12 @@ import { collection, doc, onSnapshot } from "firebase/firestore";
 import { LuReceipt, LuWallet } from "react-icons/lu";
 import PageHeader from "../components/PageHeader.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
+import TripSelector from "../components/TripSelector.jsx";
+import TripReview from "../components/TripReview.jsx";
+import TripPeriodFilter from "../components/TripPeriodFilter.jsx";
+import useTripScope from "../hooks/useTripScope.js";
 import useClientTrips from "../hooks/useClientTrips.js";
-import { buildTripOptions, getRecordTripId, getTripOptionLabel, getTripSelectionLabel } from "../domain/tripIdentity.js";
+import { buildTripOptions, filterRecordsByTrip, getRecordTripId, getTripOptionLabel } from "../domain/tripIdentity.js";
 import { auth, db } from "../firebase/config.js";
 import { isFirestoreReadOnly } from "../firebase/writePolicy.js";
 import { MAX_MONEY } from "../domain/adminOperations.js";
@@ -72,6 +76,9 @@ export default function ExpensesPage() {
   const [userId, setUserId] = useState("");
   const { trips } = useClientTrips(userId);
   const tripOptions = useMemo(() => buildTripOptions({ trips, expenses }), [trips, expenses]);
+  const tripScope = useTripScope("expenses", tripOptions);
+  const scopedExpenses = useMemo(() => filterRecordsByTrip(expenses, tripScope.selection, tripScope.filterOptions),
+    [expenses, tripScope.selection, tripScope.filterOptions]);
   const [form, setForm] = useState(() => createEmptyForm(
     window.localStorage.getItem(PAYMENT_METHOD_STORAGE_KEY) || ""
   ));
@@ -126,17 +133,16 @@ export default function ExpensesPage() {
   }, []);
 
   const recentExpenses = useMemo(
-    () => [...expenses]
+    () => [...scopedExpenses]
       .sort((first, second) =>
         (expenseDate(second)?.getTime() || 0) -
         (expenseDate(first)?.getTime() || 0)
-      )
-      .slice(0, 20),
-    [expenses]
+      ),
+    [scopedExpenses]
   );
   const todaySummary = useMemo(
-    () => summarizeDailyExpenses(expenses),
-    [expenses]
+    () => summarizeDailyExpenses(scopedExpenses),
+    [scopedExpenses]
   );
 
   function setField(field, value) {
@@ -317,6 +323,8 @@ export default function ExpensesPage() {
         title="Despesas"
         description="Lançamentos rápidos vinculados ao Financeiro e aos relatórios da RC."
       />
+      <TripPeriodFilter scope={tripScope} label="Despesas e retiradas" />
+      <p>{scopedExpenses.length} lançamentos no período · total <FinancialValue>{formatCurrency(scopedExpenses.reduce((sum, entry) => sum + Number(entry.value || 0), 0))}</FinancialValue>. Resumo abaixo: saídas de hoje dentro desse período.</p>
 
       {isFirestoreReadOnly() && (
         <div className="expenses-readonly" role="status">
@@ -440,20 +448,9 @@ export default function ExpensesPage() {
                   disabled={saving || isFirestoreReadOnly()}
                 />
               </label>
-              <label className="expenses-field">
-                <span>Viagem</span>
-                <select
-                  aria-label="Viagem"
-                  value={form.tripId}
-                  onChange={(event) => setField("tripId", event.target.value)}
-                  disabled={saving || isFirestoreReadOnly()}
-                >
-                  <option value="">Sem viagem definida</option>
-                  {tripOptions.map((trip) => (
-                    <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, tripOptions)}</option>
-                  ))}
-                </select>
-              </label>
+              <TripSelector userId={userId} options={tripOptions} value={form.tripId}
+                disabled={saving || isFirestoreReadOnly()}
+                onChange={(trip) => setField("tripId", trip.id)} />
             </div>
           </details>
 
@@ -533,6 +530,9 @@ export default function ExpensesPage() {
           )}
         </section>
       </div>
+      <section className="expenses-trip-review" aria-label="Revisão de viagens">
+        <TripReview userId={userId} trips={trips} sales={[]} payables={[]} expenses={expenses} />
+      </section>
     </div>
   );
 }

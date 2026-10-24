@@ -110,15 +110,15 @@ test("ID-less, missing-year and equal-name references stay distinct, without los
     { id: "trip-2027-4", tripNumber: 4, tripYear: 2027, name: "4ª viagem de 2027" },
   ];
   const sales = [
-    { id: "s1", tripId: "a", tripName: "4 viagem", total: 100, tripCity: "Tucumã" },
-    { id: "s2", tripId: "b", tripName: "4 viagem", total: 200, tripCity: "Xinguara" },
-    { id: "s3", tripId: "trip-2026-4", total: 300 },
-    { id: "s4", tripId: "trip-2027-4", total: 400 },
-    { id: "s5", tripName: "4 viagem", total: 500 },
-    { id: "s6", total: 600 },
+    { id: "s1", tripId: "a", tripName: "4 viagem", totalAmount: 100, tripCity: "Tucumã" },
+    { id: "s2", tripId: "b", tripName: "4 viagem", totalAmount: 200, tripCity: "Xinguara" },
+    { id: "s3", tripId: "trip-2026-4", totalAmount: 300 },
+    { id: "s4", tripId: "trip-2027-4", totalAmount: 400 },
+    { id: "s5", tripName: "4 viagem", totalAmount: 500 },
+    { id: "s6", totalAmount: 600 },
   ];
   const options = buildTripOptions({ trips, payables: sales });
-  assert.equal(filterRecordsByTrip(sales, "all", options).reduce((sum, sale) => sum + sale.total, 0), 2100);
+  assert.equal(filterRecordsByTrip(sales, "all", options).reduce((sum, sale) => sum + sale.totalAmount, 0), 2100);
   assert.deepEqual(filterRecordsByTrip(sales, "trip-2026-4", options).map((sale) => sale.id), ["s3"]);
   assert.deepEqual(filterRecordsByTrip(sales, "unassigned", options).map((sale) => sale.id), ["s6"]);
   assert.deepEqual(filterRecordsByTrip(sales, "a", options)

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getSaleTrip, getSaleYearTrips, saleDateInput } from "./saleTrip.js";
+import { getSaleTrip, getSaleYearTrips, saleDateInput, resolveSaleCalendar, getSaleDateInput, getSaleDate } from "./saleTrip.js";
 import {
   buildTripOptions, filterRecordsByTrip, getRecordTripId, getSaleTripEditFields,
   getTripOptionLabel, tripMatchesRecord,
@@ -57,7 +57,7 @@ test("boundary instants use America/Belem, independent of device timezone and ti
 
 test("invalid or missing original sale dates never fall back to payment, due, creation or stored travel", () => {
   for (const value of [undefined, null, "", "bad", "2026-02-30", "2026-04-31",
-    "2026-13-01", "2026-10-01T00:00:00", "2026-02-30T03:00:00Z",
+    "2026-13-01", "2026-10-01T24:00:00", "2026-02-30T03:00:00Z",
     { timestampValue: "2026-02-30T03:00:00Z" }, true, 0]) {
     const sale = {
       clientId: "c", total: 100, saleDate: value, tripId: "old", tripYear: 2026,
@@ -72,6 +72,66 @@ test("invalid or missing original sale dates never fall back to payment, due, cr
   assert.equal(saleDateInput("31/03/2026"), "2026-03-31");
   assert.equal(saleDateInput("30.06.2026"), "2026-06-30");
   assert.equal(saleDateInput("29/02/2026"), "");
+});
+
+test("the original stored schema recovers its commercial createdAt date, including empty saleDate", () => {
+  for (const year of [2026, 2027]) {
+    for (let month = 1; month <= 12; month++) {
+      const date = `${year}-${String(month).padStart(2, "0")}-15`;
+      const instant = new Date(`${date}T15:00:00Z`);
+      for (const value of [
+        instant, { toDate: () => instant }, { seconds: instant.getTime() / 1000 },
+        { _seconds: instant.getTime() / 1000 }, { timestampValue: instant.toISOString() },
+      ]) {
+        const sale = {
+          clientId: "legacy", items: [{ productId: "p", quantity: 1, unitPrice: 100 }],
+          total: 100, amountPaid: 20, pendingAmount: 80, paymentMethod: "prazo",
+          createdAt: value, updatedAt: "2028-10-23", dueDate: "2028-12-01",
+          tripNumber: 4, tripYear: 2025,
+        };
+        for (const saleDate of [undefined, null, "", " "]) {
+          const record = { ...sale, saleDate };
+          assert.equal(resolveSaleCalendar(record).source, "createdAt");
+          assert.equal(getSaleDateInput(record), date);
+          assert.equal(getSaleDate(record).getDate(), 15);
+          assert.equal(getSaleTrip(record).id, `trip-${year}-${Math.floor((month - 1) / 3) + 1}`);
+        }
+        assert.equal(getSaleTrip({ ...sale, saleDate: "23/10/2026" }).id, "trip-2026-4");
+        assert.equal(getSaleTrip({ ...sale, saleDate: "invalid" }), null);
+        assert.equal(getSaleTrip({ ...sale, balanceModel: "per-sale" }), null);
+        assert.equal(getSaleTrip({ ...sale, items: [] }), null);
+      }
+    }
+  }
+});
+
+test("legacy date provenance does not depend on mutable balances or payment method", () => {
+  const legacy = {
+    clientId: "legacy", items: [{ productId: "p", quantity: 1 }], total: 100,
+    createdAt: { seconds: Date.parse("2026-08-15T15:00:00Z") / 1000 },
+  };
+  for (const fields of [
+    {}, { amountPaid: "20", pendingAmount: "80", paymentMethod: "dinheiro" },
+    { amountPaid: null, pendingAmount: null, paymentMethod: "pix" },
+  ]) {
+    const sale = { ...legacy, ...fields, saleDate: " " };
+    assert.equal(getSaleDateInput(sale), "2026-08-15");
+    assert.equal(getSaleTrip(sale).id, "trip-2026-3");
+    assert.equal(getSaleTrip({ ...sale, balanceModel: "per-sale" }), null);
+    assert.equal(getSaleTrip({ ...sale, saleDate: "invalid" }), null);
+  }
+  assert.equal(getSaleTrip({ createdAt: legacy.createdAt }), null);
+});
+
+test("civil datetime strings preserve their written calendar day without the device timezone", () => {
+  for (const date of ["2026-03-31", "2026-04-01", "2026-09-30", "2026-10-01", "2026-12-31", "2027-01-01"]) {
+    for (const suffix of ["T00:00:00", " 23:59:59", "T12:30", "T23:59:59.123456789"]) {
+      assert.equal(getSaleDateInput({ saleDate: date + suffix }), date);
+    }
+  }
+  for (const value of ["2026-02-30T12:00:00", "2026-10-01T00:60:00", "2026-10-01T00:00:60", {}]) {
+    assert.equal(saleDateInput(value), "");
+  }
 });
 
 test("sales filters replace duplicate historical options without changing any stored data or totals", () => {
@@ -121,4 +181,24 @@ test("expenses and supplier purchases retain their own IDs, never their dates' q
   assert.equal(tripMatchesRecord(expense, options[1]), true);
   assert.equal(getRecordTripId(payable), "supplier-trip");
   assert.equal(getRecordTripId(expense), "expense-trip");
+});
+
+test("financial trip options merge canonical and old aliases once, independent of their order", () => {
+  const trips = [
+    { id: "old-a", name: "3ª viagem de 2026", tripNumber: 3, tripYear: 2026 },
+    { id: "trip-2026-3", name: "3ª viagem de 2026", tripNumber: 3, tripYear: 2026 },
+    { id: "old-b", name: "3ª viagem de 2026", tripNumber: 3, tripYear: 2026 },
+  ];
+  const expenses = trips.map((trip) => ({ id: `expense-${trip.id}`, tripId: trip.id, value: 10 }));
+  const sales = [{ id: "sale", clientId: "c", saleDate: "15/08/2026", tripId: "old-b", total: 100 }];
+  const before = JSON.stringify({ trips, expenses, sales });
+  for (const ordered of [trips, [...trips].reverse(), [trips[1], trips[0], trips[2]]]) {
+    const options = buildTripOptions({ trips: ordered, expenses, sales, report: true });
+    assert.equal(options.length, 1);
+    assert.equal(options[0].name, "3ª viagem de 2026");
+    assert.deepEqual(new Set(options[0].linkedTripIds), new Set(trips.map((trip) => trip.id)));
+    assert.deepEqual(filterRecordsByTrip(expenses, options[0], options), expenses);
+    assert.deepEqual(filterRecordsByTrip(sales, options[0], options), sales);
+  }
+  assert.equal(JSON.stringify({ trips, expenses, sales }), before);
 });

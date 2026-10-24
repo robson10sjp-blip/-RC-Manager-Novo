@@ -8,6 +8,8 @@ import {
   calculateConsolidatedReceivables,
   calculateTripFinancialSummary,
   calculateSaleAmounts,
+  createSaleEditForm,
+  buildSaleDateUpdate,
   escapeReceiptText,
   isSaleOverdue,
   organizeSalesByTrip2026,
@@ -18,6 +20,64 @@ import {
   updateStockAfterSale,
   updateStockAfterSaleEdit,
 } from "./sales.js";
+import { getSaleTrip, saleDateInput } from "./saleTrip.js";
+
+test("editing only a legacy sale calendar preserves all commercial data and needs no trip selection", () => {
+  const stored = {
+    id: "old-sale", clientId: "c", saleDate: { seconds: Date.parse("2026-08-15T15:00:00Z") / 1000 },
+    tripId: "wrong-fourth-trip", tripName: "4 viagem", tripCity: "Tucumã",
+    total: 99, amountPaid: 20, pendingAmount: 79, status: "partial",
+    items: [{ productId: "p", quantity: 2, price: 49.5, historicalField: "keep" }],
+    payments: [{ id: "payment", saleId: "old-sale", date: "2027-01-05", amount: 20 }],
+  };
+  const before = structuredClone(stored);
+  const form = createSaleEditForm(stored);
+  assert.equal(form.saleDate, "2026-08-15");
+  assert.equal(form.items[0].price, "49.5");
+  assert.equal(form.tripId, "trip-2026-3");
+  assert.deepEqual(buildSaleDateUpdate(stored, form), {});
+  for (const year of [2026, 2027]) {
+    for (let month = 1; month <= 12; month++) {
+      const saleDate = `${year}-${String(month).padStart(2, "0")}-15`;
+      const update = buildSaleDateUpdate(stored, { ...form, saleDate });
+      const edited = { ...stored, ...update };
+      assert.equal(saleDateInput(edited.saleDate), saleDate);
+      assert.equal(getSaleTrip(edited).id, `trip-${year}-${Math.floor((month - 1) / 3) + 1}`);
+      assert.ok(Object.keys(update).every((key) => key === "saleDate"));
+      for (const key of ["id", "clientId", "items", "payments", "total", "amountPaid",
+        "pendingAmount", "status", "tripId", "tripName"]) {
+        assert.deepEqual(edited[key], stored[key], key);
+      }
+    }
+  }
+  assert.deepEqual(stored, before);
+});
+
+test("calendar-only updates preserve exact timestamps and reject invalid dates or broader edits", () => {
+  for (const saleDate of ["15/08/2026", "2026-08-15", "2026-08-15T15:00:00Z",
+    { _seconds: Date.parse("2026-08-15T15:00:00Z") / 1000 },
+    { timestampValue: "2026-08-15T15:00:00Z" }]) {
+    const stored = { saleDate, clientId: "c", tripCity: "", items: [{ productId: "p", quantity: 1, unitPrice: 50 }] };
+    const form = createSaleEditForm(stored);
+    assert.deepEqual(buildSaleDateUpdate(stored, form), {});
+    assert.deepEqual(buildSaleDateUpdate(stored, { ...form, tripCity: " Tucumã " }), { tripCity: "Tucumã" });
+    for (const changes of [
+      { clientId: "other" }, { paymentMethod: "avista" }, { dueDate: "2027-01-01" },
+      { items: [{ ...form.items[0], quantity: 2 }] },
+      { items: [{ ...form.items[0], price: "51" }] },
+    ]) {
+      assert.equal(buildSaleDateUpdate(stored, { ...form, ...changes }), null);
+    }
+    assert.throws(() => buildSaleDateUpdate(stored, { ...form, saleDate: "2026-02-30" }), /válida/);
+  }
+  const undated = { clientId: "c", createdAt: "2026-08-15", tripId: "old", items: [] };
+  const form = createSaleEditForm(undated);
+  assert.equal(form.saleDate, "");
+  assert.equal(form.tripId, "");
+  assert.throws(() => buildSaleDateUpdate(undated, form), /válida/);
+  assert.equal(getSaleTrip({ ...undated, ...buildSaleDateUpdate(undated, { ...form, saleDate: "2027-01-10" }) }).id,
+    "trip-2027-1");
+});
 
 test("calculates totals and a partial balance for a new purchase", () => {
   assert.deepEqual(
@@ -123,20 +183,23 @@ test("prepares new and legacy receipts without changing stored records", () => {
   );
 
   assert.equal(newReceipt.receiptNumber, "123456");
-  assert.equal(newReceipt.saleDate.getDate(), 1);
+  assert.equal(newReceipt.saleDate, "2026-10-01");
   assert.equal(newReceipt.dueDate, "2026-11-01");
   assert.equal(newReceipt.tripCity, "Campinas");
 
   const legacyReceipt = prepareSaleReceipt(
     {
       id: "old-sale",
+      clientId: "legacy", items: [{ productId: "p", quantity: 1, unitPrice: 100 }],
+      total: 100, amountPaid: 0, pendingAmount: 100,
       paymentMethod: "prazo",
-      createdAt: { toDate: () => new Date(2026, 0, 1, 12) },
+      createdAt: { toDate: () => new Date("2026-01-01T15:00:00Z") },
     },
     now
   );
 
-  assert.equal(legacyReceipt.saleDate.getMonth(), 0);
+  assert.equal(legacyReceipt.saleDate, "2026-01-01");
+  assert.equal(getSaleTrip(legacyReceipt).id, "trip-2026-1");
   assert.equal(legacyReceipt.dueDate.getDate(), 1);
   assert.equal(legacyReceipt.dueDate.getMonth(), 3);
 });
@@ -176,14 +239,14 @@ test("updates stock for sales and edits without allowing negative inventory", ()
 test("groups sales totals by trip and city", () => {
   assert.deepEqual(
     summarizeTrips([
-      { tripName: "Outubro", tripCity: "Campinas", total: 100, amountPaid: 40, pendingAmount: 60 },
-      { tripName: "outubro", tripCity: "campinas", total: 50, amountPaid: 10, pendingAmount: 40 },
-      { tripName: "Novembro", tripCity: "Santos", total: 80, amountPaid: 80, pendingAmount: 0 },
+      { saleDate: "2026-10-01", tripName: "Outubro", tripCity: "Campinas", total: 100, amountPaid: 40, pendingAmount: 60 },
+      { saleDate: "2026-10-23", tripName: "outubro", tripCity: "campinas", total: 50, amountPaid: 10, pendingAmount: 40 },
+      { saleDate: "2026-11-01", tripName: "Novembro", tripCity: "Santos", total: 80, amountPaid: 80, pendingAmount: 0 },
       { total: 999, amountPaid: 999, pendingAmount: 0 },
     ]),
     [
       {
-        name: "Outubro",
+        name: "4ª viagem de 2026",
         city: "Campinas",
         salesCount: 2,
         sold: 150,
@@ -191,7 +254,7 @@ test("groups sales totals by trip and city", () => {
         pending: 100,
       },
       {
-        name: "Novembro",
+        name: "4ª viagem de 2026",
         city: "Santos",
         salesCount: 1,
         sold: 80,
@@ -202,16 +265,16 @@ test("groups sales totals by trip and city", () => {
   );
 });
 
-test("trip report keeps distinct IDs with equal names and separates years", () => {
+test("sale trip reports ignore stale trip IDs and keep distinct commercial years", () => {
   const report = summarizeTrips([
-    { tripId: "a", tripName: "4 viagem", tripCity: "Tucumã", total: 100 },
-    { tripId: "b", tripName: "4 viagem", tripCity: "Tucumã", total: 200 },
-    { tripId: "year-26", tripName: "4 viagem/2026", tripCity: "Tucumã", total: 300 },
-    { tripId: "year-27", tripName: "4 viagem/2027", tripCity: "Tucumã", total: 400 },
+    { saleDate: "2026-10-01", tripId: "a", tripName: "4 viagem", tripCity: "Tucumã", total: 100 },
+    { saleDate: "2026-10-02", tripId: "b", tripName: "4 viagem", tripCity: "Tucumã", total: 200 },
+    { saleDate: "2026-10-03", tripId: "year-26", tripName: "4 viagem/2026", tripCity: "Tucumã", total: 300 },
+    { saleDate: "2027-10-01", tripId: "year-27", tripName: "4 viagem/2027", tripCity: "Tucumã", total: 400 },
   ]);
-  assert.equal(report.length, 4);
+  assert.equal(report.length, 2);
   assert.equal(report.reduce((sum, trip) => sum + trip.sold, 0), 1000);
-  assert.equal(report[0].name, "4ª viagem de 2027");
+  assert.equal(report[0].name, "4ª viagem de 2026");
 });
 
 test("proposes 2026 trip candidates from original sale dates and separates conflicts", () => {
@@ -247,7 +310,7 @@ test("proposes 2026 trip candidates from original sale dates and separates confl
   );
   assert.equal(result.fourthTrip.sales[1].tripNumber, 4);
   assert.equal(result.fourthTrip.sales[2].tripNumber, 4);
-  assert.equal(result.review.sales[1].reviewReason, "A venda não tem data original nem data de criação confiável.");
+  assert.equal(result.review.sales[1].reviewReason, "A venda não tem data comercial válida recuperável.");
 });
 
 test("selects proposed trip sales without persisting classification", () => {
@@ -265,7 +328,7 @@ test("selects proposed trip sales without persisting classification", () => {
   assert.deepEqual(sales.map(({ tripNumber }) => tripNumber), [undefined, undefined, undefined]);
 });
 
-test("selects first and second trip sales only from explicit trip links", () => {
+test("legacy report selectors use date quarters instead of stale trip links", () => {
   const sales = [
     { id: "first", tripNumber: 1, saleDate: "2026-04-10" },
     { id: "second", tripNumber: "2", saleDate: "2026-05-10" },
@@ -275,11 +338,11 @@ test("selects first and second trip sales only from explicit trip links", () => 
 
   assert.deepEqual(
     selectSalesForTrip(organization, "1").map(({ id }) => id),
-    ["first"]
+    []
   );
   assert.deepEqual(
     selectSalesForTrip(organization, "2").map(({ id }) => id),
-    ["second"]
+    ["first", "second", "unassigned"]
   );
   assert.deepEqual(selectSalesForTrip(organization, "unassigned"), []);
 });
@@ -488,7 +551,7 @@ test("reads different Firestore-compatible sale date formats and honors trip bou
     [
       {
         id: "timestamp-third",
-        saleDate: { toDate: () => new Date(2026, 6, 1, 12) },
+        saleDate: { toDate: () => new Date("2026-07-01T15:00:00Z") },
         tripName: "3ª viagem",
         total: 100,
         amountPaid: 0,
@@ -520,13 +583,15 @@ test("reads different Firestore-compatible sale date formats and honors trip bou
       },
       {
         id: "outside-after-year",
-        saleDate: new Date(2027, 0, 1, 12),
+        saleDate: new Date("2027-01-01T15:00:00Z"),
         total: 100,
         amountPaid: 0,
         pendingAmount: 100,
       },
       {
         id: "created-at-fallback",
+        clientId: "legacy", items: [{ productId: "p", quantity: 1, unitPrice: 100 }],
+        paymentMethod: "prazo",
         createdAt: { seconds: Date.UTC(2026, 7, 1, 12) / 1000 },
         updatedAt: new Date(2026, 9, 1, 12),
         dueDate: new Date(2026, 9, 1, 12),

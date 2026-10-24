@@ -1,5 +1,6 @@
 import "./AdminOperationCard.css";
-import { buildTripOptions, getTripSelectionLabel } from "../domain/tripIdentity.js";
+import { buildTripOptions } from "../domain/tripIdentity.js";
+import TripSelector from "./TripSelector.jsx";
 
 const STATUS_LABELS = {
   collecting: "Aguardando informações",
@@ -74,11 +75,8 @@ export default function AdminOperationCard({
 
       {draft.status === "collecting" && draft.pending === "tripNumber" && (
         <div className="admin-card-trips">
-          {tripOptions.map((trip) => (
-            <button key={trip.id} type="button" disabled={loadingTrips} onClick={() => onChooseTrip(trip)}>
-              {getTripSelectionLabel(trip, tripOptions)}
-            </button>
-          ))}
+          <TripSelector options={tripOptions} value="" allowCreate={false}
+            disabled={loadingTrips} onChange={(trip) => onChooseTrip(trip.id ? trip : null)} />
           <button type="button" onClick={() => onChooseTrip(null)}>Sem viagem definida</button>
         </div>
       )}

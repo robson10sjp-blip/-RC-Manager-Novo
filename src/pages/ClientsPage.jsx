@@ -81,9 +81,12 @@ import { getSalePendingAmount } from "../domain/financeReceivables";
 import ReceiptViewer from "../components/receipts/ReceiptViewer.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
 import TripSelector from "../components/TripSelector.jsx";
+import TripPeriodFilter from "../components/TripPeriodFilter.jsx";
+import useTripScope, { useViewState } from "../hooks/useTripScope.js";
 import useClientTrips from "../hooks/useClientTrips.js";
-import { saleDateInput } from "../domain/saleTrip.js";
-import { buildTripOptions, getRecordTripId, getTripOptionLabel, getTripSelectionLabel } from "../domain/tripIdentity.js";
+import { getSaleDate } from "../domain/saleTrip.js";
+import { buildTripOptions, filterRecordsByTrip, getRecordTripId, getTripOptionLabel } from "../domain/tripIdentity.js";
+import { findClientTripVisit } from "../domain/clientRecords.js";
 import "./ClientsPremium.css";
 
 const emptyForm = {
@@ -130,10 +133,9 @@ export default function ClientsPage() {
   const giftOperationId = useRef(null);
   const [form, setForm] = useState(emptyForm);
   const [editingId, setEditingId] = useState(null);
-  const [searchText, setSearchText] = useState("");
-  const [cityFilter, setCityFilter] = useState("all");
+  const [searchText, setSearchText] = useViewState("clients:search", "");
+  const [cityFilter, setCityFilter] = useViewState("clients:city", "all");
   const [statusFilter, setStatusFilter] = useState("all");
-  const [tripFilter, setTripFilter] = useState("all");
   const [showForm, setShowForm] = useState(false);
   const [expandedId, setExpandedId] = useState(null);
   const [selectedReceiptSale, setSelectedReceiptSale] = useState(null);
@@ -339,8 +341,8 @@ export default function ClientsPage() {
 
     for (const purchases of byClient.values()) {
       purchases.sales.sort((first, second) => {
-        const firstDate = toDate(first.saleDate || first.createdAt)?.getTime() || 0;
-        const secondDate = toDate(second.saleDate || second.createdAt)?.getTime() || 0;
+        const firstDate = getSaleDate(first)?.getTime() || 0;
+        const secondDate = getSaleDate(second)?.getTime() || 0;
         return secondDate - firstDate;
       });
     }
@@ -377,6 +379,11 @@ export default function ClientsPage() {
     () => buildTripOptions({ sales, salesOnly: true }),
     [sales]
   );
+  const tripScope = useTripScope("clients", purchaseTrips);
+  const tripFilter = tripScope.selection;
+  const setTripFilter = tripScope.setSelection;
+  const scopedSales = useMemo(() => filterRecordsByTrip(sales, tripFilter, tripScope.filterOptions),
+    [sales, tripFilter, tripScope.filterOptions]);
 
   const clientRows = useMemo(() => {
     const tripsByClient = new Map();
@@ -388,7 +395,7 @@ export default function ClientsPage() {
         tripsByClient.set(sale.clientId, set);
       }
     };
-    addTrips(sales);
+    addTrips(scopedSales);
 
     const balances = new Map(
       receivables.clients.map((entry) => [entry.clientId, entry])
@@ -419,7 +426,7 @@ export default function ClientsPage() {
         trips: tripsByClient.get(client.id) || new Set(),
       };
     });
-  }, [clients, receivables, sales]);
+  }, [clients, receivables, scopedSales]);
 
   const cities = useMemo(
     () =>
@@ -453,7 +460,7 @@ export default function ClientsPage() {
         return false;
       }
       if (statusFilter !== "all" && status !== statusFilter) return false;
-      if (tripFilter !== "all" && !trips.has(tripFilter)) return false;
+      if (tripFilter !== "all" && trips.size === 0) return false;
       if (
         classificationFilter !== "all" &&
         classification !== classificationFilter
@@ -509,9 +516,9 @@ export default function ClientsPage() {
 
   const { rows: visitRows, counts: visitCounts } = useMemo(
     () => buildClientVisitSummary({
-      clients, city: visitCity, tripId: visitTripId, visitRecords, sales,
+      clients, city: visitCity, tripId: visitTripId, visitRecords, sales, tripOptions: knownTrips,
     }),
-    [clients, sales, visitCity, visitRecords, visitTripId]
+    [clients, sales, visitCity, visitRecords, visitTripId, knownTrips]
   );
 
   const visibleVisitRows = visitRows.filter(
@@ -621,6 +628,10 @@ export default function ClientsPage() {
     setSavingClientRecord(true);
     setVisitError("");
     try {
+      const existingVisit = findClientTripVisit({
+        client, city: client.city, tripId: visitTripId, tripName: visitTripName,
+        actionDate, visitRecords, tripOptions: knownTrips,
+      });
       await recordClientVisit({
         db,
         userId,
@@ -630,6 +641,7 @@ export default function ClientsPage() {
         tripId: visitTripId,
         tripName: visitTripName.trim(),
         status,
+        existingRecord: existingVisit && Object.hasOwn(existingVisit, "tripId") ? existingVisit : null,
       });
     } catch (error) {
       console.error("Erro ao atualizar visita:", error);
@@ -679,7 +691,8 @@ export default function ClientsPage() {
       giftRecords,
       giftTrip.name,
       giftTrip.city,
-      giftTrip.id
+      giftTrip.id,
+      knownTrips
     );
     const duplicateWarning = alreadyGifted
       ? "Esta cliente já recebeu um brinde nesta viagem. Deseja registrar outro mesmo assim?\n\n"
@@ -1486,20 +1499,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
             </select>
           </label>
 
-          <label>
-            Histórico de compras por viagem
-            <select
-              aria-label="Filtrar clientes por viagem"
-              value={tripFilter}
-              onChange={(event) => setTripFilter(event.target.value)}
-            >
-              <option value="all">Todas as viagens</option>
-              {purchaseTrips.map((trip) => (
-                <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, purchaseTrips)}</option>
-              ))}
-              <option value="unassigned">Sem viagem definida</option>
-            </select>
-          </label>
+          <TripPeriodFilter scope={tripScope} label="Compras das clientes" />
 
           <label>
             Classificação
@@ -1526,7 +1526,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
           {clientViewMode === "prego" ? `${pregoClassificationCount} cliente(s) Prego · ` : ""}
           {displayedRows.length} de {clients.length} cliente(s)
           {tripFilter !== "all" &&
-            " — viagem conforme classificação proposta das vendas"}
+            " — viagem pelo mês e ano da data da venda"}
         </p>
         {classificationError && (
           <p className="cl-record-error" role="alert">{classificationError}</p>
@@ -1543,7 +1543,13 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
           <div className="cl-list">
             {displayedRows.map((row) => {
               const { client } = row;
-              const purchases = salesByClient.get(client.id);
+              const allPurchases = salesByClient.get(client.id);
+              const filteredPurchases = filterRecordsByTrip(allPurchases?.sales || [], tripFilter, tripScope.filterOptions);
+              const purchases = allPurchases && {
+                count: filteredPurchases.length,
+                pending: filteredPurchases.reduce((sum, purchase) => sum + getSalePendingAmount(purchase), 0),
+                sales: filteredPurchases,
+              };
               const expanded = expandedId === client.id;
               const address = [client.street, client.number, client.district]
                 .filter(Boolean)
@@ -1555,6 +1561,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                 actionDate,
                 visitRecords,
                 sales,
+                tripOptions: knownTrips,
               });
               const classification = resolveClientClassification(
                 client,
@@ -1729,7 +1736,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                                 purchase.valorTotal ??
                                 received + pending
                             );
-                            const purchaseDate = toDate(saleDateInput(purchase.saleDate));
+                            const purchaseDate = getSaleDate(purchase);
                             const financeStatus =
                               pending <= 0 ? "Pago" : received > 0 ? "Parcial" : "Pendente";
                             const tripLabel = getTripOptionLabel(purchase, knownTrips);
@@ -1780,18 +1787,11 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                               disabled={savingClientRecord}
                               onChange={(event) => setActionDate(event.target.value)} />
                           </label>
-                          <label>
-                            Viagem (opcional)
-                            <select value={visitTripId} disabled={savingClientRecord}
-                              onChange={(event) => {
-                                const trip = knownTrips.find((entry) => entry.id === event.target.value);
-                                setVisitTripId(trip?.id || "");
-                                setVisitTripName(trip?.name || "");
-                              }}>
-                              <option value="">Sem viagem vinculada</option>
-                              {knownTrips.map((trip) => <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, knownTrips)}</option>)}
-                            </select>
-                          </label>
+                          <TripSelector userId={userId} options={knownTrips} value={visitTripId} disabled={savingClientRecord}
+                            onChange={(trip) => {
+                              setVisitTripId(trip.id);
+                              setVisitTripName(trip.name);
+                            }} />
                         </div>
                         {tripLoadError ? (
                           <p className="cl-record-error" role="alert">{tripLoadError}</p>
@@ -2038,7 +2038,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
             )}
             {giftError && <p className="cl-record-error" role="alert">{giftError}</p>}
 
-            {hasGiftForTrip(selectedClientGifts, giftTrip.name, giftTrip.city, giftTrip.id) && (
+            {hasGiftForTrip(selectedClientGifts, giftTrip.name, giftTrip.city, giftTrip.id, knownTrips) && (
               <p className="cl-gift-warning" role="status">
                 Esta cliente já recebeu brinde nesta viagem. Outra entrega exige confirmação.
               </p>

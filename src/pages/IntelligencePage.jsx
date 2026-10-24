@@ -2,8 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { LuBot } from "react-icons/lu";
 import PageHeader from "../components/PageHeader.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
+import TripPeriodFilter from "../components/TripPeriodFilter.jsx";
+import useTripScope from "../hooks/useTripScope.js";
 import useClientTrips from "../hooks/useClientTrips.js";
-import { getTripSelectionLabel } from "../domain/tripIdentity.js";
+import { filterRecordsByTrip, getTripSelectionLabel } from "../domain/tripIdentity.js";
+import { calculateTripFinancialSummary } from "../domain/sales.js";
+import { buildCollectionsReport } from "../domain/secretaryCollections.js";
 import { maskFinancialText, useFinancialPrivacy } from "../context/financialPrivacy.js";
 import { onAuthStateChanged, signInWithEmailAndPassword } from "firebase/auth";
 import { collection, doc, onSnapshot, serverTimestamp } from "firebase/firestore";
@@ -24,7 +28,7 @@ import {
   startAdminCommand,
 } from "../domain/adminCommands";
 import { AdminOperationError, executeAdminOperation } from "../services/adminOperationsService";
-import { toDate } from "../utils/dates";
+import { getSaleDate } from "../domain/saleTrip.js";
 import { isPersonalWithdrawal } from "../domain/expenses.js";
 import { askSecretaryAi } from "../services/secretaryAi";
 import { useSpeechRecognition, useSpeechSynthesis } from "../hooks/useSecretaryVoice";
@@ -392,12 +396,10 @@ export default function IntelligencePage() {
 
           list.sort((first, second) => {
             const firstDate =
-              toDate(first.saleDate)?.getTime() ||
-              first.createdAt?.toMillis?.() ||
+              getSaleDate(first)?.getTime() ||
               0;
             const secondDate =
-              toDate(second.saleDate)?.getTime() ||
-              second.createdAt?.toMillis?.() ||
+              getSaleDate(second)?.getTime() ||
               0;
             return secondDate - firstDate;
           });
@@ -535,6 +537,17 @@ export default function IntelligencePage() {
   const secretaryLoading =
     authStatus === "loading" ||
     (authStatus === "signed-in" && !dataReady);
+  const tripScope = useTripScope("secretary", secretarySnapshot.tripOptions);
+  const periodSales = useMemo(() => filterRecordsByTrip(sales, tripScope.selection, tripScope.filterOptions),
+    [sales, tripScope.selection, tripScope.filterOptions]);
+  const periodSummary = useMemo(() => calculateTripFinancialSummary(
+    periodSales,
+    filterRecordsByTrip(expenses, tripScope.selection, tripScope.filterOptions),
+    products,
+    filterRecordsByTrip(payables, tripScope.selection, tripScope.filterOptions)
+  ), [periodSales, expenses, products, payables, tripScope.selection, tripScope.filterOptions]);
+  const periodCollections = useMemo(() => buildCollectionsReport({ clients, sales: periodSales }),
+    [clients, periodSales]);
   const secretaryCanQuery =
     authStatus === "signed-in" && dataReady && !dataLoadFailed;
   const loading = !dataReady;
@@ -784,7 +797,7 @@ export default function IntelligencePage() {
     const cityStats = new Map();
 
     for (const sale of sales) {
-      const saleDate = toDate(sale.saleDate) || toDate(sale.createdAt);
+      const saleDate = getSaleDate(sale);
       const isThisMonth =
         saleDate &&
         saleDate >= monthStart &&
@@ -995,7 +1008,7 @@ export default function IntelligencePage() {
 
     const last30DaysSales = sales
       .filter((sale) => {
-        const date = toDate(sale.saleDate) || toDate(sale.createdAt);
+        const date = getSaleDate(sale);
         return date && date >= last30DaysStart;
       })
       .reduce((sum, sale) => sum + Number(sale.total || 0), 0);
@@ -1119,6 +1132,19 @@ export default function IntelligencePage() {
         title="Secretária RC"
         description="Sua assistente de gestão para a rotina da RC Confecções."
       />
+      {authStatus === "signed-in" && !secretaryLoading && (
+        <section className="secretary-trip-pending">
+          <h2>Resumo por viagem</h2>
+          <TripPeriodFilter scope={tripScope} label="Resumo da Secretária RC" />
+          <p>{periodSummary.salesCount} vendas · vendido <FinancialValue>{currencyFormat(periodSummary.sold)}</FinancialValue>
+            {" "}· recebido <FinancialValue>{currencyFormat(periodSummary.received)}</FinancialValue>
+            {" "}· pendente <FinancialValue>{currencyFormat(periodSummary.pending)}</FinancialValue></p>
+          <p>Despesas operacionais <FinancialValue>{currencyFormat(periodSummary.expenses)}</FinancialValue>
+            {" "}· retiradas <FinancialValue>{currencyFormat(periodSummary.personalWithdrawals)}</FinancialValue></p>
+          <CollectionsCards collections={{ report: periodCollections, tripLabel: tripScope.label, focusToday: false, provisional: false }} />
+          <p>Este filtro controla o resumo e as cobranças acima. No chat, informe o ano e a viagem na pergunta; o resumo matinal continua sendo de hoje.</p>
+        </section>
+      )}
 
       <section className="secretary-dashboard">
         <div className="secretary-morning-card">

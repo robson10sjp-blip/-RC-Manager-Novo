@@ -1,0 +1,39 @@
+.trip-period-filter {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 12px;
+  min-width: 0;
+  max-width: 100%;
+}
+.trip-period-filter label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 170px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.trip-period-filter select, .trip-period-filter input, .cl-trip-selector select, .cl-trip-selector input,
+.trip-review select, .trip-review input {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 42px;
+  padding: 9px 12px;
+  border: 1px solid #d7dce4;
+  border-radius: 10px;
+  background: #fff;
+  color: #172033;
+  font: inherit;
+}
+.trip-period-context { flex-basis: 100%; }
+.cl-trip-selector { min-width: 0; max-width: 100%; }
+.trip-review { max-width: 100%; min-width: 0; overflow-wrap: anywhere; }
+.trip-review label { display: grid; gap: 6px; margin: 12px 0; min-width: 0; }
+.trip-review button { max-width: 100%; white-space: normal; }
+@media (max-width: 480px) {
+  .trip-period-filter { width: 100%; }
+  .trip-period-filter label { flex-basis: 100%; }
+}

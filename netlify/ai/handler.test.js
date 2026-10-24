@@ -297,4 +297,8 @@ test("existing report tools separate annual IDs and refuse ambiguous travel numb
   assert.equal(runTool("resumo_vendas", { viagem: "4", ano: 2027 }, context).result.total_vendido, 300);
   assert.equal(runTool("listar_cobrancas", { viagem: "4", ano: 2026 }, context).result.sem_vencimento_confiavel.total, 90);
   assert.equal(runTool("resumo_vendas", { viagem: "todas" }, context).result.total_vendido, 1300);
+  assert.equal(runTool("resumo_vendas", { viagem: "todas", ano: 2026 }, context).result.total_vendido, 100);
+  assert.equal(runTool("resumo_vendas", { viagem: "todas", ano: 2027 }, context).result.total_vendido, 300);
+  assert.equal(runTool("resumo_vendas", { viagem: "todas", ano: 2025 }, context).result.total_vendido, 0);
+  assert.throws(() => runTool("resumo_vendas", { viagem: "todas", ano: "2026" }, context), /ano/);
 });

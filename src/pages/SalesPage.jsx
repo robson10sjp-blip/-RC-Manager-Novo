@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import PageHeader from "../components/PageHeader.jsx";
 import QuickSalePicker from "../components/QuickSalePicker.jsx";
 import { onAuthStateChanged } from "firebase/auth";
@@ -18,11 +18,16 @@ import {
 } from "react-icons/lu";
 import ReceiptTemplate from "../components/receipts/ReceiptTemplate";
 import FinancialValue from "../components/FinancialValue.jsx";
+import TripPeriodFilter from "../components/TripPeriodFilter.jsx";
+import useTripScope, { useViewState } from "../hooks/useTripScope.js";
+import { useFinancialPrivacy } from "../context/financialPrivacy.js";
 import {
-  buildTripOptions, getRecordTripId, getSaleTripEditFields,
-  getTripOptionLabel, getTripSelectionLabel, filterRecordsByTrip,
+  buildTripOptions, getSaleTripEditFields,
+  getTripOptionLabel, getTripSelectionLabel,
 } from "../domain/tripIdentity.js";
-import { getSaleTrip, saleDateInput } from "../domain/saleTrip.js";
+import { getSaleDate, getSaleDateInput, getSaleTrip, saleDateInput } from "../domain/saleTrip.js";
+import { getClientCityDisplay, getClientCityKey } from "../domain/clientCities.js";
+import { buildSaleTripAudit, getSalesSummary, groupSalesByTrip, selectSaleRows } from "../domain/saleTripReport.js";
 import {
   buildReceiptImageFile,
   buildReceiptPdfFile,
@@ -36,6 +41,8 @@ import {
   adjustLegacyClientDebt,
   applyPaymentToSale,
   calculateSaleAmounts,
+  createSaleEditForm,
+  buildSaleDateUpdate,
   formatItemLabel,
   isSaleOverdue as checkSaleOverdue,
   prepareSaleReceipt,
@@ -83,6 +90,7 @@ function createEmptySale() {
 }
 
 export default function SalesPage() {
+  const { hidden: financialValuesHidden } = useFinancialPrivacy();
   const receiptRef = useRef(null);
   const [selectedReceiptSale, setSelectedReceiptSale] = useState(null);
   const [showReceipt, setShowReceipt] = useState(false);
@@ -91,15 +99,17 @@ export default function SalesPage() {
   const [sales, setSales] = useState([]);
   const location = useLocation();
   const requestedClientId = location.state?.newSaleClientId || "";
-  const [tripFilter, setTripFilter] = useState("all");
-  const [searchText, setSearchText] = useState("");
+  const [searchText, setSearchText] = useViewState("sales:search", "");
+  const [cityFilter, setCityFilter] = useViewState("sales:city", "all");
   const [clientSearch, setClientSearch] = useState("");
   const [receiptPdf, setReceiptPdf] = useState({ key: null, status: "idle", file: null });
   const [receiptNotice, setReceiptNotice] = useState("");
   const [receiptImage, setReceiptImage] = useState({ key: null, file: null });
   const [imageBusy, setImageBusy] = useState(false);
-  const [sortOrder, setSortOrder] = useState("newest");
+  const [sortOrder, setSortOrder] = useViewState("sales:order", "newest");
   const [salesLoadError, setSalesLoadError] = useState("");
+  const [salesSnapshot, setSalesSnapshot] = useState(null);
+  const [auditCopyNotice, setAuditCopyNotice] = useState("");
 
   const [sale, setSale] = useState(() => ({
     ...createEmptySale(),
@@ -113,9 +123,12 @@ export default function SalesPage() {
   const [receivingSaleId, setReceivingSaleId] = useState(null);
   const receivingSaleLock = useRef(false);
   const pendingPaymentOperation = useRef(null);
-  const knownTrips = useMemo(() => buildTripOptions({
+  const saleTripReferences = useMemo(() => buildTripOptions({
     sales, salesOnly: true,
   }), [sales]);
+  const tripScope = useTripScope("sales", saleTripReferences);
+  const tripFilter = tripScope.selection;
+  const knownTrips = tripScope.options;
 
   useEffect(() => {
     let unsubscribeClients = null;
@@ -126,6 +139,8 @@ export default function SalesPage() {
       if (unsubscribeClients) unsubscribeClients();
       if (unsubscribeProducts) unsubscribeProducts();
       if (unsubscribeSales) unsubscribeSales();
+      setSalesSnapshot(null);
+      setAuditCopyNotice("");
 
       if (!user) {
         setClients([]);
@@ -205,6 +220,7 @@ export default function SalesPage() {
 
       unsubscribeSales = onSnapshot(
         salesReference,
+        { includeMetadataChanges: true },
         (snapshot) => {
           const list = snapshot.docs.map((document) => ({
             id: document.id,
@@ -213,19 +229,21 @@ export default function SalesPage() {
 
           list.sort((first, second) => {
             const firstDate =
-              toDate(first.saleDate)?.getTime() ||
-              first.createdAt?.toMillis?.() ||
+              getSaleDate(first)?.getTime() ||
               0;
 
             const secondDate =
-              toDate(second.saleDate)?.getTime() ||
-              second.createdAt?.toMillis?.() ||
+              getSaleDate(second)?.getTime() ||
               0;
 
             return secondDate - firstDate;
           });
 
           setSales(list);
+          setSalesSnapshot({
+            fromCache: snapshot.metadata.fromCache,
+            hasPendingWrites: snapshot.metadata.hasPendingWrites,
+          });
           setSalesLoadError("");
           setLoading(false);
         },
@@ -269,63 +287,30 @@ export default function SalesPage() {
 
   const saleStatus = calculateSaleAmounts(sale.items, amountPaid).status;
 
-  const dashboardTotals = useMemo(() => {
-    return sales.reduce(
-      (summary, currentSale) => {
-        summary.totalSales += Number(
-          currentSale.total || 0
-        );
+  const displayedSales = useMemo(() => selectSaleRows(sales, {
+    trip: tripFilter, city: cityFilter, search: searchText, clients, order: sortOrder,
+  }), [sales, tripFilter, cityFilter, searchText, clients, sortOrder]);
+  const displayedGroups = useMemo(() => groupSalesByTrip(displayedSales), [displayedSales]);
+  const saleAudit = useMemo(() => buildSaleTripAudit(sales), [sales]);
+  const auditText = JSON.stringify({ ...saleAudit, snapshot: salesSnapshot }, null, 2);
 
-        summary.totalReceived += Number(
-          currentSale.amountPaid || 0
-        );
-
-        summary.totalPending += Number(
-          currentSale.pendingAmount || 0
-        );
-
-        return summary;
-      },
-      {
-        totalSales: 0,
-        totalReceived: 0,
-        totalPending: 0,
+  async function copySaleAudit() {
+    try {
+      if (!navigator.clipboard?.writeText) {
+        throw new Error("Área de transferência indisponível neste navegador.");
       }
-    );
-  }, [sales]);
-
-  const displayedSales = useMemo(() => {
-    const filteredSales = filterRecordsByTrip(sales, tripFilter, knownTrips).map((sale) => ({
-        ...sale,
-        originalSaleDate: saleDateInput(sale.saleDate),
-      }));
-
-    const search = searchText.trim().toLocaleLowerCase("pt-BR");
-    return filteredSales
-      .filter((sale) => {
-        if (!search) return true;
-        const clientName =
-          clientsById.get(sale.clientId)?.name || sale.clientName || "";
-        return clientName.toLocaleLowerCase("pt-BR").includes(search);
-      })
-      .sort((first, second) => {
-        const firstDate = toDate(first.originalSaleDate)?.getTime();
-        const secondDate = toDate(second.originalSaleDate)?.getTime();
-        if (firstDate === undefined && secondDate === undefined) return 0;
-        if (firstDate === undefined) return 1;
-        if (secondDate === undefined) return -1;
-        return sortOrder === "oldest"
-          ? firstDate - secondDate
-          : secondDate - firstDate;
-      });
-  }, [
-    sales,
-    tripFilter,
-    knownTrips,
-    clientsById,
-    searchText,
-    sortOrder,
-  ]);
+      await navigator.clipboard.writeText(auditText);
+      setAuditCopyNotice("Diagnóstico agregado copiado. Cole o resultado na conversa.");
+    } catch (error) {
+      console.error("Erro ao copiar diagnóstico agregado:", error);
+      setAuditCopyNotice("Não foi possível copiar automaticamente. Selecione e copie o texto abaixo manualmente.");
+    }
+  }
+  const cityOptions = useMemo(() => [...new Map(sales.map((record) => {
+    const city = record.tripCity || clientsById.get(record.clientId)?.city || "";
+    return [getClientCityKey(city), getClientCityDisplay(city)];
+  }).filter(([key]) => key)).values()].sort((a, b) => a.localeCompare(b, "pt-BR")),
+  [sales, clientsById]);
 
   function formatCurrency(value) {
     return Number(value || 0).toLocaleString("pt-BR", {
@@ -543,35 +528,13 @@ export default function SalesPage() {
 
   function handleEditSale(currentSale) {
     currentSale = sales.find((record) => record.id === currentSale.id) || currentSale;
-    const saleDate = saleDateInput(currentSale.saleDate);
-
-    const legacyDueDate =
-      currentSale.dueDate ||
-      currentSale.paymentDueDate ||
-      currentSale.collectionDate ||
-      currentSale.dataCobranca ||
-      "";
-
+    const form = createSaleEditForm(currentSale);
     setEditingSaleId(currentSale.id);
     setShowSaleForm(true);
 
     setSale({
-      clientId: currentSale.clientId || "",
-      paymentMethod: currentSale.paymentMethod || "prazo",
-      amountPaid: String(currentSale.amountPaid || 0),
-      saleDate,
-      dueDate: toDateInputValue(legacyDueDate),
-      tripName: currentSale.tripName || "",
-      tripId: getRecordTripId(currentSale),
-      tripCity: currentSale.tripCity || "",
-      items:
-        (currentSale.items || []).length > 0
-          ? currentSale.items.map((item) => ({
-              productId: item.productId || "",
-              quantity: Number(item.quantity || 1),
-              price: String(item.unitPrice || 0),
-            }))
-          : [{ ...emptyItem }],
+      ...form,
+      items: form.items.length ? form.items : [{ ...emptyItem }],
     });
 
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1064,13 +1027,33 @@ export default function SalesPage() {
       return;
     }
 
-    if (!sale.clientId) {
-      alert("Selecione o cliente.");
+    if (!saleDateInput(sale.saleDate)) {
+      alert("Informe uma data da compra válida.");
       return;
     }
 
-    if (!sale.saleDate) {
-      alert("Informe a data da compra.");
+    const originalSale = editingSaleId
+      ? sales.find((currentSale) => currentSale.id === editingSaleId)
+      : null;
+    const isDateOnlyEdit = originalSale && buildSaleDateUpdate(originalSale, sale) !== null;
+
+    if (isDateOnlyEdit) {
+      try {
+        setSaving(true);
+        await updateExistingSale();
+        alert("Venda atualizada com sucesso!");
+        clearSale();
+      } catch (error) {
+        console.error("Erro ao atualizar data da venda:", error);
+        alert(`Erro ao atualizar venda: ${error.message}`);
+      } finally {
+        setSaving(false);
+      }
+      return;
+    }
+
+    if (!sale.clientId) {
+      alert("Selecione o cliente.");
       return;
     }
 
@@ -1372,6 +1355,14 @@ export default function SalesPage() {
       }
 
       const oldSale = oldSaleSnapshot.data();
+      const dateUpdate = buildSaleDateUpdate(oldSale, sale);
+      if (dateUpdate) {
+        transaction.update(saleReference, {
+          ...dateUpdate,
+          updatedAt: serverTimestamp(),
+        });
+        return;
+      }
       const savedPaid = Number(oldSale.amountPaid || 0);
 
       if (
@@ -1578,7 +1569,7 @@ export default function SalesPage() {
         pendingAmount: updatedPending,
         paymentMethod: sale.paymentMethod,
         status: updatedPending === 0 ? "paid" : savedPaid > 0 ? "partial" : "pending",
-        saleDate: saleDateInput(oldSale.saleDate) === sale.saleDate
+        saleDate: getSaleDateInput(oldSale) === sale.saleDate && oldSale.saleDate
           ? oldSale.saleDate
           : new Date(`${sale.saleDate}T12:00:00-03:00`),
         dueDate: sale.dueDate
@@ -1591,8 +1582,8 @@ export default function SalesPage() {
   }
 
   const tripFilterLabels = {
-    all: "Todas as vendas",
-    unassigned: "Data da venda não informada ou inválida",
+    all: "Geral · todos os anos",
+    [tripFilter]: tripScope.label,
     ...Object.fromEntries(knownTrips.map((trip) => [trip.id, getTripSelectionLabel(trip, knownTrips)])),
   };
 
@@ -1608,22 +1599,7 @@ export default function SalesPage() {
     );
   });
 
-  const scopedSales = filterRecordsByTrip(sales, tripFilter, knownTrips);
-  const tripScopeSummary = tripFilter === "all" ? null : getSalesSummary(scopedSales);
-
-  const scopeTotals = tripScopeSummary
-    ? {
-        sold: tripScopeSummary.sold,
-        received: tripScopeSummary.received,
-        pending: tripScopeSummary.pending,
-        count: tripScopeSummary.count,
-      }
-    : {
-        sold: dashboardTotals.totalSales,
-        received: dashboardTotals.totalReceived,
-        pending: dashboardTotals.totalPending,
-        count: sales.length,
-      };
+  const scopeTotals = displayedTotals;
 
   const kpis = [
     { label: "Total vendido", value: <FinancialValue>{formatCurrency(scopeTotals.sold)}</FinancialValue>, icon: LuShoppingBag, tone: "navy" },
@@ -1658,7 +1634,9 @@ export default function SalesPage() {
 
       <p className="sl-scope">
         Indicadores de: <strong>{tripFilterLabels[tripFilter]}</strong>
-        {" "}— altere no filtro de viagem.
+        {cityFilter !== "all" ? ` · ${cityFilter}` : ""}
+        {searchText.trim() ? " · busca por cliente" : ""}
+        {" "}— conforme os filtros selecionados.
       </p>
 
       <div className="sl-kpis">
@@ -2111,9 +2089,6 @@ export default function SalesPage() {
       <section className="cl-panel">
         <div className="sl-heading">
           <h2>Vendas registradas</h2>
-          <p>
-            Vendas organizadas por trimestre e ano da data da venda.
-          </p>
         </div>
 
         {loading ? (
@@ -2125,20 +2100,20 @@ export default function SalesPage() {
             {knownTrips.map((trip) => (
               <TripSummaryCard key={trip.id} title={getTripSelectionLabel(trip, knownTrips)}
                 period={["Janeiro a março", "Abril a junho", "Julho a setembro", "Outubro a dezembro"][trip.tripNumber - 1]}
-                summary={getSalesSummary(filterRecordsByTrip(sales, trip.id, knownTrips))} />
+                summary={getSalesSummary(selectSaleRows(sales, {
+                  trip: trip.id, city: cityFilter, search: searchText, clients,
+                }))} />
             ))}
           </div>
         )}
 
         <div className="sl-filters">
+          <TripPeriodFilter scope={tripScope} label="Vendas" />
           <label>
-            Viagem
-            <select value={tripFilter} onChange={(event) => setTripFilter(event.target.value)}>
-              <option value="all">Todas as vendas</option>
-              {knownTrips.map((trip) => (
-                <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, knownTrips)}</option>
-              ))}
-              <option value="unassigned">Data da venda não informada ou inválida</option>
+            Cidade
+            <select value={cityFilter} onChange={(event) => setCityFilter(event.target.value)}>
+              <option value="all">Todas as cidades</option>
+              {cityOptions.map((city) => <option key={city} value={city}>{city}</option>)}
             </select>
           </label>
           <label className="sl-filter-search">
@@ -2165,7 +2140,7 @@ export default function SalesPage() {
         {!loading && !salesLoadError && (
           <p className="cl-count">
             {displayedSales.length} de {sales.length} venda(s)
-            {tripFilter !== "all" || searchText.trim() ? (
+            {tripFilter !== "all" || cityFilter !== "all" || searchText.trim() ? (
               <>
                 {" "}· {tripFilter !== "all" ? tripFilterLabels[tripFilter] : "Busca"}:{" "}
                 vendido <strong>{formatBRL(displayedTotals.sold)}</strong> · recebido{" "}
@@ -2174,6 +2149,39 @@ export default function SalesPage() {
               </>
             ) : null}
           </p>
+        )}
+
+        {!loading && !salesLoadError && (
+          <details>
+            <summary>Diagnóstico de viagens (somente leitura)</summary>
+            <p>
+              {saleAudit.totals.count} vendas: {saleAudit.sources.saleDate} com data comercial explícita,
+              {" "}{saleAudit.sources.createdAt} recuperadas do esquema original,
+              {" "}{saleAudit.sources.missing} sem data recuperável e {saleAudit.sources.invalid} com data inválida.
+              {" "}{saleAudit.reconciled ? "Quantidade e valores dos grupos conferem com o total." : "Pendência: os totais não conferem."}
+            </p>
+            <p>
+              {salesSnapshot && !salesSnapshot.fromCache && !salesSnapshot.hasPendingWrites
+                ? "Leitura confirmada pelo servidor, sem gravações locais pendentes."
+                : "Atenção: leitura do cache ou com gravações locais pendentes. Aguarde a confirmação do servidor antes de conferir os dados reais."}
+            </p>
+            <p>O diagnóstico inclui todas as vendas carregadas, independentemente dos filtros. Não grava no Firebase nem inclui dados pessoais no texto copiado.</p>
+            <button type="button" onClick={copySaleAudit} disabled={financialValuesHidden}>Copiar diagnóstico agregado</button>
+            {financialValuesHidden && <p>Valores ocultos. Desoculte os valores explicitamente para copiar o diagnóstico.</p>}
+            {auditCopyNotice && <p role="status">{auditCopyNotice}</p>}
+            <label htmlFor="sale-trip-audit">Diagnóstico agregado para copiar manualmente</label>
+            <textarea id="sale-trip-audit" readOnly value={financialValuesHidden ? "Diagnóstico financeiro oculto." : auditText} rows={12} style={{ width: "100%" }} />
+            {Object.entries(saleAudit.formats).map(([field, formats]) => (
+              <p key={field}>{field}: {Object.entries(formats).map(([format, count]) => `${format}: ${count}`).join(" · ")}</p>
+            ))}
+            {saleAudit.groups.map((group) => (
+              <p key={group.id}>
+                {group.name}: {group.count} vendas · vendido <FinancialValue>{formatBRL(group.sold)}</FinancialValue>
+                {" "}· recebido <FinancialValue>{formatBRL(group.received)}</FinancialValue>
+                {" "}· pendente <FinancialValue>{formatBRL(group.pending)}</FinancialValue>
+              </p>
+            ))}
+          </details>
         )}
 
         {loading ? (
@@ -2195,7 +2203,19 @@ export default function SalesPage() {
           </div>
         ) : (
           <div className="sl-list">
-            {displayedSales.map((currentSale) => {
+            {displayedGroups.map((group) => (
+              <Fragment key={group.id}>
+                {(tripFilter === "all" || tripFilter.startsWith("year-")) && (
+                  <div className="sl-heading">
+                    <h3>{group.name}</h3>
+                    <p>
+                      {group.summary.count} venda(s) · vendido <FinancialValue>{formatBRL(group.summary.sold)}</FinancialValue>
+                      {" "}· recebido <FinancialValue>{formatBRL(group.summary.received)}</FinancialValue>
+                      {" "}· pendente <FinancialValue>{formatBRL(group.summary.pending)}</FinancialValue>
+                    </p>
+                  </div>
+                )}
+            {group.sales.map((currentSale) => {
               const status = formatStatus(currentSale.status);
               const overdue = isSaleOverdue(currentSale);
               const statusKey = overdue ? "overdue" : currentSale.status || "pending";
@@ -2269,6 +2289,8 @@ export default function SalesPage() {
                 </article>
               );
             })}
+              </Fragment>
+            ))}
           </div>
         )}
       </section>
@@ -2377,15 +2399,6 @@ export default function SalesPage() {
       )}
     </div>
   );
-}
-
-function getSalesSummary(records) {
-  return records.reduce((summary, record) => ({
-    count: summary.count + 1,
-    sold: summary.sold + Number(record.total || 0),
-    received: summary.received + Number(record.amountPaid || 0),
-    pending: summary.pending + Number(record.pendingAmount || 0),
-  }), { count: 0, sold: 0, received: 0, pending: 0 });
 }
 
 function TripSummaryCard({ title, period, summary, review = false }) {

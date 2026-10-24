@@ -1,4 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import TripPeriodFilter from "../components/TripPeriodFilter.jsx";
+import TripSelector from "../components/TripSelector.jsx";
+import useTripScope, { useViewState } from "../hooks/useTripScope.js";
 import { LuWallet } from "react-icons/lu";
 import PageHeader from "../components/PageHeader.jsx";
 import { onAuthStateChanged } from "firebase/auth";
@@ -29,8 +32,6 @@ import {
   buildTripOptions,
   getRecordTripId,
   getTripOptionLabel,
-  tripMatchesRecord,
-  getTripSelectionLabel,
   filterRecordsByTrip,
 } from "../domain/tripIdentity.js";
 import {
@@ -46,7 +47,6 @@ import {
   applyPaymentToPayable,
   applyCheckStatusTransition,
   CHECK_STATUSES,
-  filterPayablesByTrip,
   getCheckStatus,
   getPayableBalance,
   reusePayablePaymentOperation,
@@ -58,7 +58,8 @@ import { toDate } from "../utils/dates";
 import { getExpenseCategoryLabel, isPersonalWithdrawal } from "../domain/expenses.js";
 import ReceiptViewer from "../components/receipts/ReceiptViewer.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
-import { saleDateInput } from "../domain/saleTrip.js";
+import { getSaleDate } from "../domain/saleTrip.js";
+import { selectSaleRows } from "../domain/saleTripReport.js";
 import { useFinancialPrivacy } from "../context/financialPrivacy.js";
 import "./FinancePayables.css";
 import "./FinancePremium.css";
@@ -120,8 +121,9 @@ export default function FinancePage() {
   const [checkAccountFilter, setCheckAccountFilter] = useState("all");
   const [checkStatusFilter, setCheckStatusFilter] = useState("all");
   const [editingExpenseId, setEditingExpenseId] = useState(null);
-  const [searchText, setSearchText] = useState("");
-  const [tripFilter, setTripFilter] = useState("all");
+  const [searchText, setSearchText] = useViewState("finance:search", "");
+  const [salesCity, setSalesCity] = useViewState("finance:city", "all");
+  const hasSalesFilters = salesCity !== "all" || Boolean(searchText.trim());
   const [showSupplierPurchases, setShowSupplierPurchases] = useState(false);
   const [selectedReceivablesCity, setSelectedReceivablesCity] = useState("");
   const [loading, setLoading] = useState(true);
@@ -167,7 +169,6 @@ export default function FinancePage() {
       setPayables([]);
       setTrips([]);
       setPaymentsByPayable({});
-      setTripFilter("all");
       setShowSupplierPurchases(false);
       setLoading(Boolean(user));
       setPayableMessage("");
@@ -236,12 +237,10 @@ export default function FinancePage() {
 
           list.sort((first, second) => {
             const firstDate =
-              toDate(first.saleDate)?.getTime() ||
-              first.createdAt?.toMillis?.() ||
+              getSaleDate(first)?.getTime() ||
               0;
             const secondDate =
-              toDate(second.saleDate)?.getTime() ||
-              second.createdAt?.toMillis?.() ||
+              getSaleDate(second)?.getTime() ||
               0;
             return secondDate - firstDate;
           });
@@ -423,31 +422,22 @@ export default function FinancePage() {
     () => buildTripOptions({ trips, payables, expenses }),
     [trips, payables, expenses]
   );
-  const selectedTripOption = tripOptions.find((trip) => trip.id === tripFilter);
+  const tripScope = useTripScope("finance", tripOptions);
+  const tripFilter = tripScope.selection;
   const selectedTripSales = useMemo(() => {
-    return filterRecordsByTrip(sales, tripFilter, tripOptions);
-  }, [sales, tripOptions, tripFilter]);
+    return selectSaleRows(sales, { trip: tripFilter, clients, city: salesCity, search: searchText });
+  }, [sales, tripFilter, clients, salesCity, searchText]);
+  const salesCities = [...new Set(clients.map((client) => getClientCityDisplay(client.city)).filter(Boolean))].sort();
 
   const selectedTripExpenses = useMemo(
     () =>
-      expenses.filter((expense) => {
-        if (tripFilter === "all") return true;
-        if (tripFilter === "unassigned") return !getRecordTripId(expense);
-        return selectedTripOption
-          ? tripMatchesRecord(expense, selectedTripOption)
-          : false;
-      }),
-    [expenses, selectedTripOption, tripFilter]
+      filterRecordsByTrip(expenses, tripFilter, tripScope.filterOptions),
+    [expenses, tripScope.filterOptions, tripFilter]
   );
 
   const selectedPayables = useMemo(
-    () => filterPayablesByTrip(
-      payables,
-      tripFilter === "all" || tripFilter === "unassigned"
-        ? tripFilter
-        : selectedTripOption || tripFilter
-    ),
-    [payables, selectedTripOption, tripFilter]
+    () => filterRecordsByTrip(payables, tripFilter, tripScope.filterOptions),
+    [payables, tripScope.filterOptions, tripFilter]
   );
   const displayedSupplierPurchases = useMemo(
     () => selectedPayables.filter((payable) => payable.purchaseType !== "operational"),
@@ -527,9 +517,9 @@ export default function FinancePage() {
       groupReceivablesByCity(
         clients,
         selectedTripSales,
-        tripFilter === "all"
+        tripFilter === "all" && !hasSalesFilters
       ),
-    [clients, selectedTripSales, tripFilter]
+    [clients, selectedTripSales, tripFilter, hasSalesFilters]
   );
 
   const selectedReceivablesCityData = receivablesByCity.find(
@@ -537,13 +527,13 @@ export default function FinancePage() {
   );
 
   const selectedReceivables = useMemo(() => {
-    if (tripFilter === "all") return receivables;
+    if (tripFilter === "all" && !hasSalesFilters) return receivables;
 
     return calculateConsolidatedReceivables(
       clients.map((client) => ({ ...client, totalDebt: 0 })),
       selectedTripSales
     );
-  }, [clients, receivables, selectedTripSales, tripFilter]);
+  }, [clients, receivables, selectedTripSales, tripFilter, hasSalesFilters]);
 
   const debtors = useMemo(() => {
     const clientDebtors = selectedReceivables.clients
@@ -592,7 +582,7 @@ export default function FinancePage() {
       entries.push({
         id: `sale-${sale.id}`,
         type: "sale",
-        date: toDate(saleDateInput(sale.saleDate)),
+        date: getSaleDate(sale),
         title: sale.clientName || "Venda",
         description: [
           `Compra #${sale.id}`,
@@ -1450,40 +1440,26 @@ Qualquer dúvida estou à disposição. Obrigado!`;
         title="Financeiro"
         description="Acompanhe vendas, recebimentos, despesas e obrigações de fornecedores."
       >
-        <label className="fin-filter" style={styles.filterLabel}>
-          Viagem
-          <select
-            aria-label="Filtrar financeiro por viagem"
-            value={tripFilter}
-            onChange={(event) => setTripFilter(event.target.value)}
-            style={styles.periodSelect}
-          >
-            <option value="all">Todas as viagens</option>
-            {tripOptions.map((trip) => (
-              <option key={trip.id} value={trip.id}>
-                {getTripSelectionLabel(trip, tripOptions)}
-              </option>
-            ))}
-            <option value="unassigned">Sem viagem definida</option>
+        <TripPeriodFilter scope={tripScope} label="Financeiro" />
+      </PageHeader>
+      <div className="trip-period-filter" aria-label="Filtros de vendas e cobranças">
+        <label>Cidade das vendas
+          <select value={salesCity} onChange={(event) => setSalesCity(event.target.value)}>
+            <option value="all">Todas as cidades</option>
+            {salesCities.map((city) => <option key={city} value={city}>{city}</option>)}
           </select>
         </label>
-      </PageHeader>
-
+        <label>Cliente das vendas
+          <input type="search" value={searchText} onChange={(event) => setSearchText(event.target.value)}
+            placeholder="Nome, telefone ou cidade" />
+        </label>
+      </div>
       <section className="fin-summary" style={styles.tripSummarySection}>
         <div style={styles.tripSummaryHeader}>
           <div>
             <h2 style={styles.cardTitle}>
-              {tripFilter === "all"
-                ? "Resumo de todas as viagens"
-                : tripFilter === "unassigned"
-                  ? "Resumo sem viagem definida"
-                  : selectedTripOption
-                    ? getTripOptionLabel(selectedTripOption)
-                    : "Resumo da viagem"}
+              {tripScope.label}
             </h2>
-            <p style={styles.helperText}>
-              Vendas por trimestre e ano da data da venda. Despesas e compras mantêm seus próprios vínculos.
-            </p>
           </div>
         </div>
         <div className="fin-cards" style={styles.tripSummaryGrid}>
@@ -1533,17 +1509,13 @@ Qualquer dúvida estou à disposição. Obrigado!`;
             },
             {
               label: "Lucro estimado",
-              value: tripFilter === "unassigned"
-                ? "Viagem não definida"
-                : tripSummary.hasCompleteCostData
+              value: tripSummary.hasCompleteCostData
                 ? formatCurrency(tripSummary.estimatedProfit)
                 : "Dados de custo incompletos",
             },
             {
               label: "Fluxo de caixa",
-              value: tripFilter === "unassigned"
-                ? "Viagem não definida"
-                : formatCurrency(tripSummary.cashFlow),
+              value: formatCurrency(tripSummary.cashFlow),
             },
           ].map(({ label, value }) => (
             label === "Compras de mercadorias da viagem" ? (
@@ -1588,12 +1560,8 @@ Qualquer dúvida estou à disposição. Obrigado!`;
               <div>
                 <h3>Compras de mercadorias da viagem</h3>
                 <p>
-                  {tripFilter === "all"
-                    ? "Total de todas as viagens."
-                    : tripFilter === "unassigned"
-                      ? "Compras antigas ainda sem viagem definida."
-                      : `Compras vinculadas a ${getTripOptionLabel(selectedTripOption || {})}.`}
-                  {" "}O total considera a compra mesmo que ainda não tenha sido paga.
+                  {tripFilter === "all" ? "Total geral, todos os anos." : `Período: ${tripScope.label}.`}
+                  {" "}Inclui compras ainda não pagas.
                 </p>
               </div>
               <button type="button" onClick={() => setShowSupplierPurchases(false)}>
@@ -1825,10 +1793,8 @@ Qualquer dúvida estou à disposição. Obrigado!`;
             </p>
             <span className="payables-current-filter">
               {tripFilter === "all"
-                ? "Visão geral: todas as obrigações da empresa."
-                : tripFilter === "unassigned"
-                  ? "Mostrando obrigações sem viagem vinculada."
-                  : `Mostrando obrigações da ${getTripOptionLabel(selectedTripOption || {})}.`}
+                ? "Todas as obrigações da empresa."
+                : `Período: ${tripScope.label}.`}
             </span>
           </div>
         </div>
@@ -1912,15 +1878,9 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                     <option value="boleto">Boleto</option>
                   </select>
                 </label>
-                <label>
-                  Viagem (opcional)
-                  <select name="tripId" value={payableForm.tripId} onChange={handlePayableFormChange}>
-                    <option value="">Sem viagem vinculada</option>
-                    {entryTripOptions.map((trip) => (
-                      <option key={trip.id} value={trip.id}>{getTripSelectionLabel(trip, entryTripOptions)}</option>
-                    ))}
-                  </select>
-                </label>
+                <TripSelector userId={auth.currentUser?.uid} options={entryTripOptions} value={payableForm.tripId}
+                  disabled={savingPayable}
+                  onChange={(trip) => setPayableForm((current) => ({ ...current, tripId: trip.id }))} />
                 <label className="payables-notes-field">
                   Observações
                   <textarea name="notes" value={payableForm.notes} onChange={handlePayableFormChange} rows={2} maxLength={1000} />
@@ -2289,24 +2249,9 @@ Qualquer dúvida estou à disposição. Obrigado!`;
             </select>
           </label>
 
-          <label style={styles.label}>
-            Viagem
-            <select
-              name="tripId"
-              value={expenseForm.tripId}
-              onChange={handleExpenseChange}
-              style={styles.input}
-            >
-              <option value="">
-                Sem viagem definida
-              </option>
-              {entryTripOptions.map((trip) => (
-                <option key={trip.id} value={trip.id}>
-                  {getTripSelectionLabel(trip, entryTripOptions)}
-                </option>
-              ))}
-            </select>
-          </label>
+          <TripSelector userId={auth.currentUser?.uid} options={entryTripOptions} value={expenseForm.tripId}
+            disabled={savingExpense}
+            onChange={(trip) => setExpenseForm((current) => ({ ...current, tripId: trip.id }))} />
 
           <label style={styles.label}>
             Cidade (opcional)
@@ -2485,23 +2430,18 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                                 </strong>
                                 <p style={styles.saleDebtMeta}>
                                   {formatDate(
-                                    toDate(
-                                      openSale.saleDate ||
-                                        openSale.createdAt
-                                    )
+                                    getSaleDate(openSale)
                                   )}
                                   {dueDate
                                     ? ` • ${isOverdue ? "Vencida" : "Vence"} ${formatDate(dueDate)}`
                                     : " • Vencimento não informado"}
                                 </p>
-                                {(openSale.tripName || openSale.tripCity) && (
-                                  <p style={styles.saleDebtMeta}>
-                                    Viagem: {getTripOptionLabel(openSale, tripOptions)}
-                                    {openSale.tripCity
-                                      ? ` • ${openSale.tripCity}`
-                                      : ""}
-                                  </p>
-                                )}
+                                <p style={styles.saleDebtMeta}>
+                                  Viagem: {getTripOptionLabel(openSale, tripOptions)}
+                                  {openSale.tripCity
+                                    ? ` • ${openSale.tripCity}`
+                                    : ""}
+                                </p>
                               </div>
                               {isOverdue && (
                                 <span style={styles.overdueBadge}>Vencida</span>
