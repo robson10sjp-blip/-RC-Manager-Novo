@@ -1,6 +1,6 @@
 # Registro de retomada
 
-## Navegacao por secoes - 2026-10-30 (validada; publicacao pendente)
+## Navegacao por secoes - 2026-10-30 (publicada e conferida)
 
 - Base a8d9bc0; preservados os tres ZIPs preexistentes, configuracao,
   regras e dados Firebase. Nenhuma escrita em producao.
@@ -27,9 +27,18 @@
   + Joao 200, uma venda de 500, recebimento 100, saldo 400, estoque 15,
   edicao por diferenca, recarga e recibos PDF/PNG reais. Sem erros de
   pagina/Console/Network nem requisicoes a Firebase de producao.
-- Nenhum teste autenticado na conta real. Proximos passos: revisao final,
-  commit/push e confirmacao do deploy oficial ativo. Nao declarar
-  publicacao concluida ate confirmar API e versao servida.
+- Codigo salvo no commit 52020a7 e enviado a origin/main sem force.
+  Deploy 6ae4fab35a1827cec1a2403d confirmado ready e ativo pela API
+  Netlify, associado ao commit exato. Site oficial:
+  https://vermillion-kataifi-a2fb8c.netlify.app
+- HTTP 200; bundle /assets/index-DnA4RSCf.js contem as secoes novas.
+  Service Worker referencia o mesmo bundle, com Cache-Control: no-cache.
+  Login publicado aberto em 1366/390 px: worker activated, sem erros de
+  Console/Network, overflow ou escritas Firestore. Nenhum dado local foi limpo.
+- Nenhum teste autenticado na conta real; os testes internos usaram apenas
+  fixtures nos emuladores. Nenhuma etapa manual Firebase pendente.
+  Este complemento e somente documental e nao altera o codigo validado;
+  confirmar tambem seu deploy automatico antes da entrega final.
 
 ## Visitas e compra familiar - 2026-10-30 (publicada e conferida)
 
