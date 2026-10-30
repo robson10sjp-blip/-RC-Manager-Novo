@@ -8,6 +8,8 @@ import useClientTrips from "../hooks/useClientTrips.js";
 import { filterRecordsByTrip, getTripSelectionLabel } from "../domain/tripIdentity.js";
 import { calculateTripFinancialSummary } from "../domain/sales.js";
 import { buildCollectionsReport } from "../domain/secretaryCollections.js";
+import PageSectionNav from "../components/PageSectionNav.jsx";
+import usePageSection from "../hooks/usePageSection.js";
 import { maskFinancialText, useFinancialPrivacy } from "../context/financialPrivacy.js";
 import { onAuthStateChanged, signInWithEmailAndPassword } from "firebase/auth";
 import { collection, doc, onSnapshot, serverTimestamp } from "firebase/firestore";
@@ -54,9 +56,10 @@ const currencyFormat = (value) =>
   });
 
 function CollectionsCards({ collections }) {
+  const [selectedGroup, setSelectedGroup] = useState(null);
   const { report, focusToday, tripLabel, provisional } = collections;
   const sections = [
-    { key: "overdue", title: "Vencidas", tone: "overdue", group: report.overdue },
+    { key: "overdue", title: "Em atraso", tone: "overdue", group: report.overdue },
     { key: "today", title: "Vencem hoje", tone: "today", group: report.today },
     {
       key: "upcoming",
@@ -87,13 +90,15 @@ function CollectionsCards({ collections }) {
             key={key}
             className={`secretary-collections-group secretary-collections-${tone}`}
           >
-            <header>
+            <button type="button" className="secretary-collection-toggle"
+              aria-expanded={selectedGroup === key}
+              onClick={() => setSelectedGroup(selectedGroup === key ? null : key)}>
               <h3>{title}</h3>
               <span>
                 {group.count} cobrança(s) · <FinancialValue>{currencyFormat(group.total)}</FinancialValue>
               </span>
-            </header>
-            {group.count === 0 ? (
+            </button>
+            {selectedGroup === key && (group.count === 0 ? (
               <p className="secretary-collections-empty">Nenhuma cobrança neste grupo.</p>
             ) : (
               <ul>
@@ -129,7 +134,7 @@ function CollectionsCards({ collections }) {
                   </li>
                 ))}
               </ul>
-            )}
+            ))}
           </section>
         );
       })}
@@ -138,6 +143,7 @@ function CollectionsCards({ collections }) {
 }
 
 export default function IntelligencePage() {
+  const sections = usePageSection("summary");
   const { hidden: financialValuesHidden } = useFinancialPrivacy();
   const [clients, setClients] = useState([]);
   const [products, setProducts] = useState([]);
@@ -548,6 +554,7 @@ export default function IntelligencePage() {
   ), [periodSales, expenses, products, payables, tripScope.selection, tripScope.filterOptions]);
   const periodCollections = useMemo(() => buildCollectionsReport({ clients, sales: periodSales }),
     [clients, periodSales]);
+  const dailyCollections = useMemo(() => buildCollectionsReport({ clients, sales }), [clients, sales]);
   const secretaryCanQuery =
     authStatus === "signed-in" && dataReady && !dataLoadFailed;
   const loading = !dataReady;
@@ -600,11 +607,12 @@ export default function IntelligencePage() {
   }
 
   useEffect(() => {
+    if (sections.active !== "chat") return;
     messagesEndRef.current?.scrollIntoView({
       behavior: "smooth",
       block: "nearest",
     });
-  }, [messages]);
+  }, [messages, sections.active]);
 
   function updateAdminDraft(id, updater, replyText) {
     setAdminDrafts((current) => {
@@ -1132,6 +1140,13 @@ export default function IntelligencePage() {
         title="Secretária RC"
         description="Sua assistente de gestão para a rotina da RC Confecções."
       />
+      <PageSectionNav navigation={sections} label="Secretária RC" items={[
+        { id: "summary", label: "Resumo do dia" },
+        { id: "collections", label: "Cobranças" },
+        { id: "tasks", label: "Tarefas e prioridades" },
+        { id: "chat", label: "Converse com a Secretária" },
+      ]} />
+      <div className="page-section-panel" hidden={sections.active !== "collections"}>
       {authStatus === "signed-in" && !secretaryLoading && (
         <section className="secretary-trip-pending">
           <h2>Resumo por viagem</h2>
@@ -1145,13 +1160,14 @@ export default function IntelligencePage() {
           <p>Este filtro controla o resumo e as cobranças acima. No chat, informe o ano e a viagem na pergunta; o resumo matinal continua sendo de hoje.</p>
         </section>
       )}
+      </div>
 
-      <section className="secretary-dashboard">
-        <div className="secretary-morning-card">
+      <section className="secretary-dashboard secretary-sections">
+        <div className="secretary-morning-card page-section-panel" hidden={!["summary", "tasks"].includes(sections.active)}>
           <div className="secretary-section-heading">
             <div>
               <p className="secretary-eyebrow">Seu começo de dia</p>
-              <h2>Resumo matinal</h2>
+              <h2>{sections.active === "tasks" ? "Tarefas e prioridades" : "Resumo do dia"}</h2>
             </div>
             <span className="secretary-today">
               {new Date().toLocaleDateString("pt-BR", {
@@ -1170,6 +1186,7 @@ export default function IntelligencePage() {
             </p>
           ) : (
             <>
+              <div className="page-section-panel" hidden={sections.active !== "summary"}>
               <div className="secretary-morning-metrics">
                 <div>
                   <span>Vendas de hoje</span>
@@ -1196,6 +1213,7 @@ export default function IntelligencePage() {
                 </div>
               </div>
 
+              <CollectionsCards collections={{ report: dailyCollections, tripLabel: "Todos os anos", focusToday: false, provisional: false }} />
               <div className="secretary-trip-pending" aria-label="Saldo pendente por viagem">
                 <header>
                   <h3>Pendente por viagem</h3>
@@ -1214,8 +1232,8 @@ export default function IntelligencePage() {
                   })}
                 </div>
               </div>
-
-              <div className="secretary-priorities">
+              </div>
+              <div className="secretary-priorities page-section-panel" hidden={sections.active !== "tasks"}>
                 <h3>Prioridades e vencimentos</h3>
                 {secretarySnapshot.overdueSales.length === 0 &&
                 secretarySnapshot.dueSoonSales.length === 0 &&
@@ -1256,7 +1274,7 @@ export default function IntelligencePage() {
           )}
         </div>
 
-        <div className="secretary-chat-card">
+        <div className="secretary-chat-card page-section-panel" hidden={sections.active !== "chat"}>
           <div className="secretary-section-heading">
             <div>
               <p className="secretary-eyebrow">Atendimento local e privado</p>

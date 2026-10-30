@@ -1,0 +1,34 @@
+.app-main:has(.page-section-nav) { overflow: clip; }
+.page-section-nav {
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+  padding: 10px 0;
+  margin-bottom: 16px;
+  background: #f4f7fb;
+  border-bottom: 1px solid #dfe5ee;
+}
+.page-section-nav button {
+  min-height: 52px;
+  padding: 12px;
+  border: 1px solid #d7dce4;
+  border-radius: 12px;
+  background: #fff;
+  color: #172236;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.35;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.page-section-nav button.is-selected { background: #172236; color: #fff; border-color: #c9a85d; box-shadow: inset 0 -3px #c9a85d; }
+.page-section-nav button:focus-visible { outline: 3px solid #c9a85d; outline-offset: 2px; }
+.page-section-panel[hidden], [hidden].page-section-panel { display: none !important; }
+@media (max-width: 480px) {
+  .page-section-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .page-section-nav button { padding: 10px 8px; }
+}

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import PageHeader from "../components/PageHeader.jsx";
+import PageSectionNav from "../components/PageSectionNav.jsx";
+import usePageSection from "../hooks/usePageSection.js";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   getDocs,
@@ -105,6 +107,7 @@ const emptyForm = {
 };
 
 export default function ClientsPage() {
+  const sections = usePageSection();
   const [userId, setUserId] = useState("");
   const [clients, setClients] = useState([]);
   const [sales, setSales] = useState([]);
@@ -807,6 +810,7 @@ export default function ClientsPage() {
     setEditingId(null);
     setForm(emptyForm);
     setShowForm(true);
+    sections.select("form", { reset: true });
   }
 
   function handleQuickReceive(row) {
@@ -843,6 +847,7 @@ export default function ClientsPage() {
     setForm(emptyForm);
     setEditingId(null);
     setShowForm(false);
+    sections.select("list");
   }
 async function handleReceivePayment(client) {
   if (receivingClientLock.current) return;
@@ -1129,6 +1134,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
   function handleEdit(client) {
     setEditingId(client.id);
     setShowForm(true);
+    sections.select("form", { reset: true });
 
     setForm({
       name: client.name || "",
@@ -1143,10 +1149,6 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
       notes: client.notes || "",
     });
 
-    window.scrollTo({
-      top: 0,
-      behavior: "smooth",
-    });
   }
 
   async function handleDelete(client) {
@@ -1434,6 +1436,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
             setPregoError("");
             setClientViewMode(openingPrego ? "prego" : "all");
             setClassificationFilter(openingPrego ? "prego" : "all");
+            sections.select("list", { reset: true });
           }}
           aria-pressed={clientViewMode === "prego"}
         >
@@ -1448,6 +1451,16 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
         </button>
       </PageHeader>
 
+      <PageSectionNav navigation={sections} label="Clientes" items={[
+        { id: "list", label: "Lista de clientes" },
+        { id: "form", label: editingId ? "Editar cliente" : "Novo cliente" },
+        { id: "visits", label: "Visitas por cidade e viagem" },
+        { id: "balances", label: "Conferência de saldos" },
+      ]} onSelect={(id) => {
+        if (id === "form" && !showForm) openNewClientForm();
+        else sections.select(id);
+      }} />
+      <div className="page-section-panel" hidden={sections.active !== "list"}>
       {clientViewMode === "prego" && (
         <section className="cl-panel cl-prego-panel">
           <div>
@@ -1488,9 +1501,11 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
           <small>Somente compras com vencimento informado e já vencido.</small>
         </article>
       </div>
-
-      {showForm && <section className="cl-panel">{formFields}</section>}
-
+      </div>
+      <div className="page-section-panel" hidden={sections.active !== "form"}>
+        {showForm && <section className="cl-panel">{formFields}</section>}
+      </div>
+      <div className="page-section-panel" hidden={sections.active !== "list"}>
       <section className="cl-panel">
         <div className="cl-search">
           <LuSearch aria-hidden="true" />
@@ -1911,7 +1926,8 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
           </div>
         )}
       </section>
-
+      </div>
+      <div className="page-section-panel" hidden={sections.active !== "visits"}>
       <section className="cl-panel cl-visits">
         <header>
           <div>
@@ -1984,7 +2000,8 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
           </div>
         )}
       </section>
-
+      </div>
+      <div className="page-section-panel" hidden={sections.active !== "balances"}>
       <details className="cl-panel cl-check">
         <summary>
           <span>
@@ -2036,6 +2053,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
           </div>
         )}
       </details>
+      </div>
       {selectedReceiptSale && (
         <ReceiptViewer
           sale={selectedReceiptSale}

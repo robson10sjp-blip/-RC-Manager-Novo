@@ -1,5 +1,36 @@
 # Registro de retomada
 
+## Navegacao por secoes - 2026-10-30 (validada; publicacao pendente)
+
+- Base a8d9bc0; preservados os tres ZIPs preexistentes, configuracao,
+  regras e dados Firebase. Nenhuma escrita em producao.
+- Salvos barra compartilhada de secoes e paineis exclusivos em Clientes,
+  Vendas, Fornecedores e Secretaria. Formularios e historicos reutilizados,
+  sem alterar classificacao de vendas, pessoas, pagamentos ou estoque.
+- Acoes Novo/Editar e Pagar fornecedor abrem a secao correspondente.
+  Lista e formularios permanecem montados; busca e filtros sao preservados.
+  Trocas de secao guardam a posicao de rolagem da secao anterior.
+- Cheques reutiliza o historico e suas acoes de compensacao/correcao.
+  Secretaria separa resumo, cobrancas, tarefas/prioridades existentes e
+  conversa. Cartoes exibem quantidade/valor e abrem apenas um grupo ao toque.
+- Validacao final: 256 testes unitarios, lint e build passaram; apenas
+  avisos preexistentes de bundle/importacao dinamica. Navegador com Layout
+  e paginas reais em 1366/390 px, Firebase redirecionado aos emuladores
+  demo. Dados ficticios: 48 clientes/vendas, fornecedor e cheque.
+- Conferidos atalhos acessiveis apos rolar listas extensas, somente painel
+  ativo visivel, novo/editar venda e pagar fornecedor diretos, busca e
+  posicao de lista preservadas, campos e botoes sem corte/overflow.
+  Cartoes da Secretaria: 16 cobrancas de 100 em cada grupo, total 1.600
+  por grupo; nenhuma lista aberta antes do toque e apenas uma por vez.
+  Comparacao integral dos documentos antes/depois da navegacao sem alteracoes.
+- Revalidacao de visitas e compra familiar nas duas larguras: Maria 300
+  + Joao 200, uma venda de 500, recebimento 100, saldo 400, estoque 15,
+  edicao por diferenca, recarga e recibos PDF/PNG reais. Sem erros de
+  pagina/Console/Network nem requisicoes a Firebase de producao.
+- Nenhum teste autenticado na conta real. Proximos passos: revisao final,
+  commit/push e confirmacao do deploy oficial ativo. Nao declarar
+  publicacao concluida ate confirmar API e versao servida.
+
 ## Visitas e compra familiar - 2026-10-30 (publicada e conferida)
 
 - Base recebida limpa no commit d9adb1a, exceto os tres ZIPs preexistentes.

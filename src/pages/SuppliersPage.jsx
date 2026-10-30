@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { LuTruck } from "react-icons/lu";
 import PageHeader from "../components/PageHeader.jsx";
+import PageSectionNav from "../components/PageSectionNav.jsx";
+import usePageSection from "../hooks/usePageSection.js";
 import FinancialValue from "../components/FinancialValue.jsx";
 import CurrencyInput from "../components/CurrencyInput.jsx";
 import TripSelector from "../components/TripSelector.jsx";
@@ -97,6 +99,7 @@ const newIssuedCheck = () => ({
 });
 
 export default function SuppliersPage() {
+  const sections = usePageSection();
   const [suppliers, setSuppliers] = useState([]);
   const [payables, setPayables] = useState([]);
   const [trips, setTrips] = useState([]);
@@ -426,6 +429,7 @@ export default function SuppliersPage() {
   }
 
   function editSupplier(supplier) {
+    sections.select("list", { reset: true });
     setEditingId(supplier.id);
     setForm({
       name: supplier.name || "",
@@ -437,7 +441,6 @@ export default function SuppliersPage() {
       notes: supplier.notes || "",
     });
     setError("");
-    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   const payableSummary = useMemo(
@@ -1037,6 +1040,10 @@ export default function SuppliersPage() {
       Number(installment.amount || 0) > Number(installment.paidAmount || 0)
     );
 
+  const sectionSuppliers = visibleSuppliers.filter((supplier) => sections.active !== "checks" ||
+    scopedPayables.some((item) => item.supplierId === supplier.id &&
+      item.installments?.some((installment) => installment.method === "cheque")));
+
   return (
     <main className="suppliers-page">
       <PageHeader
@@ -1049,6 +1056,12 @@ export default function SuppliersPage() {
           <span>fornecedor(es)</span>
         </div>
       </PageHeader>
+      <PageSectionNav navigation={sections} label="Fornecedores" items={[
+        { id: "list", label: "Fornecedores" },
+        { id: "purchase", label: "Registrar compra" },
+        { id: "payment", label: "Pagar fornecedor" },
+        { id: "checks", label: "Cheques" },
+      ]} />
       <TripPeriodFilter scope={tripScope} label="Compras de fornecedores" />
 
       {readOnly && (
@@ -1060,7 +1073,7 @@ export default function SuppliersPage() {
       {error && <div className="suppliers-error" role="alert">{error}</div>}
       {notice && <div className="suppliers-notice" role="status">{notice}</div>}
 
-      <section className="supplier-payables-metrics" aria-label="Resumo de contas a pagar">
+      <section className="supplier-payables-metrics page-section-panel" hidden={!["list", "checks"].includes(sections.active)} aria-label="Resumo de contas a pagar">
         <article><span>Total devido a fornecedores</span><strong><FinancialValue>{formatCurrency(payableSummary.totalToPay)}</FinancialValue></strong></article>
         <article><span>Contas vencidas</span><strong>{payableSummary.overdueCount} · <FinancialValue>{formatCurrency(payableSummary.overdueTotal)}</FinancialValue></strong></article>
         <article><span>Contas a vencer (30 dias)</span><strong>{upcomingAccountCount} · <FinancialValue>{formatCurrency(payableSummary.upcomingTotal)}</FinancialValue></strong></article>
@@ -1068,8 +1081,9 @@ export default function SuppliersPage() {
         <article><span>Total já pago</span><strong><FinancialValue>{formatCurrency(payableSummary.totalPaid)}</FinancialValue></strong></article>
       </section>
 
-      <section className="suppliers-grid">
-        <form className="suppliers-card suppliers-form" onSubmit={handleSubmit}>
+      <section className="suppliers-grid page-section-panel" hidden={!["list", "checks"].includes(sections.active)}
+        style={sections.active === "checks" ? { gridTemplateColumns: "minmax(0, 1fr)" } : undefined}>
+        <form className="suppliers-card suppliers-form page-section-panel" hidden={sections.active === "checks"} onSubmit={handleSubmit}>
           <h2>{editingId ? "Editar fornecedor" : "Novo fornecedor"}</h2>
           <label>
             Nome *
@@ -1113,7 +1127,7 @@ export default function SuppliersPage() {
         <section className="suppliers-card">
           <div className="suppliers-list-heading">
             <div>
-              <h2>Fornecedores cadastrados</h2>
+              <h2>{sections.active === "checks" ? "Cheques por fornecedor" : "Fornecedores cadastrados"}</h2>
               <p>Dados privados da conta autenticada.</p>
             </div>
             <input
@@ -1126,11 +1140,11 @@ export default function SuppliersPage() {
           </div>
           {loading ? (
             <p className="suppliers-empty">Carregando fornecedores…</p>
-          ) : visibleSuppliers.length === 0 ? (
-            <p className="suppliers-empty">Nenhum fornecedor cadastrado ainda.</p>
+          ) : sectionSuppliers.length === 0 ? (
+            <p className="suppliers-empty">{sections.active === "checks" ? "Nenhum cheque encontrado nos filtros selecionados." : "Nenhum fornecedor encontrado."}</p>
           ) : (
             <div className="suppliers-list">
-              {visibleSuppliers.map((supplier) => (
+              {sectionSuppliers.map((supplier) => (
                 <article className="supplier-row" key={supplier.id}>
                   <div className="supplier-avatar" aria-hidden="true">🏢</div>
                   <div className="supplier-details">
@@ -1163,13 +1177,13 @@ export default function SuppliersPage() {
                     </small>
                   </div>
                   <div className="supplier-actions">
-                    <button type="button" onClick={() => setExpandedSupplierId((current) => current === supplier.id ? null : supplier.id)}>
+                    <button type="button" hidden={sections.active === "checks"} onClick={() => setExpandedSupplierId((current) => current === supplier.id ? null : supplier.id)}>
                       {expandedSupplierId === supplier.id ? "Ocultar histórico" : "Histórico"}
                     </button>
                     <button type="button" onClick={() => editSupplier(supplier)} disabled={readOnly}>Editar</button>
                     <button type="button" onClick={() => removeSupplier(supplier)} disabled={readOnly}>Excluir</button>
                   </div>
-                  {expandedSupplierId === supplier.id && (
+                  {(sections.active === "checks" || expandedSupplierId === supplier.id) && (
                     <div className="supplier-history">
                       <h4>Compras, parcelas e pagamentos</h4>
                       {scopedPayables.filter((item) => item.supplierId === supplier.id).length === 0 ? (
@@ -1177,7 +1191,8 @@ export default function SuppliersPage() {
                       ) : (
                         <div className="supplier-purchase-list">
                           {scopedPayables
-                            .filter((item) => item.supplierId === supplier.id)
+                            .filter((item) => item.supplierId === supplier.id && (sections.active !== "checks" ||
+                              item.installments?.some((installment) => installment.method === "cheque")))
                             .sort((first, second) =>
                               (toDate(second.purchaseDate)?.getTime() || 0) -
                               (toDate(first.purchaseDate)?.getTime() || 0)
@@ -1206,11 +1221,15 @@ export default function SuppliersPage() {
                                   <span>Parcelas: {(item.installments || []).length}</span>
                                 </div>
                                 <div className="supplier-purchase-actions">
+                                  <button type="button" onClick={() => {
+                                    setPayment((current) => ({ ...current, payableId: item.id }));
+                                    sections.select("payment", { reset: true });
+                                  }} disabled={readOnly || getPayableBalance(item) <= 0}>Pagar fornecedor</button>
                                   <button type="button" onClick={() => beginPurchaseEdit(item)} disabled={readOnly}>
                                     Editar compra
                                   </button>
                                 </div>
-                                {(item.installments || []).map((installment, index) => (
+                                {(item.installments || []).filter((installment) => sections.active !== "checks" || installment.method === "cheque").map((installment, index) => (
                                   <div className="supplier-installment" key={installment.id || index}>
                                     <span>
                                       {installment.method === "cheque" ? `Cheque nº ${installment.identification || "sem número"}` : `Parcela ${index + 1}`}
@@ -1683,7 +1702,7 @@ export default function SuppliersPage() {
         </div>
       )}
 
-      <section className="suppliers-purchases">
+      <section className="suppliers-purchases page-section-panel" hidden={sections.active !== "purchase"}>
         <div className="suppliers-section-heading">
           <div>
             <p className="suppliers-eyebrow">Mercadorias e obrigações</p>
@@ -2010,7 +2029,7 @@ export default function SuppliersPage() {
         </form>
       </section>
 
-      <section className="suppliers-card suppliers-payment-section">
+      <section className="suppliers-card suppliers-payment-section page-section-panel" hidden={sections.active !== "payment"}>
         <div className="suppliers-section-heading">
           <div>
             <p className="suppliers-eyebrow">Baixa financeira</p>

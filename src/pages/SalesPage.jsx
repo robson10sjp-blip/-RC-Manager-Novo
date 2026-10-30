@@ -64,6 +64,8 @@ import { auth, db } from "../firebase/config";
 import { runTransaction } from "../firebase/firestoreAccess";
 import "./ClientsPremium.css";
 import "./SalesPremium.css";
+import PageSectionNav from "../components/PageSectionNav.jsx";
+import usePageSection from "../hooks/usePageSection.js";
 import SalePeopleEditor, { SalePeopleSummary } from "../components/SalePeople.jsx";
 import { itemPersonFields, salePeopleFields, validateSalePeople } from "../domain/salePeople.js";
 
@@ -118,6 +120,7 @@ export default function SalesPage() {
     clientId: requestedClientId,
   }));
   const [showSaleForm, setShowSaleForm] = useState(Boolean(requestedClientId));
+  const sections = usePageSection(requestedClientId ? "form" : "list");
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [editingSaleId, setEditingSaleId] = useState(null);
@@ -526,6 +529,7 @@ export default function SalesPage() {
 
     setEditingSaleId(null);
     setShowSaleForm(false);
+    sections.select("list");
   }
 
   function handleEditSale(currentSale) {
@@ -533,13 +537,13 @@ export default function SalesPage() {
     const form = createSaleEditForm(currentSale);
     setEditingSaleId(currentSale.id);
     setShowSaleForm(true);
+    sections.select("form", { reset: true });
 
     setSale({
       ...form,
       items: form.items.length ? form.items : [{ ...emptyItem }],
     });
 
-    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function handleReceiveSale(currentSale) {
@@ -1616,12 +1620,16 @@ export default function SalesPage() {
           type="button"
           className="cl-btn cl-btn-primary cl-new"
           onClick={() => {
-            setShowSaleForm((current) => !current);
+            if (sections.active === "form") sections.select("list");
+            else {
+              setShowSaleForm(true);
+              sections.select("form", { reset: true });
+            }
           }}
-          aria-expanded={showSaleForm}
+          aria-expanded={sections.active === "form"}
           aria-controls="new-sale-form"
         >
-          {showSaleForm ? (
+          {sections.active === "form" ? (
             <><LuX aria-hidden="true" /> Fechar formulário</>
           ) : (
             <><LuPlus aria-hidden="true" /> Nova venda</>
@@ -1629,6 +1637,15 @@ export default function SalesPage() {
         </button>
       </PageHeader>
 
+      <PageSectionNav navigation={sections} label="Vendas" items={[
+        { id: "list", label: "Vendas registradas" },
+        { id: "form", label: editingSaleId ? "Editar venda" : "Nova venda" },
+        { id: "audit", label: "Diagnóstico de viagens" },
+      ]} onSelect={(id) => {
+        if (id === "form") setShowSaleForm(true);
+        sections.select(id);
+      }} />
+      <div className="page-section-panel" hidden={sections.active !== "list"}>
       <p className="sl-scope">
         Indicadores de: <strong>{tripFilterLabels[tripFilter]}</strong>
         {cityFilter !== "all" ? ` · ${cityFilter}` : ""}
@@ -1649,7 +1666,8 @@ export default function SalesPage() {
           );
         })}
       </div>
-
+      </div>
+      <div className="page-section-panel" hidden={sections.active !== "form"}>
       {showSaleForm && (
         <section id="new-sale-form" className="cl-panel sl-form">
             <form onSubmit={handleSubmit}>
@@ -2087,8 +2105,10 @@ export default function SalesPage() {
             </form>
         </section>
       )}
-
+      </div>
+      <div className="page-section-panel" hidden={sections.active !== "list" && sections.active !== "audit"}>
       <section className="cl-panel">
+        <div className="page-section-panel" hidden={sections.active !== "list"}>
         <div className="sl-heading">
           <h2>Vendas registradas</h2>
         </div>
@@ -2153,9 +2173,10 @@ export default function SalesPage() {
           </p>
         )}
 
-        {!loading && !salesLoadError && (
-          <details>
-            <summary>Diagnóstico de viagens (somente leitura)</summary>
+        </div>
+        {!loading && !salesLoadError && sections.active === "audit" && (
+          <section aria-label="Diagnóstico de viagens">
+            <h2>Diagnóstico de viagens (somente leitura)</h2>
             <p>
               {saleAudit.totals.count} vendas: {saleAudit.sources.saleDate} com data comercial explícita,
               {" "}{saleAudit.sources.createdAt} recuperadas do esquema original,
@@ -2183,9 +2204,10 @@ export default function SalesPage() {
                 {" "}· pendente <FinancialValue>{formatBRL(group.pending)}</FinancialValue>
               </p>
             ))}
-          </details>
+          </section>
         )}
 
+        <div className="page-section-panel" hidden={sections.active !== "list"}>
         {loading ? (
           <div className="cl-empty"><strong>Carregando vendas...</strong></div>
         ) : salesLoadError ? (
@@ -2295,7 +2317,9 @@ export default function SalesPage() {
             ))}
           </div>
         )}
+        </div>
       </section>
+      </div>
 
       {showReceipt && selectedReceiptSale && (
         <div style={styles.receiptModalOverlay}>
