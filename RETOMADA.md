@@ -1,6 +1,6 @@
 # Registro de retomada
 
-## Visitas e compra familiar - 2026-10-30 (implementacao validada)
+## Visitas e compra familiar - 2026-10-30 (publicada e conferida)
 
 - Base recebida limpa no commit d9adb1a, exceto os tres ZIPs preexistentes.
   Escopo: consultas anuais de visitas separadas da marcacao, compra com
@@ -27,9 +27,18 @@
   de IndexedDB ou dados do site. Sem migracao obrigatoria de vendas antigas.
 - Site oficial confirmado por API de leitura: vermillion-kataifi-a2fb8c,
   ID e3450bb0-1d89-41f9-bdcd-fb048753bcdd, ligado ao repo/main correto.
-- Etapa de entrega: commit/push e confirmar deploy oficial ativo por API,
-  comparando commit_ref e assets/Service Worker servidos. Resultado do
-  deploy deve ser confirmado antes de anunciar a conclusao.
+- Implementacao salva no commit e54bb9254a38c3906203557e66f0fc7866d0081a
+  e enviada a origin/main sem force. Deploy de producao
+  6ae4f6c7ba76c3a04ce7584e confirmado ready e publicado no site oficial,
+  com commit_ref correspondente, pela API Netlify.
+- HTTP oficial 200; bundle /assets/index-BNNB2eoy.js contem as duas
+  funcionalidades e o Service Worker referencia esse mesmo asset
+  (Cache-Control: no-cache). Login publicado aberto em 1366/390 px:
+  sem erros JS, falhas de rede ou escritas Firestore; worker activated.
+  Nao houve login na conta real nem teste de gravacao em producao.
+- Este registro de conclusao e documental; o codigo publicado permanece
+  o validado acima. Publicacao automatica do registro tambem deve ser
+  confirmada antes da resposta final. Nao ha etapa manual Firebase pendente.
   Previa readonly reiniciada em 4173 (sem tocar Codespace); testes de
   gravacao usaram apenas emuladores isolados. Nao ha regra nova a publicar.
 
