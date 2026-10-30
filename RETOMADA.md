@@ -1,6 +1,6 @@
 # Registro de retomada
 
-## Complemento de navegacao - 2026-10-30 (validado; publicacao pendente)
+## Complemento de navegacao - 2026-10-30 (publicado e conferido)
 
 - Base ee5823c, apenas tres ZIPs preexistentes fora do Git. Anexo recebido
   e somente leitura e nao foi modificado. Configuracao/regras/dados intactos.
@@ -29,7 +29,16 @@
   Comparacao dos documentos antes/depois sem alteracoes; nenhum erro de
   pagina/Console/Network e nenhuma chamada a Firebase de producao.
 - Nao houve teste autenticado na conta real nem limpeza de dados locais.
-  Proximos passos: revisao final do diff, commit/push e deploy oficial ativo.
+- Codigo salvo no commit fabe850 e enviado a origin/main sem force.
+  Deploy 6ae5004cb37822045caae6f6 confirmado ready e ativo no site oficial
+  pela API, com commit_ref correspondente:
+  https://vermillion-kataifi-a2fb8c.netlify.app
+- HTTP 200, bundle /assets/index-1GOSnDOy.js confirmado com novos atalhos.
+  Service Worker usa esse bundle (Cache-Control: no-cache). Login oficial
+  aberto em 1366/390 px: worker activated, sem erros de Console/Network,
+  overflow ou escritas Firestore. Nenhum dado local foi limpo.
+- Nenhuma etapa manual Firebase pendente. Este registro final e apenas
+  documental; confirmar seu deploy automatico antes de encerrar.
 
 ## Navegacao por secoes - 2026-10-30 (publicada e conferida)
 
