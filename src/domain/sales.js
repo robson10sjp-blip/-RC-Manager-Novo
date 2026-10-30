@@ -2,6 +2,7 @@ import { toDate, toDateInputValue } from "../utils/dates.js";
 import { isPersonalWithdrawal } from "./expenses.js";
 import { getRecordTripId, getTripOptionLabel } from "./tripIdentity.js";
 import { saleDateInput, getSaleDate, getSaleDateInput, getSaleTrip, resolveSaleCalendar } from "./saleTrip.js";
+import { itemPersonFields, salePeopleFields } from "./salePeople.js";
 
 function money(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -19,15 +20,18 @@ export function createSaleEditForm(sale) {
     tripName: sale.tripName || "",
     tripId: getRecordTripId(sale),
     tripCity: sale.tripCity || "",
+    ...(sale.people?.length ? { people: sale.people.map((person) => ({ ...person })) } : {}),
     items: (sale.items || []).map((item) => ({
       productId: item.productId || "",
       quantity: Number(item.quantity ?? 1),
       price: String(item.unitPrice ?? item.price ?? 0),
+      ...itemPersonFields(item, sale),
     })),
   };
 }
 
 export function buildSaleDateUpdate(stored, form) {
+  const peopleFields = salePeopleFields(form);
   const date = saleDateInput(form.saleDate);
   if (!date) throw new Error("Informe uma data da venda válida.");
   const original = createSaleEditForm(stored);
@@ -42,10 +46,14 @@ export function buildSaleDateUpdate(stored, form) {
         item.quantity !== Number(edited.quantity) || Number(item.price) !== Number(edited.price);
     })) return null;
 
-  // A calendar/city correction must not reconcile legacy debt or rewrite purchase amounts/items.
+  // Calendar/allocation edits preserve balances and historical item data.
   return {
     ...(original.saleDate !== date ? { saleDate: new Date(`${date}T12:00:00-03:00`) } : {}),
     ...(original.tripCity.trim() !== form.tripCity.trim() ? { tripCity: form.tripCity.trim() } : {}),
+    ...(JSON.stringify(stored.people || []) !== JSON.stringify(peopleFields.people || [])
+      ? { people: peopleFields.people || [] } : {}),
+    ...(original.items.some((item, index) => item.personId !== items[index]?.personId)
+      ? { items: stored.items.map((item, index) => ({ ...item, ...itemPersonFields(items[index], form) })) } : {}),
   };
 }
 

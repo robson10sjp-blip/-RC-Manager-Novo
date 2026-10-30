@@ -1,5 +1,6 @@
 import { forwardRef } from 'react';
 import { getRecordTripId, getTripOptionLabel } from '../../domain/tripIdentity.js';
+import { buildPersonReceiptRows } from '../../domain/salePeople.js';
 import './ReceiptTemplate.css';
 
 const SINGLE_PAGE_ROWS = 9;
@@ -203,7 +204,7 @@ const number = String(savedNumber || "")
   .replace(/[^a-z\d]/gi, "")
   .slice(-6);
 
-  const rows = items.map((item, index) => {
+  const rows = buildPersonReceiptRows(items.map((item, index) => {
     const quantity = Number(item.quantity || item.qty || item.quantidade || 1);
 
     const unitPrice = Number(
@@ -227,8 +228,8 @@ const number = String(savedNumber || "")
       item.produto ||
       'Produto';
 
-    return { key: item.id || `${name}-${index}`, quantity, unitPrice, subtotal, name };
-  });
+    return { key: item.id || `${name}-${index}`, quantity, unitPrice, subtotal, name, personId: item.personId };
+  }), sale);
 
   const pages = paginateRows(rows);
   const receiptCode = /^\d+$/.test(number)
@@ -323,10 +324,15 @@ const number = String(savedNumber || "")
                     {page.rows.length > 0 ? (
                       page.rows.map((row) => (
                         <tr key={row.key}>
-                          <td>{row.name}</td>
-                          <td>{row.quantity}</td>
-                          <td>{formatCurrency(row.unitPrice)}</td>
-                          <td>{formatCurrency(row.subtotal)}</td>
+                          {row.type === 'person' ? <td colSpan={4}><strong>{row.name}{row.relationship ? ` · ${row.relationship}` : ''}</strong></td>
+                            : row.type === 'subtotal' ? <>
+                              <td colSpan={3}><strong>Subtotal · {row.name}</strong></td><td><strong>{formatCurrency(row.subtotal)}</strong></td>
+                            </> : <>
+                              <td>{row.name}</td>
+                              <td>{row.quantity}</td>
+                              <td>{formatCurrency(row.unitPrice)}</td>
+                              <td>{formatCurrency(row.subtotal)}</td>
+                            </>}
                         </tr>
                       ))
                     ) : (

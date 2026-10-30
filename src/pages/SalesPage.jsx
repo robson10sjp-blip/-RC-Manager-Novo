@@ -64,6 +64,8 @@ import { auth, db } from "../firebase/config";
 import { runTransaction } from "../firebase/firestoreAccess";
 import "./ClientsPremium.css";
 import "./SalesPremium.css";
+import SalePeopleEditor, { SalePeopleSummary } from "../components/SalePeople.jsx";
+import { itemPersonFields, salePeopleFields, validateSalePeople } from "../domain/salePeople.js";
 
 const emptyItem = {
   productId: "",
@@ -427,7 +429,7 @@ export default function SalesPage() {
   function addItem() {
     setSale((current) => ({
       ...current,
-      items: [...current.items, { ...emptyItem }],
+      items: [...current.items, { ...emptyItem, ...(current.people?.length ? { personId: current.people[0].id } : {}) }],
     }));
   }
 
@@ -1031,6 +1033,8 @@ export default function SalesPage() {
       alert("Informe uma data da compra válida.");
       return;
     }
+    try { validateSalePeople(sale); }
+    catch (error) { alert(error.message); return; }
 
     const originalSale = editingSaleId
       ? sales.find((currentSale) => currentSale.id === editingSaleId)
@@ -1087,20 +1091,6 @@ export default function SalesPage() {
     if (invalidItem) {
       alert(
         "Confira os produtos, quantidades e preços da venda."
-      );
-      return;
-    }
-
-    const productIds = sale.items.map(
-      (item) => item.productId
-    );
-
-    const hasDuplicatedProduct =
-      new Set(productIds).size !== productIds.length;
-
-    if (hasDuplicatedProduct) {
-      alert(
-        "O mesmo produto foi adicionado mais de uma vez. Ajuste a quantidade em uma única linha."
       );
       return;
     }
@@ -1228,6 +1218,8 @@ export default function SalesPage() {
             });
           }
 
+          const requestedQuantities = calculateStockDeltas([], sale.items);
+          const updatedProducts = new Set();
           const savedItems = productSnapshots.map(
             ({ item, reference, snapshot }) => {
               if (!snapshot.exists()) {
@@ -1246,19 +1238,21 @@ export default function SalesPage() {
                 item.quantity || 0
               );
 
-              if (saleQuantity > currentQuantity) {
+              const productQuantity = requestedQuantities.get(item.productId);
+              if (productQuantity > currentQuantity) {
                 throw new Error(
                   `Estoque insuficiente para ${product.name}. Disponível: ${currentQuantity}.`
                 );
               }
 
-              transaction.update(reference, {
+              if (!updatedProducts.has(item.productId)) transaction.update(reference, {
                 quantity: updateStockAfterSale(
                   currentQuantity,
-                  saleQuantity
+                  productQuantity
                 ),
                 updatedAt: serverTimestamp(),
               });
+              updatedProducts.add(item.productId);
 
               return {
                 productId: snapshot.id,
@@ -1273,6 +1267,7 @@ export default function SalesPage() {
                 subtotal:
                   saleQuantity *
                   Number(item.price || 0),
+                ...itemPersonFields(item, sale),
               };
             }
           );
@@ -1287,6 +1282,7 @@ export default function SalesPage() {
               selectedClient?.name ||
               "",
             items: savedItems,
+            ...salePeopleFields(sale),
             total,
             amountPaid,
             pendingAmount,
@@ -1469,6 +1465,7 @@ export default function SalesPage() {
             quantity: newQuantity,
             unitPrice,
             subtotal: newQuantity * unitPrice,
+            ...itemPersonFields(newItem, sale),
           };
         }
 
@@ -1490,6 +1487,7 @@ export default function SalesPage() {
           quantity: newQuantity,
           unitPrice,
           subtotal: newQuantity * unitPrice,
+          ...itemPersonFields(newItem, sale),
         };
       });
 
@@ -1564,17 +1562,16 @@ export default function SalesPage() {
           selectedClient?.name ||
           "",
         items: savedItems,
+        ...salePeopleFields(sale),
         total,
         amountPaid: savedPaid,
         pendingAmount: updatedPending,
         paymentMethod: sale.paymentMethod,
         status: updatedPending === 0 ? "paid" : savedPaid > 0 ? "partial" : "pending",
-        saleDate: getSaleDateInput(oldSale) === sale.saleDate && oldSale.saleDate
-          ? oldSale.saleDate
-          : new Date(`${sale.saleDate}T12:00:00-03:00`),
-        dueDate: sale.dueDate
-          ? new Date(`${sale.dueDate}T12:00:00`)
-          : null,
+        ...(getSaleDateInput(oldSale) !== sale.saleDate
+          ? { saleDate: new Date(`${sale.saleDate}T12:00:00-03:00`) } : {}),
+        ...(createSaleEditForm(oldSale).dueDate !== sale.dueDate
+          ? { dueDate: sale.dueDate ? new Date(`${sale.dueDate}T12:00:00`) : null } : {}),
         tripCity: sale.tripCity.trim(),
         updatedAt: serverTimestamp(),
       });
@@ -1798,7 +1795,7 @@ export default function SalesPage() {
                   }
                   setQuickMode((current) => !current);
                 }}
-                disabled={saving}
+                disabled={saving || Boolean(sale.people?.length)}
                 style={styles.addButton}
               >
                 {quickMode ? "Venda tradicional" : "⚡ Venda Rápida"}
@@ -1827,6 +1824,11 @@ export default function SalesPage() {
               onFinish={scrollToFinishSale}
             />
           )}
+
+          <SalePeopleEditor sale={sale} onChange={(next) => {
+            setSale(next);
+            if (next.people?.length) setQuickMode(false);
+          }} responsibleName={selectedClient?.name} products={products} disabled={saving} />
 
           <div style={styles.itemsList}>
             {!quickMode && sale.items.map((item, index) => {
@@ -2252,14 +2254,14 @@ export default function SalesPage() {
                     <span title={currentSale.id}>Compra #{String(currentSale.id).slice(-6)}</span>
                   </div>
 
-                  <ul className="sl-products">
+                  {currentSale.people?.length ? <SalePeopleSummary sale={currentSale} /> : <ul className="sl-products">
                     {(currentSale.items || []).map((item, index) => (
                       <li key={`${currentSale.id}-${index}`}>
                         <span>{item.quantity}x {formatItemLabel(item)}</span>
                         <strong><FinancialValue>{formatCurrency(item.subtotal)}</FinancialValue></strong>
                       </li>
                     ))}
-                  </ul>
+                  </ul>}
 
                   <dl className="sl-values">
                     <div><dt>Total</dt><dd><FinancialValue>{formatSaleAmount(currentSale.total)}</FinancialValue></dd></div>

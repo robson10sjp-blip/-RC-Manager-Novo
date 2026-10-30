@@ -43,6 +43,7 @@ import {
 import { toDate, toDateInputValue } from "../utils/dates";
 import {
   buildClientVisitSummary,
+  buildClientVisitHistory,
   hasGiftForTrip,
   resolveClientTripVisitStatus,
   validateGiftQuantity,
@@ -80,6 +81,7 @@ import {
 import { getSalePendingAmount } from "../domain/financeReceivables";
 import ReceiptViewer from "../components/receipts/ReceiptViewer.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
+import { SalePeopleSummary } from "../components/SalePeople.jsx";
 import TripSelector from "../components/TripSelector.jsx";
 import TripPeriodFilter from "../components/TripPeriodFilter.jsx";
 import useTripScope, { useViewState } from "../hooks/useTripScope.js";
@@ -380,6 +382,9 @@ export default function ClientsPage() {
     [sales]
   );
   const tripScope = useTripScope("clients", purchaseTrips);
+  const visitQuery = useTripScope("clients:visits", [...knownTrips, ...purchaseTrips]);
+  const visitSelection = visitQuery.selection === "all" ? `year-${visitQuery.year}` : visitQuery.selection;
+  const allVisitTrips = visitSelection.startsWith("year-");
   const tripFilter = tripScope.selection;
   const setTripFilter = tripScope.setSelection;
   const scopedSales = useMemo(() => filterRecordsByTrip(sales, tripFilter, tripScope.filterOptions),
@@ -516,10 +521,13 @@ export default function ClientsPage() {
 
   const { rows: visitRows, counts: visitCounts } = useMemo(
     () => buildClientVisitSummary({
-      clients, city: visitCity, tripId: visitTripId, visitRecords, sales, tripOptions: knownTrips,
+      clients, city: visitCity, tripId: visitSelection, visitRecords, sales, tripOptions: knownTrips,
     }),
-    [clients, sales, visitCity, visitRecords, visitTripId, knownTrips]
+    [clients, sales, visitCity, visitRecords, visitSelection, knownTrips]
   );
+  const visitHistory = useMemo(() => buildClientVisitHistory({
+    clients, city: visitCity, year: visitQuery.year, visitRecords, sales, tripOptions: knownTrips,
+  }), [clients, visitCity, visitQuery.year, visitRecords, sales, knownTrips]);
 
   const visibleVisitRows = visitRows.filter(
     (entry) => entry.status === visitStatusFilter
@@ -552,10 +560,13 @@ export default function ClientsPage() {
             ))}
           </select>
         </label>
+        <TripPeriodFilter scope={{ ...visitQuery, selection: visitSelection }}
+          label="Consulta de visitas" allowGeneral={false} />
         <TripSelector
           userId={userId}
           options={knownTrips}
           value={visitTripId}
+          label="Viagem da marcação"
           disabled={savingClientRecord || loadingTrips || Boolean(tripLoadError)}
           onChange={(trip) => {
             setVisitError("");
@@ -563,8 +574,21 @@ export default function ClientsPage() {
             setVisitTripName(trip.name);
           }}
         />
+        <p role="status">Marcar em: {visitTripName || "Escolha a viagem da marcação"}</p>
       </div>
     );
+  }
+
+  function renderVisitAction(client) {
+    const status = resolveClientTripVisitStatus({
+      client, city: client.city, tripId: visitTripId, visitRecords, sales, tripOptions: knownTrips,
+    });
+    if (status === "bought") return <span className="cl-visit-bought">Comprou · {visitTripName}</span>;
+    return <button type="button" className="cl-btn cl-btn-soft"
+      disabled={savingClientRecord || visitWritesBlocked || !visitTripId}
+      onClick={() => handleVisitStatus(client, status === "not_purchased" ? "unvisited" : "not_purchased")}>
+      {status === "not_purchased" ? "Desfazer marcação" : "Não comprou"} · {visitTripName || "Escolha a viagem"}
+    </button>;
   }
 
   const hasActiveFilters =
@@ -611,6 +635,16 @@ export default function ClientsPage() {
 
   async function handleVisitStatus(client, status) {
     if (clientRecordLock.current || visitWritesBlocked) return;
+    if (!visitTripId || visitTripId === "all" || visitTripId.startsWith("year-")) {
+      setVisitError("Escolha a viagem da marcação antes de salvar.");
+      return;
+    }
+    if (status === "not_purchased" && resolveClientTripVisitStatus({
+      client, city: client.city, tripId: visitTripId, tripOptions: knownTrips, sales, visitRecords,
+    }) === "bought") {
+      setVisitError("Esta cliente já comprou na viagem da marcação.");
+      return;
+    }
     if (!actionDate) {
       alert("Selecione a data da visita.");
       return;
@@ -1756,6 +1790,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                                   <div><dt>Recebido</dt><dd><FinancialValue>{formatCurrency(received)}</FinancialValue></dd></div>
                                   <div><dt>Saldo</dt><dd><FinancialValue>{formatCurrency(pending)}</FinancialValue></dd></div>
                                 </dl>
+                                <SalePeopleSummary sale={purchase} />
                                 <button
                                   type="button"
                                   className="cl-btn cl-btn-gold"
@@ -1788,6 +1823,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                               onChange={(event) => setActionDate(event.target.value)} />
                           </label>
                           <TripSelector userId={userId} options={knownTrips} value={visitTripId} disabled={savingClientRecord}
+                            label="Viagem da marcação"
                             onChange={(trip) => {
                               setVisitTripId(trip.id);
                               setVisitTripName(trip.name);
@@ -1821,7 +1857,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
                             disabled={
                               savingClientRecord ||
                               visitWritesBlocked ||
-                              !client.city || !actionDate
+                              !client.city || !actionDate || !visitTripId
                             }
                           >
                             {clientVisitStatus === "not_purchased"
@@ -1880,11 +1916,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
         <header>
           <div>
             <h2>Visitas por cidade e viagem</h2>
-            <p>
-              Escolha a cidade e a viagem manualmente. Uma nova viagem começa
-              sem herdar as marcações anteriores. “Comprou” exige uma venda
-              vinculada ao mesmo ID de cliente e ao mesmo identificador de viagem.
-            </p>
+            <p>Consulte o histórico por cidade e ano. A viagem da marcação é escolhida separadamente.</p>
           </div>
         </header>
         {renderVisitScope()}
@@ -1897,7 +1929,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
         {tripLoadError && <p className="cl-record-error" role="alert">{tripLoadError}</p>}
         {visitError && <p className="cl-record-error" role="alert">{visitError}</p>}
 
-        <div className="cl-visit-tabs" role="tablist" aria-label="Situação da visita">
+        {!allVisitTrips && <div className="cl-visit-tabs" role="tablist" aria-label="Situação da visita">
           {[
             ["unvisited", "Falta visitar"],
             ["not_purchased", "Não comprou"],
@@ -1914,46 +1946,39 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
               {label} <span>{visitCounts[status]}</span>
             </button>
           ))}
-        </div>
+        </div>}
 
-        {!visitCity || !visitTripName.trim() ? (
+        {!visitCity ? (
           <p className="cl-empty-purchases">
-            Selecione uma cidade e uma viagem para consultar ou marcar visitas.
+            Selecione uma cidade para consultar as visitas.
           </p>
+        ) : allVisitTrips ? (
+          <div className="cl-visit-list">
+            <p>{visitHistory.length} cliente(s) · Todas as viagens de {visitQuery.year}</p>
+            {visitHistory.map(({ client, periods }) => <article key={client.id} className="cl-visit-row">
+              <div><strong>{client.name}</strong><span>{getClientCityDisplay(client.city)}</span><small>ID: {client.id}</small>
+                {periods.map((period) => <span key={period.id}>
+                  {period.name}: {period.status === "bought" ? "Comprou" : period.status === "not_purchased" ? "Não comprou" : "Falta visitar"}
+                  {period.status === "bought" && period.wasMarked ? " · marcação anterior preservada" : ""}
+                </span>)}
+              </div>
+              {renderVisitAction(client)}
+            </article>)}
+          </div>
         ) : visibleVisitRows.length === 0 ? (
           <p className="cl-empty-purchases">
             Nenhuma cliente nesta situação para a cidade e viagem selecionadas.
           </p>
         ) : (
           <div className="cl-visit-list">
-            {visibleVisitRows.map(({ client, status }) => (
+            {visibleVisitRows.map(({ client }) => (
               <article key={client.id} className="cl-visit-row">
                 <div>
                   <strong>{client.name}</strong>
                   <span>{getClientCityDisplay(client.city)}</span>
                   <small>ID: {client.id}</small>
                 </div>
-                {status === "not_purchased" ? (
-                  <button
-                    type="button"
-                    className="cl-btn cl-btn-soft"
-                    onClick={() => handleVisitStatus(client, "unvisited")}
-                    disabled={savingClientRecord || visitWritesBlocked}
-                  >
-                    Desfazer marcação
-                  </button>
-                ) : status === "unvisited" ? (
-                  <button
-                    type="button"
-                    className="cl-btn cl-btn-soft"
-                    onClick={() => handleVisitStatus(client, "not_purchased")}
-                    disabled={savingClientRecord || visitWritesBlocked}
-                  >
-                    Não comprou
-                  </button>
-                ) : (
-                  <span className="cl-visit-bought">Venda registrada</span>
-                )}
+                {renderVisitAction(client)}
               </article>
             ))}
           </div>

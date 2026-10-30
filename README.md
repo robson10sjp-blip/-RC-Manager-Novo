@@ -1,5 +1,13 @@
 # React + Vite
 
+## Visitas e compras da mesma casa
+
+- Em Clientes, a consulta de visitas combina cidade, ano e viagem (ou todas as viagens do ano), sem alterar o destino das marcacoes. O historico anual mostra cada cliente uma vez e cada viagem separadamente. Compra e reconhecida pelo ID da cliente e pela mesma data comercial usada em Vendas/Financeiro; recebimentos nao criam compras. Vendas prevalecem sobre "Nao comprou", sem apagar marcacoes antigas.
+- A viagem da marcacao e escolhida separadamente e mantida para as proximas clientes da tela. O servico recusa `all` e `year-*` como destino; nao existe marcacao manual de "Comprou".
+- Vendas permite adicionar pessoas por nome/parentesco e atribuir cada item a uma delas. `people` e metadado da mesma venda; `items[].personId` identifica a pessoa. Nao sao criados cadastros, dividas ou pagamentos separados. Remover pessoa com itens exige reatribuicao.
+- Os detalhes da venda, Compras e Recibos e o recibo premium mostram grupos/subtotais por pessoa; PNG e PDF usam o mesmo recibo. Sem `people`, a apresentacao antiga permanece. O total e calculado pelos itens e recebimentos continuam vinculados ao unico ID da venda.
+- Produtos repetidos entre pessoas sao somados antes da baixa inicial; edicoes usam a diferenca agregada por produto. Alterar apenas nomes/atribuicoes nao muda estoque, saldos, pagamentos nem datas. Nenhuma migracao ou regra Firestore nova e necessaria.
+
 ## Selecao anual compartilhada
 
 - Dashboard, Vendas, historico de compras das Clientes, Financeiro, Despesas/retiradas, compras de Fornecedores e resumo/cobrancas da Secretaria usam [TripPeriodFilter](./src/components/TripPeriodFilter.jsx) e a identidade compartilhada em [tripIdentity.js](./src/domain/tripIdentity.js). O menu tem somente Geral (todos os anos), todas as viagens do ano selecionado e as quatro viagens desse ano, inclusive vazias. Ao trocar o ano, a viagem numerada e mantida quando possivel. Selecao antiga de registros sem vinculo/revisao passa a Geral.

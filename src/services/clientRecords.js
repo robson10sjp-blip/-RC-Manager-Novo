@@ -58,6 +58,9 @@ export async function recordClientVisit({
   status,
   existingRecord = null,
 }) {
+  if (tripId === "all" || /^year-/.test(tripId)) {
+    throw new Error("Escolha uma viagem específica para salvar a marcação.");
+  }
   if (!["not_purchased", "unvisited"].includes(status)) {
     throw new Error("Situação de visita inválida.");
   }

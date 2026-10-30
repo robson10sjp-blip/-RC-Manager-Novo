@@ -1,6 +1,6 @@
 import { getClientCityKey } from "./clientCities.js";
 import { getRecordTripId, getTripNumberYear, sameTripPeriod } from "./tripIdentity.js";
-import { getSaleTrip } from "./saleTrip.js";
+import { getSaleTrip, getSaleYearTrips } from "./saleTrip.js";
 
 export function validateActionDate(value) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
@@ -12,6 +12,9 @@ export function validateActionDate(value) {
 }
 
 export function createVisitRecordId(clientId, tripId, city, actionDate) {
+  if (tripId === "all" || /^year-/.test(tripId)) {
+    throw new Error("Escolha uma viagem específica para salvar a marcação.");
+  }
   const cityKey = getClientCityKey(city);
   const scope = tripId || (actionDate ? `date-${validateActionDate(actionDate)}` : "");
   if (!scope || !clientId || !cityKey) {
@@ -78,6 +81,25 @@ export function buildClientVisitSummary({ clients, city, tripId, tripName, visit
   const counts = { unvisited: 0, not_purchased: 0, bought: 0 };
   for (const row of rows) counts[row.status] += 1;
   return { rows, counts };
+}
+
+export function buildClientVisitHistory({ clients, city, year, visitRecords = [], sales = [], tripOptions = [] }) {
+  const periods = getSaleYearTrips(year);
+  const unique = new Map(clients.map((client) => [client.id, client]));
+  return [...unique.values()]
+    .filter((client) => getClientCityKey(client.city) === getClientCityKey(city))
+    .map((client) => ({
+      client,
+      periods: periods.map((period) => ({
+        ...period,
+        status: resolveClientTripVisitStatus({
+          client, city, tripId: period.id, sales, visitRecords, tripOptions,
+        }),
+        wasMarked: findClientTripVisit({
+          client, city, tripId: period.id, visitRecords, tripOptions,
+        })?.status === "not_purchased",
+      })),
+    }));
 }
 
 export function validateGiftQuantity(quantity, stock) {

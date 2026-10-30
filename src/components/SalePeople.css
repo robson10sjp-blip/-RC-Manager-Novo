@@ -1,0 +1,7 @@
+.sale-people-editor { margin: 18px 0; min-width: 0; }
+.sale-people-heading, .sale-person-fields { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; margin-bottom: 12px; }
+.sale-people-editor label { display: grid; gap: 6px; flex: 1 1 180px; min-width: 0; margin-bottom: 10px; font-size: 13px; }
+.sale-people-editor input, .sale-people-editor select { box-sizing: border-box; width: 100%; min-width: 0; padding: 10px; border: 1px solid #d7dce4; border-radius: 10px; background: #fff; color: #172033; font: inherit; }
+.sale-people-summary { display: grid; gap: 10px; margin: 12px 0; min-width: 0; overflow-wrap: anywhere; }
+.sale-people-summary section { border-left: 3px solid #c9a85d; padding-left: 12px; }
+.sale-people-summary ul { padding-left: 18px; font-size: 13px; }

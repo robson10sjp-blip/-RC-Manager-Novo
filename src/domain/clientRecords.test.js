@@ -3,12 +3,50 @@ import test from "node:test";
 import {
   calculateGiftCost,
   buildClientVisitSummary,
+  buildClientVisitHistory,
   createVisitRecordId,
   hasGiftForTrip,
   resolveClientTripVisitStatus,
   validateGiftQuantity,
   validateActionDate,
 } from "./clientRecords.js";
+
+test("visit history groups by client ID and year without carrying third-trip purchases into fourth", () => {
+  const clients = [
+    { id: "maria", name: "Maria", city: "Tucumã" },
+    { id: "other-maria", name: "Maria", city: "Xinguara" },
+    { id: "paid", name: "Ana", city: "Tucumã" },
+    { id: "partial", name: "Bia", city: "Tucumã" },
+    { id: "pending", name: "Clara", city: "Tucumã" },
+  ];
+  const sales = [
+    { clientId: "maria", createdAt: "2026-08-15", total: 100, items: [{ quantity: 1 }], amountPaid: 0, pendingAmount: 100 },
+    ...["paid", "partial", "pending"].map((clientId, index) => ({
+      clientId, saleDate: "2026-10-25", tripId: "stale-third-id", total: 100, amountPaid: [100, 50, 0][index],
+    })),
+    { clientId: "other-maria", saleDate: "2026-10-25", total: 100 },
+  ];
+  const visitRecords = [{ clientId: "partial", city: "Tucumã", tripId: "historical-fourth", status: "not_purchased" }];
+  const tripOptions = [{ id: "historical-fourth", tripNumber: 4, tripYear: 2026 }];
+  const input = { clients, city: "Tucumã", sales, visitRecords, tripOptions };
+  const before = JSON.stringify(input);
+  const fourth = buildClientVisitSummary({ ...input, tripId: "trip-2026-4" });
+  assert.deepEqual(fourth.counts, { unvisited: 1, bought: 3, not_purchased: 0 });
+  assert.equal(fourth.rows.find((row) => row.client.id === "maria").status, "unvisited");
+  const history = buildClientVisitHistory({ ...input, clients: [...clients, clients[0]], year: 2026 });
+  assert.equal(history.length, 4);
+  assert.equal(history[0].periods[2].status, "bought");
+  assert.equal(history[0].periods[3].status, "unvisited");
+  const partial = history.find((row) => row.client.id === "partial").periods[3];
+  assert.equal(partial.status, "bought");
+  assert.equal(partial.wasMarked, true);
+  assert.equal(buildClientVisitHistory({ ...input, year: 2027 }).every((row) =>
+    row.periods.every((period) => period.status === "unvisited")), true);
+  assert.equal(JSON.stringify(input), before);
+  for (const tripId of ["all", "year-2026"]) {
+    assert.throws(() => createVisitRecordId("maria", tripId, "Tucumã", "2026-10-30"), /específica/);
+  }
+});
 
 test("calendar visit status separates dates and never infers travel or purchases by date", () => {
   const client = { id: "a", city: "Tucumã" };

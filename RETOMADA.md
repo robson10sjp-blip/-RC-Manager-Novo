@@ -1,5 +1,38 @@
 # Registro de retomada
 
+## Visitas e compra familiar - 2026-10-30 (implementacao validada)
+
+- Base recebida limpa no commit d9adb1a, exceto os tres ZIPs preexistentes.
+  Escopo: consultas anuais de visitas separadas da marcacao, compra com
+  pessoas dentro de uma unica venda e agrupamento no recibo premium.
+- Salvos helpers de pessoas, editor e resumo; itens guardam personId e a
+  venda guarda people. Total, pagamento e estoque continuam por venda.
+  Baixa inicial agrega quantidades do mesmo produto entre pessoas.
+- Salvos consulta anual de visitas por cidade, historico por cliente/
+  viagem e destino da marcacao separado. Nao grava em escopo anual.
+- Nenhum dado real foi gravado. Nenhuma regra Firebase alterada.
+- Validacao final: 256 unitarios, 41 regras/servicos passaram; lint e
+  build passaram (avisos preexistentes de bundle/importacao dinamica).
+  Navegador com as paginas reais de Clientes e Vendas em 1366/390 px,
+  redirecionando Firebase SOMENTE aos emuladores locais demo:
+  marca "Nao comprou" na 4a consultando todas, cria Maria 300 + Joao 200
+  com o mesmo produto, edita nomes, recebe 100 uma vez e edita parentesco
+  apos pagamento. Edicoes de quantidade conferiram estoque 15 -> 14 -> 15,
+  aplicando apenas a diferenca. Recarrega a pagina e confere venda de 500, saldo 400,
+  estoque 20 -> 15, um pagamento, uma marcacao e compra prevalecendo.
+  Sem erros de pagina ou chamadas aos endpoints Firebase de producao.
+- Recibo com nome/subtotal agrupados gerou PDF e PNG pelas funcoes
+  existentes do app em ambos os tamanhos; cabecalhos de arquivo e tamanho
+  verificados. Sem overflow horizontal em notebook/celular. Sem limpeza
+  de IndexedDB ou dados do site. Sem migracao obrigatoria de vendas antigas.
+- Site oficial confirmado por API de leitura: vermillion-kataifi-a2fb8c,
+  ID e3450bb0-1d89-41f9-bdcd-fb048753bcdd, ligado ao repo/main correto.
+- Etapa de entrega: commit/push e confirmar deploy oficial ativo por API,
+  comparando commit_ref e assets/Service Worker servidos. Resultado do
+  deploy deve ser confirmado antes de anunciar a conclusao.
+  Previa readonly reiniciada em 4173 (sem tocar Codespace); testes de
+  gravacao usaram apenas emuladores isolados. Nao ha regra nova a publicar.
+
 ## Simplificacao dos filtros - 2026-10-24 (validada)
 
 - Menu unico nas sete abas aplicaveis: Geral (todos os anos), todas as
