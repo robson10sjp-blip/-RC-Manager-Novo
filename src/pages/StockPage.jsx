@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import PageHeader from "../components/PageHeader.jsx";
+import PageSectionNav from "../components/PageSectionNav.jsx";
+import usePageSection from "../hooks/usePageSection.js";
 import FinancialValue from "../components/FinancialValue.jsx";
 import { onAuthStateChanged } from "firebase/auth";
 import {
@@ -14,11 +16,9 @@ import {
   LuBoxes,
   LuChartNoAxesCombined,
   LuCircleDollarSign,
-  LuHistory,
   LuPackageCheck,
   LuPackageMinus,
   LuPackageSearch,
-  LuPlane,
   LuTriangleAlert,
 } from "react-icons/lu";
 
@@ -37,6 +37,8 @@ import { toDate } from "../utils/dates";
 import "./StockPremium.css";
 
 export default function StockPage() {
+  const navigation = usePageSection();
+  const activeSection = navigation.active;
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
   const [movements, setMovements] = useState([]);
@@ -53,7 +55,6 @@ export default function StockPage() {
   const [planningProductId, setPlanningProductId] = useState("");
   const [planningQuantity, setPlanningQuantity] = useState("1");
   const [tripPlan, setTripPlan] = useState([]);
-  const [activeSection, setActiveSection] = useState("reposição");
   const readOnly = isFirestoreReadOnly();
 
   useEffect(() => {
@@ -224,10 +225,11 @@ export default function StockPage() {
   );
 
   const sections = [
-    { id: "reposição", label: "Reposição", icon: LuPackageSearch, count: restockProducts.length },
-    { id: "histórico", label: "Movimentações", icon: LuHistory, count: stockActivity.length },
-    { id: "análise", label: "Análise de vendas", icon: LuChartNoAxesCombined },
-    { id: "viagens", label: "Planejamento", icon: LuPlane, count: tripPlan.length },
+    { id: "list", label: "Produtos em estoque" },
+    { id: "reposição", label: "Reposição" },
+    { id: "histórico", label: "Movimentações" },
+    { id: "análise", label: "Análise de vendas" },
+    { id: "viagens", label: "Planejamento" },
   ];
 
   function addPlannedItem() {
@@ -522,6 +524,8 @@ export default function StockPage() {
         description="Acompanhe disponibilidade, vendas reais e necessidade de reposição."
       />
 
+      <PageSectionNav navigation={navigation} label="Estoque" items={sections} />
+      <div className="page-section-panel" hidden={activeSection !== "list"}>
       <section className="st-summary-grid">
         {[
           { label: "Produtos cadastrados", value: summary.totalProducts, icon: LuBoxes, tone: "navy" },
@@ -771,33 +775,9 @@ export default function StockPage() {
           </div>
         )}
       </section>
-
-      <section className="st-tools">
-        <div className="st-tools-heading">
-          <div><span className="st-section-eyebrow">Gestão</span><h2>Ferramentas de estoque</h2></div>
-          <p>Reposição, movimentações e planejamento operacional.</p>
-        </div>
-        <div className="st-tabs" role="tablist" aria-label="Ferramentas de estoque">
-          {sections.map(({ id, label, icon: Icon, count }) => (
-            <button
-              type="button"
-              role="tab"
-              id={`stock-tab-${id}`}
-              aria-selected={activeSection === id}
-              aria-controls={`stock-panel-${id}`}
-              className={activeSection === id ? "st-tab st-tab-active" : "st-tab"}
-              key={id}
-              onClick={() => setActiveSection(id)}
-            >
-              <Icon aria-hidden="true" /><span>{label}</span>
-              {Number.isFinite(count) && <small>{count}</small>}
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="st-panels">
-        {activeSection === "reposição" && <article className="st-panel" role="tabpanel" id="stock-panel-reposição" aria-labelledby="stock-tab-reposição">
+      </div>
+      <section className="st-panels page-section-panel" hidden={activeSection === "list"}>
+        <article className="st-panel page-section-panel" hidden={activeSection !== "reposição"}>
           <h2>Lista de reposição</h2>
           <p className="st-muted">Sugestões calculadas pelos limites configurados em cada produto. O custo é estimado pelo custo unitário cadastrado.</p>
           {restockProducts.length ? (
@@ -817,9 +797,9 @@ export default function StockPage() {
               </table>
             </div>
           ) : <p className="st-muted">Nenhum produto está abaixo do limite mínimo configurado.</p>}
-        </article>}
+        </article>
 
-        {activeSection === "viagens" && <article className="st-panel" role="tabpanel" id="stock-panel-viagens" aria-labelledby="stock-tab-viagens">
+        <article className="st-panel page-section-panel" hidden={activeSection !== "viagens"}>
           <h2>Planejamento de mercadorias para viagem</h2>
           <p className="st-muted">Rascunho temporário desta sessão. Planejar não altera o estoque; confirme entradas ou baixas separadamente pelos controles de movimentação.</p>
           <div className="st-plan-form">
@@ -846,9 +826,9 @@ export default function StockPage() {
               </table>
             </div>
           ) : <p className="st-muted">Nenhum item planejado nesta sessão.</p>}
-        </article>}
+        </article>
 
-        {activeSection === "análise" && <article className="st-panel" role="tabpanel" id="stock-panel-análise" aria-labelledby="stock-tab-análise">
+        <article className="st-panel page-section-panel" hidden={activeSection !== "análise"}>
           <h2>Desempenho de vendas</h2>
           <p className="st-muted">Agregado exclusivamente de itens em vendas reais registradas. Não inclui estimativas de demanda.</p>
           <div className="st-report-grid">
@@ -856,9 +836,9 @@ export default function StockPage() {
             <div><h3>Menos vendidos</h3>{salesReport.leastSold.length ? salesReport.leastSold.map((item) => <p key={item.productId}>{item.name}<strong>{item.quantitySold} un.</strong></p>) : <p className="st-muted">Sem vendas registradas.</p>}</div>
             <div><h3>Tamanhos mais procurados</h3>{salesReport.sizes.length ? salesReport.sizes.map((item) => <p key={item.size}>Tam. {item.size}<strong>{item.quantitySold} un.</strong></p>) : <p className="st-muted">Sem tamanhos em vendas registradas.</p>}</div>
           </div>
-        </article>}
+        </article>
 
-        {activeSection === "histórico" && <article className="st-panel" role="tabpanel" id="stock-panel-histórico" aria-labelledby="stock-tab-histórico">
+        <article className="st-panel page-section-panel" hidden={activeSection !== "histórico"}>
           <h2>Histórico de estoque</h2>
           <p className="st-muted">Mostra movimentos que já estavam registrados e vendas reais existentes. Não são criados movimentos retroativos; vendas antigas sem registro de movimentação aparecem somente como venda.</p>
           {stockActivity.length ? (
@@ -880,7 +860,7 @@ export default function StockPage() {
               </table>
             </div>
           ) : <p className="st-muted">Ainda não há movimentações ou vendas registradas.</p>}
-        </article>}
+        </article>
       </section>
     </div>
   );

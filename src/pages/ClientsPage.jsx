@@ -847,7 +847,7 @@ export default function ClientsPage() {
     setForm(emptyForm);
     setEditingId(null);
     setShowForm(false);
-    sections.select("list");
+    sections.select(clientViewMode === "prego" ? "prego" : "list");
   }
 async function handleReceivePayment(client) {
   if (receivingClientLock.current) return;
@@ -1430,20 +1430,6 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
       >
         <button
           type="button"
-          className="cl-btn cl-btn-soft"
-          onClick={() => {
-            const openingPrego = clientViewMode !== "prego";
-            setPregoError("");
-            setClientViewMode(openingPrego ? "prego" : "all");
-            setClassificationFilter(openingPrego ? "prego" : "all");
-            sections.select("list", { reset: true });
-          }}
-          aria-pressed={clientViewMode === "prego"}
-        >
-          {clientViewMode === "prego" ? "Lista geral" : "Clientes Prego"}
-        </button>
-        <button
-          type="button"
           className="cl-btn cl-btn-primary cl-new"
           onClick={openNewClientForm}
         >
@@ -1453,14 +1439,19 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
 
       <PageSectionNav navigation={sections} label="Clientes" items={[
         { id: "list", label: "Lista de clientes" },
-        { id: "form", label: editingId ? "Editar cliente" : "Novo cliente" },
+        { id: "prego", label: "Clientes Prego" },
         { id: "visits", label: "Visitas por cidade e viagem" },
         { id: "balances", label: "Conferência de saldos" },
       ]} onSelect={(id) => {
-        if (id === "form" && !showForm) openNewClientForm();
-        else sections.select(id);
+        if ((id === "list" && clientViewMode !== "all") ||
+            (id === "prego" && clientViewMode !== "prego")) {
+          setPregoError("");
+          setClientViewMode(id === "prego" ? "prego" : "all");
+          setClassificationFilter(id === "prego" ? "prego" : "all");
+        }
+        sections.select(id);
       }} />
-      <div className="page-section-panel" hidden={sections.active !== "list"}>
+      <div className="page-section-panel" hidden={!["list", "prego"].includes(sections.active)}>
       {clientViewMode === "prego" && (
         <section className="cl-panel cl-prego-panel">
           <div>
@@ -1505,7 +1496,7 @@ Saldo restante: ${formatCurrency(payment.remainingBalance)}`;
       <div className="page-section-panel" hidden={sections.active !== "form"}>
         {showForm && <section className="cl-panel">{formFields}</section>}
       </div>
-      <div className="page-section-panel" hidden={sections.active !== "list"}>
+      <div className="page-section-panel" hidden={!["list", "prego"].includes(sections.active)}>
       <section className="cl-panel">
         <div className="cl-search">
           <LuSearch aria-hidden="true" />

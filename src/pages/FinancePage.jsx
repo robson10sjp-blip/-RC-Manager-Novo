@@ -4,6 +4,8 @@ import TripSelector from "../components/TripSelector.jsx";
 import useTripScope, { useViewState } from "../hooks/useTripScope.js";
 import { LuWallet } from "react-icons/lu";
 import PageHeader from "../components/PageHeader.jsx";
+import PageSectionNav from "../components/PageSectionNav.jsx";
+import usePageSection from "../hooks/usePageSection.js";
 import { onAuthStateChanged } from "firebase/auth";
 import {
   collection,
@@ -100,6 +102,7 @@ const emptyPayablePayment = {
 
 
 export default function FinancePage() {
+  const sections = usePageSection("summary");
   const { hidden: financialValuesHidden } = useFinancialPrivacy();
   const [selectedReceiptSale, setSelectedReceiptSale] = useState(null);
   const [clients, setClients] = useState([]);
@@ -677,7 +680,7 @@ export default function FinancePage() {
       paymentMethod: expense.paymentMethod || "",
     });
     setEditingExpenseId(expense.id);
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    sections.select("expense", { reset: true });
   }
 
   function cancelExpenseEdit() {
@@ -1442,6 +1445,20 @@ Qualquer dúvida estou à disposição. Obrigado!`;
       >
         <TripPeriodFilter scope={tripScope} label="Financeiro" />
       </PageHeader>
+      <PageSectionNav navigation={sections} label="Financeiro" items={[
+        { id: "summary", label: "Resumo financeiro" },
+        { id: "collections", label: "Cobranças" },
+        { id: "debtors", label: "Clientes devedores" },
+        { id: "payables", label: "Contas a pagar" },
+        { id: "purchase", label: "Registrar conta" },
+        { id: "payment", label: "Pagar fornecedor" },
+        { id: "checks", label: "Cheques" },
+        { id: "expense", label: editingExpenseId ? "Editar despesa" : "Registrar despesa" },
+        { id: "history", label: "Histórico financeiro" },
+      ]} onSelect={(id) => {
+        if (id === "payment") setShowPayablePaymentForm(true);
+        sections.select(id);
+      }} />
       <div className="trip-period-filter" aria-label="Filtros de vendas e cobranças">
         <label>Cidade das vendas
           <select value={salesCity} onChange={(event) => setSalesCity(event.target.value)}>
@@ -1454,7 +1471,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
             placeholder="Nome, telefone ou cidade" />
         </label>
       </div>
-      <section className="fin-summary" style={styles.tripSummarySection}>
+      <section className="fin-summary page-section-panel" hidden={sections.active !== "summary"} style={styles.tripSummarySection}>
         <div style={styles.tripSummaryHeader}>
           <div>
             <h2 style={styles.cardTitle}>
@@ -1629,7 +1646,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
         </details>
       </section>
 
-      <section className="fin-collections-section">
+      <section className="fin-collections-section page-section-panel" hidden={sections.active !== "collections"}>
         <div className="fin-collections-heading">
           <div>
             <p className="payables-eyebrow">A receber</p>
@@ -1782,7 +1799,8 @@ Qualquer dúvida estou à disposição. Obrigado!`;
         </div>
       </section>
 
-      <section className="payables-section">
+      <section className="payables-section page-section-panel" hidden={!["payables", "purchase", "payment", "checks"].includes(sections.active)}>
+        <div className="page-section-panel" hidden={sections.active !== "payables"}>
         <div className="payables-heading">
           <div>
             <p className="payables-eyebrow">Fornecedores</p>
@@ -1799,10 +1817,6 @@ Qualquer dúvida estou à disposição. Obrigado!`;
           </div>
         </div>
 
-        {payableMessage && (
-          <p className="payables-message" role="status">{payableMessage}</p>
-        )}
-
         <div className="payables-metrics">
           <article><span>Total a pagar</span><strong><FinancialValue>{formatCurrency(payableSummary.totalToPay)}</FinancialValue></strong></article>
           <article><span>Contas vencidas</span><strong>{payableSummary.overdueCount} · <FinancialValue>{formatCurrency(payableSummary.overdueTotal)}</FinancialValue></strong></article>
@@ -1817,9 +1831,14 @@ Qualquer dúvida estou à disposição. Obrigado!`;
             </article>
           ))}
         </div>
+        </div>
 
-        <div className="payables-workspace">
-          <details className="payables-panel" open={suppliers.length > 0 ? undefined : true}>
+        {payableMessage && (
+          <p className="payables-message" role="status">{payableMessage}</p>
+        )}
+        <div className="payables-workspace page-section-panel" hidden={!["purchase", "payment"].includes(sections.active)}
+          style={{ gridTemplateColumns: "minmax(0, 1fr)" }}>
+          <details className="payables-panel page-section-panel" hidden={sections.active !== "purchase"} open>
             <summary>Registrar compra / conta</summary>
             {suppliers.length === 0 ? (
               <p>
@@ -1945,7 +1964,8 @@ Qualquer dúvida estou à disposição. Obrigado!`;
           </details>
 
           <details
-            className="payables-panel"
+            className="payables-panel page-section-panel"
+            hidden={sections.active !== "payment"}
             open={showPayablePaymentForm}
             onToggle={(event) => setShowPayablePaymentForm(event.currentTarget.open)}
           >
@@ -2001,7 +2021,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
           </details>
         </div>
 
-        <section className="checks-section" aria-labelledby="checks-heading">
+        <section className="checks-section page-section-panel" hidden={sections.active !== "checks"} aria-labelledby="checks-heading">
           <div className="payables-list-heading checks-heading">
             <div>
               <h3 id="checks-heading">Controle de cheques</h3>
@@ -2119,6 +2139,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
           )}
         </section>
 
+        <div className="page-section-panel" hidden={sections.active !== "payables"}>
         <div className="payables-list-heading">
           <h3>Obrigações {tripFilter === "all" ? "da empresa" : "da visão selecionada"}</h3>
           <span>{selectedPayables.length} conta(s)</span>
@@ -2191,6 +2212,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
                       amount: "",
                     }));
                     setShowPayablePaymentForm(true);
+                    sections.select("payment", { reset: true });
                   }}
                 >
                   Registrar pagamento
@@ -2209,6 +2231,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
             ))}
           </div>
         )}
+        </div>
         <p className="payables-accounting-note">
           Registrar uma obrigação não lança uma despesa operacional nem altera
           o custo dos produtos. Cada pagamento reduz apenas o saldo desta conta
@@ -2216,8 +2239,11 @@ Qualquer dúvida estou à disposição. Obrigado!`;
         </p>
       </section>
 
-      <section style={styles.mainGrid}>
+      <section className="page-section-panel" hidden={!["expense", "debtors"].includes(sections.active)}
+        style={{ ...styles.mainGrid, gridTemplateColumns: "minmax(0, 1fr)" }}>
         <form
+          className="page-section-panel"
+          hidden={sections.active !== "expense"}
           onSubmit={handleExpenseSubmit}
           style={styles.card}
         >
@@ -2345,7 +2371,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
           )}
         </form>
 
-        <section style={styles.card}>
+        <section className="page-section-panel" hidden={sections.active !== "debtors"} style={styles.card}>
           <div style={styles.cardHeader}>
             <div>
               <h2 style={styles.cardTitle}>Clientes devedores</h2>
@@ -2498,7 +2524,7 @@ Qualquer dúvida estou à disposição. Obrigado!`;
         </section>
       </section>
 
-      <section style={styles.card}>
+      <section className="page-section-panel" hidden={sections.active !== "history"} style={styles.card}>
         <div style={styles.cardHeader}>
           <div>
             <h2 style={styles.cardTitle}>Histórico financeiro</h2>

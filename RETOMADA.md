@@ -1,5 +1,36 @@
 # Registro de retomada
 
+## Complemento de navegacao - 2026-10-30 (validado; publicacao pendente)
+
+- Base ee5823c, apenas tres ZIPs preexistentes fora do Git. Anexo recebido
+  e somente leitura e nao foi modificado. Configuracao/regras/dados intactos.
+- Estoque agora usa a barra compartilhada no topo: produtos, reposicao,
+  movimentacoes, analise de vendas e planejamento. Reutiliza os blocos
+  existentes, sem alterar movimentacoes ou calculos.
+- Financeiro separa resumo, cobrancas, devedores, contas, registrar conta,
+  pagar fornecedor, cheques, despesas e historico. Acoes de editar despesa
+  e pagar conta abrem o formulario existente na secao correta.
+- Vendas mantem apenas lista e nova/editar venda na barra; removido botao
+  superior duplicado. Diagnostico permanece em details fechado na area
+  tecnica, fora da navegacao. Entrada comum abre lista; atalho da cliente
+  continua abrindo formulario com a cliente escolhida.
+- Clientes Prego ocupa a segunda aba; cadastro continua no botao superior
+  Novo cliente, sem aba duplicada. Lista/Prego reutilizam a mesma listagem.
+- Lint/build e 256 testes passaram, com apenas avisos de build anteriores.
+  Navegador em 1366/390 px com Layout/paginas reais e dados ficticios nos
+  emuladores: todas as abas de Clientes/Vendas/Estoque/Financeiro conferidas;
+  tambem preservadas as verificacoes de Fornecedores/Secretaria.
+- Testados topo sticky, campos/botoes sem cortes ou overflow, recuperacao
+  da busca e posicao da lista, cidade/ano/viagem preservados ao trocar
+  abas de Clientes e Financeiro, rascunho do planejamento, filtro Prego,
+  atalho de Nova venda na cliente (carrega o ID correto), entrada comum
+  na lista, diagnostico fechado e sem aba/botao superior duplicado.
+  Editar despesa e pagar conta abrem formularios existentes diretamente.
+  Comparacao dos documentos antes/depois sem alteracoes; nenhum erro de
+  pagina/Console/Network e nenhuma chamada a Firebase de producao.
+- Nao houve teste autenticado na conta real nem limpeza de dados locais.
+  Proximos passos: revisao final do diff, commit/push e deploy oficial ativo.
+
 ## Navegacao por secoes - 2026-10-30 (publicada e conferida)
 
 - Base a8d9bc0; preservados os tres ZIPs preexistentes, configuracao,

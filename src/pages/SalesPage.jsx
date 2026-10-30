@@ -9,12 +9,10 @@ import {
   LuClock,
   LuFileText,
   LuPencil,
-  LuPlus,
   LuReceipt,
   LuSearch,
   LuShoppingBag,
   LuTrash2,
-  LuX,
 } from "react-icons/lu";
 import ReceiptTemplate from "../components/receipts/ReceiptTemplate";
 import FinancialValue from "../components/FinancialValue.jsx";
@@ -1615,32 +1613,11 @@ export default function SalesPage() {
         icon={LuShoppingBag}
         title="Vendas"
         description="Registre compras e acompanhe cada saldo por viagem."
-      >
-        <button
-          type="button"
-          className="cl-btn cl-btn-primary cl-new"
-          onClick={() => {
-            if (sections.active === "form") sections.select("list");
-            else {
-              setShowSaleForm(true);
-              sections.select("form", { reset: true });
-            }
-          }}
-          aria-expanded={sections.active === "form"}
-          aria-controls="new-sale-form"
-        >
-          {sections.active === "form" ? (
-            <><LuX aria-hidden="true" /> Fechar formulário</>
-          ) : (
-            <><LuPlus aria-hidden="true" /> Nova venda</>
-          )}
-        </button>
-      </PageHeader>
+      />
 
       <PageSectionNav navigation={sections} label="Vendas" items={[
         { id: "list", label: "Vendas registradas" },
         { id: "form", label: editingSaleId ? "Editar venda" : "Nova venda" },
-        { id: "audit", label: "Diagnóstico de viagens" },
       ]} onSelect={(id) => {
         if (id === "form") setShowSaleForm(true);
         sections.select(id);
@@ -2106,7 +2083,7 @@ export default function SalesPage() {
         </section>
       )}
       </div>
-      <div className="page-section-panel" hidden={sections.active !== "list" && sections.active !== "audit"}>
+      <div className="page-section-panel" hidden={sections.active !== "list"}>
       <section className="cl-panel">
         <div className="page-section-panel" hidden={sections.active !== "list"}>
         <div className="sl-heading">
@@ -2174,9 +2151,9 @@ export default function SalesPage() {
         )}
 
         </div>
-        {!loading && !salesLoadError && sections.active === "audit" && (
-          <section aria-label="Diagnóstico de viagens">
-            <h2>Diagnóstico de viagens (somente leitura)</h2>
+        {!loading && !salesLoadError && (
+          <details aria-label="Área técnica de vendas">
+            <summary>Área técnica · diagnóstico de viagens</summary>
             <p>
               {saleAudit.totals.count} vendas: {saleAudit.sources.saleDate} com data comercial explícita,
               {" "}{saleAudit.sources.createdAt} recuperadas do esquema original,
@@ -2204,7 +2181,7 @@ export default function SalesPage() {
                 {" "}· pendente <FinancialValue>{formatBRL(group.pending)}</FinancialValue>
               </p>
             ))}
-          </section>
+          </details>
         )}
 
         <div className="page-section-panel" hidden={sections.active !== "list"}>
