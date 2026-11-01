@@ -120,6 +120,7 @@ const ReceiptTemplate = forwardRef(function ReceiptTemplate(
     tripOptions = [],
     receiptNumber,
     companyName = 'RC Confecções',
+    layout = 'pages',
   },
   ref
 ) {
@@ -232,7 +233,7 @@ const number = String(savedNumber || "")
       name: saleItemLabel({ ...item, name }), personId: item.personId };
   }), sale);
 
-  const pages = paginateRows(rows);
+  const pages = layout === 'continuous' ? [{ rows, closing: true }] : paginateRows(rows);
   const receiptCode = /^\d+$/.test(number)
     ? number.padStart(6, '0')
     : number.toUpperCase() || 'Não informado';
@@ -240,7 +241,8 @@ const number = String(savedNumber || "")
 
   return (
     <div className="rcp-wrapper">
-      <div ref={ref} id="rc-receipt-template" className="rcp-doc">
+      <div ref={ref} id={layout === 'continuous' ? 'rc-receipt-image-template' : 'rc-receipt-template'}
+        className={`rcp-doc${layout === 'continuous' ? ' rcp-continuous' : ''}`}>
         {pages.map((page, pageIndex) => (
           <div className="rcp-page" key={pageIndex} data-rcp-page={pageIndex}>
             <div className="rcp-watermark" aria-hidden="true">

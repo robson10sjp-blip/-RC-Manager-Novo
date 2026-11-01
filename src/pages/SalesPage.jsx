@@ -95,6 +95,7 @@ function createEmptySale() {
 export default function SalesPage() {
   const { hidden: financialValuesHidden } = useFinancialPrivacy();
   const receiptRef = useRef(null);
+  const pdfReceiptRef = useRef(null);
   const [selectedReceiptSale, setSelectedReceiptSale] = useState(null);
   const [showReceipt, setShowReceipt] = useState(false);
   const [clients, setClients] = useState([]);
@@ -752,7 +753,7 @@ export default function SalesPage() {
   }
 
   async function handleDownloadReceipt() {
-    if (!receiptRef.current || !selectedReceiptSale) return;
+    if (!pdfReceiptRef.current || !selectedReceiptSale) return;
 
     try {
       if (receiptStatus === "ready" && receiptPdf.file) {
@@ -761,7 +762,7 @@ export default function SalesPage() {
       }
 
       await generateReceiptPdf(
-        receiptRef.current,
+        pdfReceiptRef.current,
         selectedReceiptSale.receiptNumber
       );
     } catch (error) {
@@ -781,7 +782,7 @@ export default function SalesPage() {
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
-        const file = await buildReceiptPdfFile(receiptRef.current, receiptKey);
+        const file = await buildReceiptPdfFile(pdfReceiptRef.current, receiptKey);
         if (!cancelled) setReceiptPdf({ key: receiptKey, status: "ready", file });
       } catch (error) {
         console.error("Erro ao gerar PDF do recibo:", error);
@@ -800,7 +801,7 @@ export default function SalesPage() {
     setReceiptNotice("");
     const key = receiptKey;
     setReceiptPdf({ key: null, status: "idle", file: null });
-    buildReceiptPdfFile(receiptRef.current, key)
+    buildReceiptPdfFile(pdfReceiptRef.current, key)
       .then((file) => setReceiptPdf({ key, status: "ready", file }))
       .catch((error) => {
         console.error("Erro ao gerar PDF do recibo:", error);
@@ -833,10 +834,10 @@ export default function SalesPage() {
   }
 
   async function handlePrintReceipt() {
-    if (!selectedReceiptSale || !receiptRef.current) return;
+    if (!selectedReceiptSale || !pdfReceiptRef.current) return;
 
     try {
-      await printReceipt(receiptRef.current);
+      await printReceipt(pdfReceiptRef.current);
     } catch (error) {
       console.error("Erro ao imprimir recibo:", error);
       alert("Não foi possível abrir a impressão do recibo.");
@@ -2288,12 +2289,17 @@ export default function SalesPage() {
             <div style={styles.receiptPreviewArea}>
               <ReceiptTemplate
                 ref={receiptRef}
+                layout="continuous"
                 sale={selectedReceiptSale}
                 tripOptions={knownTrips}
                 receiptNumber={selectedReceiptSale.receiptNumber}
                 sellerName="Robson Henrique"
                 companyName="RC Confecções"
               />
+            </div>
+            <div hidden aria-hidden="true">
+              <ReceiptTemplate ref={pdfReceiptRef} sale={selectedReceiptSale} tripOptions={knownTrips}
+                receiptNumber={selectedReceiptSale.receiptNumber} companyName="RC Confecções" />
             </div>
 
             <div style={styles.receiptModalActions}>

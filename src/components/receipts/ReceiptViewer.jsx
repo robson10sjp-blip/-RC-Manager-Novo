@@ -13,6 +13,7 @@ import "./ReceiptViewer.css";
 
 export default function ReceiptViewer({ sale, onClose, tripOptions = [] }) {
   const receiptRef = useRef(null);
+  const pdfReceiptRef = useRef(null);
   const [pdf, setPdf] = useState({ status: "preparing", file: null });
   const [notice, setNotice] = useState("");
   const receiptNumber = String(sale.receiptNumber || sale.id || "");
@@ -21,7 +22,7 @@ export default function ReceiptViewer({ sale, onClose, tripOptions = [] }) {
     let cancelled = false;
     const timer = setTimeout(async () => {
       try {
-        const file = await buildReceiptPdfFile(receiptRef.current, receiptNumber);
+        const file = await buildReceiptPdfFile(pdfReceiptRef.current, receiptNumber);
         if (!cancelled) setPdf({ status: "ready", file });
       } catch (error) {
         console.error("Erro ao gerar PDF do recibo:", error);
@@ -37,7 +38,7 @@ export default function ReceiptViewer({ sale, onClose, tripOptions = [] }) {
 
   async function handlePrint() {
     try {
-      await printReceipt(receiptRef.current);
+      await printReceipt(pdfReceiptRef.current);
     } catch (error) {
       console.error("Erro ao imprimir recibo:", error);
       setNotice("Não foi possível abrir a impressão do recibo.");
@@ -65,7 +66,7 @@ export default function ReceiptViewer({ sale, onClose, tripOptions = [] }) {
   async function handleRetry() {
     setPdf({ status: "preparing", file: null });
     try {
-      const file = await buildReceiptPdfFile(receiptRef.current, receiptNumber);
+      const file = await buildReceiptPdfFile(pdfReceiptRef.current, receiptNumber);
       setPdf({ status: "ready", file });
     } catch (error) {
       console.error("Erro ao gerar PDF do recibo:", error);
@@ -96,10 +97,15 @@ export default function ReceiptViewer({ sale, onClose, tripOptions = [] }) {
           <ReceiptTemplate
             tripOptions={tripOptions}
             ref={receiptRef}
+            layout="continuous"
             sale={sale}
             receiptNumber={sale.receiptNumber}
             companyName="RC Confecções"
           />
+        </div>
+        <div hidden aria-hidden="true">
+          <ReceiptTemplate ref={pdfReceiptRef} sale={sale} tripOptions={tripOptions}
+            receiptNumber={sale.receiptNumber} companyName="RC Confecções" />
         </div>
 
         <footer className="receipt-viewer-actions">

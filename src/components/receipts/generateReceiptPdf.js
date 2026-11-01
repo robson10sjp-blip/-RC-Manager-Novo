@@ -21,7 +21,7 @@ function getCaptureScale() {
   return isSmallScreen ? 2.5 : 3;
 }
 
-async function capturePage(pageElement, index) {
+async function capturePage(pageElement) {
   return withTimeout(
     html2canvas(pageElement, {
       scale: getCaptureScale(),
@@ -31,13 +31,7 @@ async function capturePage(pageElement, index) {
       scrollX: 0,
       scrollY: 0,
       windowWidth: 1280,
-      onclone: (clonedDocument) => {
-        const clonedPage = clonedDocument.querySelector(
-          `[data-rcp-page="${index}"]`
-        );
-
-        if (!clonedPage) return;
-
+      onclone: (clonedDocument, clonedPage) => {
         clonedDocument.body.style.margin = "0";
         clonedDocument.body.appendChild(clonedPage);
 
@@ -57,7 +51,7 @@ async function capturePage(pageElement, index) {
   );
 }
 
-// Cada página A5 do recibo vira uma página do PDF, com o mesmo layout da visualização e da impressão.
+// Cada página do modelo A5 vira uma página do PDF, com o mesmo layout da impressão.
 async function renderReceiptPdf(element) {
   if (document.fonts?.ready) {
     await document.fonts.ready;
@@ -77,7 +71,7 @@ async function renderReceiptPdf(element) {
   });
 
   for (let index = 0; index < pages.length; index += 1) {
-    const canvas = await capturePage(pages[index], index);
+    const canvas = await capturePage(pages[index]);
 
     if (!canvas.width || !canvas.height) {
       throw new Error("Não foi possível desenhar o recibo.");
@@ -210,9 +204,9 @@ export async function shareReceiptFile(file) {
 }
 
 export function getReceiptImageFileName(receiptNumber) {
-  const number = String(receiptNumber ?? "").replace(/\D/g, "");
+  const number = String(receiptNumber ?? "").replace(/[^a-z\d]/gi, "").slice(-6).toUpperCase();
   return number
-    ? `Recibo-RC-Confeccoes-${number.padStart(6, "0")}.png`
+    ? `Recibo-RC-Confeccoes-${/^\d+$/.test(number) ? number.padStart(6, "0") : number}.png`
     : "Recibo-RC-Confeccoes.png";
 }
 
