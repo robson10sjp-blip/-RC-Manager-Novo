@@ -1,0 +1,12 @@
+button.rcp-image-action {
+  min-height: 40px;
+  padding: 10px 14px;
+  border: 1px solid #c9a227;
+  border-radius: 9px;
+  background: #0b1b33;
+  color: #e6c15a;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+button.rcp-image-action:disabled { opacity: 0.65; cursor: wait; }

@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import PageHeader from "../components/PageHeader.jsx";
 import QuickSalePicker from "../components/QuickSalePicker.jsx";
 import { onAuthStateChanged } from "firebase/auth";
@@ -15,6 +16,7 @@ import {
   LuTrash2,
 } from "react-icons/lu";
 import ReceiptTemplate from "../components/receipts/ReceiptTemplate";
+import ReceiptImageActions from "../components/receipts/ReceiptImageActions.jsx";
 import FinancialValue from "../components/FinancialValue.jsx";
 import TripPeriodFilter from "../components/TripPeriodFilter.jsx";
 import useTripScope, { useViewState } from "../hooks/useTripScope.js";
@@ -27,7 +29,6 @@ import { getSaleDate, getSaleDateInput, getSaleTrip, saleDateInput } from "../do
 import { getClientCityDisplay, getClientCityKey } from "../domain/clientCities.js";
 import { buildSaleTripAudit, getSalesSummary, groupSalesByTrip, selectSaleRows } from "../domain/saleTripReport.js";
 import {
-  buildReceiptImageFile,
   buildReceiptPdfFile,
   canShareReceiptFile,
   downloadReceiptFile,
@@ -106,8 +107,6 @@ export default function SalesPage() {
   const [clientSearch, setClientSearch] = useState("");
   const [receiptPdf, setReceiptPdf] = useState({ key: null, status: "idle", file: null });
   const [receiptNotice, setReceiptNotice] = useState("");
-  const [receiptImage, setReceiptImage] = useState({ key: null, file: null });
-  const [imageBusy, setImageBusy] = useState(false);
   const [sortOrder, setSortOrder] = useViewState("sales:order", "newest");
   const [salesLoadError, setSalesLoadError] = useState("");
   const [salesSnapshot, setSalesSnapshot] = useState(null);
@@ -789,13 +788,6 @@ export default function SalesPage() {
         if (!cancelled) setReceiptPdf({ key: receiptKey, status: "error", file: null });
       }
 
-      // Pré-gera a imagem PNG para o compartilhamento ocorrer logo após o toque (exigência do iOS).
-      try {
-        const image = await buildReceiptImageFile(receiptRef.current, receiptKey);
-        if (!cancelled) setReceiptImage({ key: receiptKey, file: image });
-      } catch (error) {
-        console.error("Erro ao pré-gerar imagem do recibo:", error);
-      }
     }, 400);
 
     return () => {
@@ -837,56 +829,6 @@ export default function SalesPage() {
         "Não foi possível abrir o compartilhamento. O PDF foi baixado para você enviar manualmente."
       );
       downloadReceiptFile(file);
-    }
-  }
-
-  async function getReceiptImage() {
-    if (receiptImage.key === receiptKey && receiptImage.file) return receiptImage.file;
-    const file = await buildReceiptImageFile(receiptRef.current, receiptKey);
-    setReceiptImage({ key: receiptKey, file });
-    return file;
-  }
-
-  async function handleDownloadReceiptImage() {
-    if (!receiptRef.current || imageBusy) return;
-    setReceiptNotice("");
-    setImageBusy(true);
-    try {
-      downloadReceiptFile(await getReceiptImage());
-    } catch (error) {
-      console.error("Erro ao gerar imagem do recibo:", error);
-      setReceiptNotice("Não foi possível gerar a imagem do recibo.");
-    } finally {
-      setImageBusy(false);
-    }
-  }
-
-  async function handleShareReceiptImage() {
-    if (!receiptRef.current || imageBusy) return;
-    setReceiptNotice("");
-    setImageBusy(true);
-    let file = null;
-    try {
-      file = await getReceiptImage();
-      const result = await shareReceiptFile(file);
-      if (result === "unsupported") {
-        downloadReceiptFile(file);
-        setReceiptNotice(
-          "Este dispositivo não permite compartilhar a imagem diretamente. A imagem foi baixada para você enviar pelo WhatsApp."
-        );
-      }
-    } catch (error) {
-      console.error("Erro ao compartilhar imagem do recibo:", error);
-      if (file) {
-        downloadReceiptFile(file);
-        setReceiptNotice(
-          "Não foi possível abrir o compartilhamento. A imagem foi baixada para você enviar manualmente."
-        );
-      } else {
-        setReceiptNotice("Não foi possível gerar a imagem do recibo.");
-      }
-    } finally {
-      setImageBusy(false);
     }
   }
 
@@ -2320,7 +2262,7 @@ export default function SalesPage() {
       </section>
       </div>
 
-      {showReceipt && selectedReceiptSale && (
+      {showReceipt && selectedReceiptSale && createPortal(
         <div style={styles.receiptModalOverlay}>
           <div style={styles.receiptModal}>
             <div style={styles.receiptModalHeader}>
@@ -2384,7 +2326,7 @@ export default function SalesPage() {
                   ? "Preparando PDF..."
                   : receiptStatus === "error"
                     ? "Tentar novamente"
-                    : "📤 Compartilhar recibo"}
+                    : "📤 Compartilhar PDF"}
               </button>
 
               <button
@@ -2395,23 +2337,7 @@ export default function SalesPage() {
                 ⬇️ Baixar PDF
               </button>
 
-              <button
-                type="button"
-                onClick={handleDownloadReceiptImage}
-                disabled={imageBusy}
-                style={{ ...styles.receiptImageButton, opacity: imageBusy ? 0.65 : 1 }}
-              >
-                🖼️ Baixar imagem
-              </button>
-
-              <button
-                type="button"
-                onClick={handleShareReceiptImage}
-                disabled={imageBusy}
-                style={{ ...styles.receiptImageButton, opacity: imageBusy ? 0.65 : 1 }}
-              >
-                {imageBusy ? "Gerando imagem..." : "📲 Enviar imagem"}
-              </button>
+              <ReceiptImageActions receiptRef={receiptRef} sale={selectedReceiptSale} onNotice={setReceiptNotice} />
             </div>
 
             {(receiptNotice || receiptStatus === "error") && (
@@ -2420,7 +2346,8 @@ export default function SalesPage() {
               </p>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import ReceiptTemplate from "./ReceiptTemplate";
+import ReceiptImageActions from "./ReceiptImageActions.jsx";
 import {
   buildReceiptPdfFile,
   canShareReceiptFile,
@@ -72,7 +74,7 @@ export default function ReceiptViewer({ sale, onClose, tripOptions = [] }) {
     }
   }
 
-  return (
+  return createPortal(
     <div className="receipt-viewer-overlay" role="presentation">
       <section
         className="receipt-viewer"
@@ -123,11 +125,13 @@ export default function ReceiptViewer({ sale, onClose, tripOptions = [] }) {
             disabled={pdf.status !== "ready"}
             onClick={handleShare}
           >
-            Compartilhar
+            Compartilhar PDF
           </button>
+          <ReceiptImageActions receiptRef={receiptRef} sale={sale} onNotice={setNotice} />
         </footer>
         {notice && <p className="receipt-viewer-notice" role="status">{notice}</p>}
       </section>
-    </div>
+    </div>,
+    document.body
   );
 }
