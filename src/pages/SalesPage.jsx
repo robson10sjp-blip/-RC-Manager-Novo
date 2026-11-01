@@ -65,7 +65,7 @@ import "./SalesPremium.css";
 import PageSectionNav from "../components/PageSectionNav.jsx";
 import usePageSection from "../hooks/usePageSection.js";
 import SalePeopleEditor, { SalePeopleSummary } from "../components/SalePeople.jsx";
-import { itemPersonFields, salePeopleFields, validateSalePeople } from "../domain/salePeople.js";
+import { buildAllocationItems, itemPersonFields, saleItemLabel, salePeopleFields, validateSalePeople } from "../domain/salePeople.js";
 
 const emptyItem = {
   productId: "",
@@ -123,6 +123,7 @@ export default function SalesPage() {
   const [loading, setLoading] = useState(true);
   const [editingSaleId, setEditingSaleId] = useState(null);
   const [quickMode, setQuickMode] = useState(false);
+  const [activePersonId, setActivePersonId] = useState("");
   const [receivingSaleId, setReceivingSaleId] = useState(null);
   const receivingSaleLock = useRef(false);
   const pendingPaymentOperation = useRef(null);
@@ -281,8 +282,10 @@ export default function SalesPage() {
   );
 
   const total = useMemo(() => {
+    const stored = sales.find((record) => record.id === editingSaleId);
+    if (stored && buildAllocationItems(stored.items, sale.items) !== null) return Number(stored.total || 0);
     return calculateSaleAmounts(sale.items).total;
-  }, [sale.items]);
+  }, [sale.items, sales, editingSaleId]);
 
   const amountPaid = Number(sale.amountPaid || 0);
 
@@ -430,7 +433,7 @@ export default function SalesPage() {
   function addItem() {
     setSale((current) => ({
       ...current,
-      items: [...current.items, { ...emptyItem, ...(current.people?.length ? { personId: current.people[0].id } : {}) }],
+      items: [...current.items, { ...emptyItem, ...(activePersonId ? { personId: activePersonId } : {}) }],
     }));
   }
 
@@ -461,10 +464,15 @@ export default function SalesPage() {
 
       newItems[index] = {
         ...newItems[index],
+        name: product?.name || "",
+        size: product?.size || "",
+        color: product?.color || "",
         productId,
+        ...(activePersonId && !newItems[index].productId ? { personId: activePersonId } : {}),
         price: product
           ? String(product.salePrice || 0)
           : "",
+        subtotal: Number(newItems[index].quantity) * Number(product?.salePrice || 0),
       };
 
       const updatedSale = {
@@ -497,6 +505,9 @@ export default function SalesPage() {
         ...newItems[index],
         [field]: value,
       };
+      if (field === "quantity" || field === "price") {
+        newItems[index].subtotal = Number(newItems[index].quantity) * Number(newItems[index].price);
+      }
 
       const updatedSale = {
         ...current,
@@ -522,6 +533,7 @@ export default function SalesPage() {
 
   function clearSale() {
     setQuickMode(false);
+    setActivePersonId("");
     setSale(createEmptySale());
     setClientSearch("");
 
@@ -533,6 +545,8 @@ export default function SalesPage() {
   function handleEditSale(currentSale) {
     currentSale = sales.find((record) => record.id === currentSale.id) || currentSale;
     const form = createSaleEditForm(currentSale);
+    setQuickMode(false);
+    setActivePersonId("");
     setEditingSaleId(currentSale.id);
     setShowSaleForm(true);
     sections.select("form", { reset: true });
@@ -1790,7 +1804,7 @@ export default function SalesPage() {
                   }
                   setQuickMode((current) => !current);
                 }}
-                disabled={saving || Boolean(sale.people?.length)}
+                disabled={saving}
                 style={styles.addButton}
               >
                 {quickMode ? "Venda tradicional" : "⚡ Venda Rápida"}
@@ -1809,6 +1823,10 @@ export default function SalesPage() {
             </div>
           </div>
 
+          <SalePeopleEditor key={editingSaleId || "new"} sale={sale} onChange={setSale}
+            activePersonId={activePersonId} onSelectPerson={setActivePersonId}
+            products={products} disabled={saving} />
+
           {quickMode && (
             <QuickSalePicker
               products={products}
@@ -1817,13 +1835,10 @@ export default function SalesPage() {
               disabled={saving}
               onChange={handleQuickItemsChange}
               onFinish={scrollToFinishSale}
+              personId={activePersonId}
+              people={sale.people}
             />
           )}
-
-          <SalePeopleEditor sale={sale} onChange={(next) => {
-            setSale(next);
-            if (next.people?.length) setQuickMode(false);
-          }} responsibleName={selectedClient?.name} products={products} disabled={saving} />
 
           <div style={styles.itemsList}>
             {!quickMode && sale.items.map((item, index) => {
@@ -1855,6 +1870,9 @@ export default function SalesPage() {
                       <option value="">
                         Selecione o produto
                       </option>
+                      {!product && item.productId && <option value={item.productId}>
+                        {saleItemLabel(item)} — Produto do histórico
+                      </option>}
 
                       {products.map(
                         (currentProduct) => (
@@ -1878,6 +1896,7 @@ export default function SalesPage() {
                             {currentProduct.size
                               ? ` — Tam. ${currentProduct.size}`
                               : ""}{" "}
+                            {currentProduct.color ? ` — ${currentProduct.color}` : ""}
                             — {currentProduct.code} —{" "}
                             Estoque:{" "}
                             {Number(
@@ -1898,6 +1917,9 @@ export default function SalesPage() {
                           product.quantity,
                           originalQuantities.get(product.id)
                         )}
+                        {sale.people?.length > 0 && <p style={styles.stockInfo}>
+                          Pessoa: <strong>{sale.people.find((person) => person.id === item.personId)?.name || "Sem pessoa informada"}</strong>
+                        </p>}
                       </strong>
                     </p>
                   )}
@@ -1957,7 +1979,7 @@ export default function SalesPage() {
                   <div style={styles.itemFooter}>
                     <strong>
                       Subtotal:{" "}
-                      <FinancialValue>{formatCurrency(
+                      <FinancialValue>{formatCurrency(item.subtotal ??
                         Number(
                           item.quantity || 0
                         ) *

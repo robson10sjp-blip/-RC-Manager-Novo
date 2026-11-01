@@ -5,3 +5,12 @@
 .sale-people-summary { display: grid; gap: 10px; margin: 12px 0; min-width: 0; overflow-wrap: anywhere; }
 .sale-people-summary section { border-left: 3px solid #c9a85d; padding-left: 12px; }
 .sale-people-summary ul { padding-left: 18px; font-size: 13px; }
+.sale-allocation-line { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid #d7dce4; }
+.sale-people-editor .sale-allocation-check { display: flex; align-items: center; gap: 10px; margin: 0; }
+.sale-people-editor .sale-allocation-check input { width: 20px; flex: 0 0 20px; }
+.sale-allocation-check span { min-width: 0; overflow-wrap: anywhere; }
+.sale-allocation-check small { display: block; margin-top: 4px; }
+.sale-people-editor .sale-allocation-quantity { flex: 0 1 100px; margin: 0; }
+.sale-people-editor details { margin: 10px 0; }
+.sale-people-editor p { font-size: 13px; }
+.sale-people-editor button { white-space: normal; max-width: 100%; }

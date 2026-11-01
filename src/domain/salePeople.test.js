@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildPersonReceiptRows, groupSalePeople, removeSalePerson, salePeopleFields, validateSalePeople } from "./salePeople.js";
+import { assignSaleItems, buildPersonReceiptRows, groupSalePeople, removeSalePerson, saleItemLabel, salePeopleFields, validateSalePeople } from "./salePeople.js";
 import { applyPaymentToSale, buildSaleDateUpdate, calculateConsolidatedReceivables, calculateSaleAmounts, calculateStockDeltas, createSaleEditForm, prepareSaleReceipt } from "./sales.js";
 
 const fixture = () => ({
@@ -98,4 +98,84 @@ test("adding family allocation to an old sale preserves the original timestamp a
   assert.equal(Object.hasOwn(updated, "saleDate"), false);
   assert.deepEqual(updated.createdAt, sale.createdAt);
   assert.equal(updated.total, sale.total);
+});
+
+test("six blouses split 3/3, reload and partial transfer preserve discounts, payments and stock", () => {
+  const stored = {
+    ...fixture(), total: 145, amountPaid: 50, pendingAmount: 95, discount: 5,
+    payments: [{ id: "receipt-1", saleId: "one-sale", value: 50 }],
+    items: [{ productId: "blouse-m", name: "Blusa", size: "M", color: "Azul",
+      quantity: 6, unitPrice: 25, subtotal: 149.99, historical: "keep" }],
+  };
+  const before = structuredClone(stored);
+  let form = createSaleEditForm(stored);
+  form = assignSaleItems(form, { 0: 3 }, "joao");
+  assert.equal(form.items.filter((item) => !item.personId).reduce((sum, item) => sum + item.quantity, 0), 3);
+  form = assignSaleItems(form, { 0: 3 }, "maria");
+  validateSalePeople(form);
+  const patch = buildSaleDateUpdate(stored, form);
+  assert.deepEqual(Object.keys(patch), ["items"]);
+  const saved = JSON.parse(JSON.stringify({ ...stored, ...patch }));
+  assert.deepEqual(groupSalePeople(saved).map((person) => person.subtotal), groupSalePeople(form).map((person) => person.subtotal));
+  assert.deepEqual(saved.items.map((item) => item.quantity), [3, 3]);
+  assert.equal(saved.items.reduce((sum, item) => sum + Math.round(item.subtotal * 100), 0), 14999);
+  assert.equal(saved.items.some((item) => Object.hasOwn(item, "sourceIndex")), false);
+  assert.equal(saved.items.every((item) => item.historical === "keep" && item.size === "M"), true);
+  for (const key of ["total", "discount", "amountPaid", "pendingAmount", "payments", "clientId", "id"]) {
+    assert.deepEqual(saved[key], stored[key], key);
+  }
+  assert.deepEqual([...calculateStockDeltas(stored.items, saved.items)], []);
+  assert.deepEqual(buildSaleDateUpdate(saved, createSaleEditForm(saved)), {});
+  const moved = assignSaleItems(createSaleEditForm(saved), { 0: 1 }, "joao");
+  const edited = { ...saved, ...buildSaleDateUpdate(saved, moved) };
+  assert.deepEqual(groupSalePeople(edited).map((person) => person.items.reduce((sum, item) => sum + item.quantity, 0)), [2, 4]);
+  assert.deepEqual([...calculateStockDeltas(saved.items, edited.items)], []);
+  assert.deepEqual(stored, before);
+});
+
+test("batch assignment keeps sizes, prices, zero prices and distinct sources intact", () => {
+  const stored = { ...fixture(), items: [
+    { productId: "blouse-m", name: "Blusa", size: "M", color: "Azul", quantity: 6, price: 25, subtotal: 150 },
+    { productId: "blouse-g", name: "Blusa", size: "G", color: "Azul", quantity: 2, price: 30, subtotal: 60 },
+    { productId: "blouse-m", name: "Blusa", size: "M", quantity: 1, price: 0, subtotal: 0 },
+  ] };
+  let form = assignSaleItems(createSaleEditForm(stored), { 0: 3, 1: 1, 2: 1 }, "joao");
+  const unassigned = Object.fromEntries(form.items.flatMap((item, index) => !item.personId ? [[index, item.quantity]] : []));
+  form = assignSaleItems(form, unassigned, "maria");
+  const patch = buildSaleDateUpdate(stored, form);
+  assert.equal(patch.items.length, 5);
+  assert.deepEqual([...calculateStockDeltas(stored.items, patch.items)], []);
+  const rows = buildPersonReceiptRows(prepareSaleReceipt({ ...stored, ...patch }).items, { ...stored, ...patch });
+  assert.equal(rows.filter((row) => row.type === "subtotal").reduce((sum, row) => sum + row.subtotal, 0), 210);
+  assert.equal(saleItemLabel(patch.items[0]), "Blusa — Tam. M · Azul");
+  assert.notEqual(saleItemLabel(patch.items[0]), saleItemLabel(patch.items[2]));
+});
+
+test("invalid distributions, duplicate names and commercial changes cannot use allocation-only save", () => {
+  const stored = fixture();
+  const form = createSaleEditForm(stored);
+  for (const quantity of [0, -1, 4, 1.5, "invalid"]) {
+    assert.throws(() => assignSaleItems(form, { 0: quantity }, "joao"), /quantidade/);
+  }
+  assert.throws(() => assignSaleItems(form, {}, "joao"), /Selecione/);
+  assert.throws(() => assignSaleItems(form, { 0: 1 }, "missing"), /Escolha/);
+  assert.throws(() => assignSaleItems(form, { 99: 1 }, "joao"), /válida/);
+  assert.throws(() => validateSalePeople({ ...form, people: [...form.people, { id: "duplicate", name: " maria " }] }), /cadastrada/);
+  const split = assignSaleItems(form, { 0: 1 }, "joao");
+  split.items[0].quantity++;
+  assert.equal(buildSaleDateUpdate(stored, split), null);
+});
+
+test("legacy text subtotals split in cents and moving to the same person is a no-op", () => {
+  const stored = { ...fixture(), items: [
+    { productId: "shirt", name: "Blusa", quantity: 6, price: 25, subtotal: "149.99" },
+  ] };
+  let form = assignSaleItems(createSaleEditForm(stored), { 0: 3 }, "joao");
+  form = assignSaleItems(form, { 0: 3 }, "maria");
+  assert.equal(form.items.reduce((sum, item) => sum + Math.round(item.subtotal * 100), 0), 14999);
+  const unchanged = assignSaleItems(form, { 0: 1 }, "maria");
+  assert.deepEqual(unchanged, form);
+  const patch = buildSaleDateUpdate(stored, form);
+  assert.deepEqual(groupSalePeople({ ...stored, ...patch }).map((person) => person.subtotal),
+    groupSalePeople(form).map((person) => person.subtotal));
 });

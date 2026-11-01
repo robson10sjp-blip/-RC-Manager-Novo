@@ -2,7 +2,7 @@ import { toDate, toDateInputValue } from "../utils/dates.js";
 import { isPersonalWithdrawal } from "./expenses.js";
 import { getRecordTripId, getTripOptionLabel } from "./tripIdentity.js";
 import { saleDateInput, getSaleDate, getSaleDateInput, getSaleTrip, resolveSaleCalendar } from "./saleTrip.js";
-import { itemPersonFields, salePeopleFields } from "./salePeople.js";
+import { buildAllocationItems, itemPersonFields, salePeopleFields } from "./salePeople.js";
 
 function money(value) {
   return Math.round((Number(value || 0) + Number.EPSILON) * 100) / 100;
@@ -21,7 +21,9 @@ export function createSaleEditForm(sale) {
     tripId: getRecordTripId(sale),
     tripCity: sale.tripCity || "",
     ...(sale.people?.length ? { people: sale.people.map((person) => ({ ...person })) } : {}),
-    items: (sale.items || []).map((item) => ({
+    items: (sale.items || []).map((item, sourceIndex) => ({
+      ...item,
+      sourceIndex,
       productId: item.productId || "",
       quantity: Number(item.quantity ?? 1),
       price: String(item.unitPrice ?? item.price ?? 0),
@@ -38,13 +40,9 @@ export function buildSaleDateUpdate(stored, form) {
   const items = original.items.length === 0 &&
     form.items.every((item) => !item.productId && !Number(item.price))
     ? [] : form.items;
+  const allocatedItems = buildAllocationItems(stored.items, items);
   if (["clientId", "paymentMethod", "dueDate"].some((key) => original[key] !== form[key]) ||
-    original.items.length !== items.length ||
-    original.items.some((item, index) => {
-      const edited = items[index];
-      return item.productId !== edited.productId ||
-        item.quantity !== Number(edited.quantity) || Number(item.price) !== Number(edited.price);
-    })) return null;
+    allocatedItems === null) return null;
 
   // Calendar/allocation edits preserve balances and historical item data.
   return {
@@ -52,8 +50,8 @@ export function buildSaleDateUpdate(stored, form) {
     ...(original.tripCity.trim() !== form.tripCity.trim() ? { tripCity: form.tripCity.trim() } : {}),
     ...(JSON.stringify(stored.people || []) !== JSON.stringify(peopleFields.people || [])
       ? { people: peopleFields.people || [] } : {}),
-    ...(original.items.some((item, index) => item.personId !== items[index]?.personId)
-      ? { items: stored.items.map((item, index) => ({ ...item, ...itemPersonFields(items[index], form) })) } : {}),
+    ...(JSON.stringify(stored.items || []) !== JSON.stringify(allocatedItems)
+      ? { items: allocatedItems } : {}),
   };
 }
 

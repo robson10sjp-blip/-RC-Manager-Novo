@@ -87,40 +87,41 @@ export function getVariantStock(product, originalQuantities) {
   );
 }
 
-export function getCartQuantity(items = [], productId) {
+export function getCartQuantity(items = [], productId, personId = "") {
   return items
-    .filter((item) => item.productId === productId)
+    .filter((item) => item.productId === productId && (item.personId || "") === personId)
     .reduce((sum, item) => sum + Number(item.quantity || 0), 0);
 }
 
-// Define a quantidade de uma numeração no carrinho (uma linha por produto), respeitando o estoque.
+// Define a quantidade por produto/pessoa, preservando linhas e preços históricos.
 // Quantidade 0 remove a linha. Linhas vazias do formulário tradicional são descartadas.
-export function setCartQuantity(items = [], product, quantity, maxQuantity) {
+export function setCartQuantity(items = [], product, quantity, maxQuantity, personId = "") {
   const wanted = Math.floor(Number(quantity) || 0);
   const limit = Math.max(0, Math.floor(Number(maxQuantity) || 0));
-  const safe = Math.min(Math.max(wanted, 0), limit);
-  const others = items.filter(
-    (item) => item.productId && item.productId !== product.id
-  );
-  const existing = items.find((item) => item.productId === product.id);
-
-  if (safe === 0) return others;
-
-  const line = {
-    productId: product.id,
-    quantity: safe,
-    price: existing ? existing.price : String(product.salePrice || 0),
-  };
-
-  return existing
-    ? items
-        .filter((item) => item.productId)
-        .map((item) => (item.productId === product.id ? line : item))
-    : [...others, line];
+  const matches = (item) => item.productId === product.id && (item.personId || "") === personId;
+  const otherPeopleQuantity = items.filter((item) => item.productId === product.id && !matches(item))
+    .reduce((sum, item) => sum + Number(item.quantity), 0);
+  const safe = Math.min(Math.max(wanted, 0), Math.max(0, limit - otherPeopleQuantity));
+  let delta = safe - getCartQuantity(items, product.id, personId);
+  const result = items.filter((item) => item.productId).map((item) => ({ ...item }));
+  // Keep distinct historical prices and source lines; only the last matching line is increased.
+  for (let index = result.length - 1; index >= 0 && delta !== 0; index--) {
+    const item = result[index];
+    if (!matches(item)) continue;
+    const change = delta > 0 ? delta : -Math.min(Number(item.quantity), -delta);
+    result[index] = { ...item, quantity: Number(item.quantity) + change };
+    delete result[index].subtotal;
+    delta -= change;
+  }
+  if (delta > 0) result.push({
+    productId: product.id, quantity: delta, price: String(product.salePrice || 0),
+    ...(personId ? { personId } : {}),
+  });
+  return result.filter((item) => Number(item.quantity) > 0);
 }
 
-export function removeCartProduct(items = [], productId) {
-  return items.filter((item) => item.productId && item.productId !== productId);
+export function removeCartProduct(items = [], productId, personId = "") {
+  return items.filter((item) => item.productId && (item.productId !== productId || (item.personId || "") !== personId));
 }
 
 export function summarizeCart(items = []) {

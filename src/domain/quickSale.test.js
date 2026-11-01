@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   getVariantStock,
+  getCartQuantity,
   groupProductsForQuickSale,
   removeCartProduct,
   searchQuickSaleGroups,
@@ -110,4 +111,26 @@ test("stock is only deducted on confirmation, edit and delete reuse the same del
   const restored = { ...after };
   for (const [id, delta] of calculateStockDeltas(items, [])) restored[id] = applyStockDelta(restored[id], delta, id);
   assert.deepEqual(restored, stock);
+});
+
+test("direct person entry never merges people, sizes or historical prices and shares stock limits", () => {
+  let items = setCartQuantity([], products[1], 3, 6, "daughter");
+  items = setCartQuantity(items, products[1], 3, 6, "mother");
+  assert.deepEqual(items.map((item) => [item.personId, item.quantity]), [["daughter", 3], ["mother", 3]]);
+  items = setCartQuantity(items, products[1], 5, 6, "mother");
+  assert.equal(getCartQuantity(items, products[1].id, "mother"), 3);
+  items = setCartQuantity(items, products[3], 1, 8, "mother");
+  assert.equal(items.length, 3);
+  items = setCartQuantity(items, products[1], 2, 6, "daughter");
+  assert.equal(getCartQuantity(items, products[1].id, "mother"), 3);
+  assert.equal(removeCartProduct(items, products[1].id, "daughter").length, 2);
+  const sources = [
+    { productId: "calca-36", personId: "mother", quantity: 1, price: "30", sourceIndex: 0 },
+    { productId: "calca-36", personId: "mother", quantity: 2, price: "40", sourceIndex: 1 },
+  ];
+  assert.deepEqual(setCartQuantity(sources, products[1], 3, 10, "mother"), sources);
+  const changed = setCartQuantity(sources, products[1], 4, 10, "mother");
+  assert.deepEqual(changed.map((item) => item.price), ["30", "40"]);
+  assert.deepEqual(changed.map((item) => item.quantity), [1, 3]);
+  assert.deepEqual(changed.map((item) => item.sourceIndex), [0, 1]);
 });

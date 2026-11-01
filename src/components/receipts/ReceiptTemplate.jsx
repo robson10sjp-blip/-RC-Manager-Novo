@@ -1,6 +1,6 @@
 import { forwardRef } from 'react';
 import { getRecordTripId, getTripOptionLabel } from '../../domain/tripIdentity.js';
-import { buildPersonReceiptRows } from '../../domain/salePeople.js';
+import { buildPersonReceiptRows, saleItemLabel } from '../../domain/salePeople.js';
 import './ReceiptTemplate.css';
 
 const SINGLE_PAGE_ROWS = 9;
@@ -158,11 +158,11 @@ const ReceiptTemplate = forwardRef(function ReceiptTemplate(
     );
 
     const price = Number(
-      item.price ||
-        item.unitPrice ||
-        item.salePrice ||
-        item.preco ||
-        item.valor ||
+      item.price ??
+        item.unitPrice ??
+        item.salePrice ??
+        item.preco ??
+        item.valor ??
         0
     );
 
@@ -208,16 +208,16 @@ const number = String(savedNumber || "")
     const quantity = Number(item.quantity || item.qty || item.quantidade || 1);
 
     const unitPrice = Number(
-      item.price ||
-        item.unitPrice ||
-        item.salePrice ||
-        item.preco ||
-        item.valor ||
+      item.price ??
+        item.unitPrice ??
+        item.salePrice ??
+        item.preco ??
+        item.valor ??
         0
     );
 
     const subtotal = Number(
-      item.subtotal || item.total || item.valorTotal || quantity * unitPrice
+      item.subtotal ?? item.total ?? item.valorTotal ?? quantity * unitPrice
     );
 
     const name =
@@ -228,7 +228,8 @@ const number = String(savedNumber || "")
       item.produto ||
       'Produto';
 
-    return { key: item.id || `${name}-${index}`, quantity, unitPrice, subtotal, name, personId: item.personId };
+    return { key: `${item.id || name}-${index}`, quantity, unitPrice, subtotal,
+      name: saleItemLabel({ ...item, name }), personId: item.personId };
   }), sale);
 
   const pages = paginateRows(rows);

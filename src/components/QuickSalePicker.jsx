@@ -3,7 +3,6 @@ import {
   getCartQuantity,
   getVariantStock,
   groupProductsForQuickSale,
-  removeCartProduct,
   searchQuickSaleGroups,
   setCartQuantity,
   summarizeCart,
@@ -25,6 +24,8 @@ export default function QuickSalePicker({
   disabled,
   onChange,
   onFinish,
+  personId = "",
+  people = [],
 }) {
   const [term, setTerm] = useState("");
 
@@ -46,7 +47,8 @@ export default function QuickSalePicker({
         items,
         product,
         quantity,
-        getVariantStock(product, originalQuantities)
+        getVariantStock(product, originalQuantities),
+        personId
       )
     );
   }
@@ -83,7 +85,8 @@ export default function QuickSalePicker({
             <ul className="qs-sizes">
               {group.variants.map((product) => {
                 const stock = getVariantStock(product, originalQuantities);
-                const inCart = getCartQuantity(items, product.id);
+                const inCart = getCartQuantity(items, product.id, personId);
+                const totalInCart = items.filter((item) => item.productId === product.id).reduce((sum, item) => sum + Number(item.quantity), 0);
                 const soldOut = stock <= 0;
 
                 return (
@@ -94,7 +97,7 @@ export default function QuickSalePicker({
                     <button
                       type="button"
                       className="qs-size-btn"
-                      disabled={disabled || soldOut || inCart >= stock}
+                      disabled={disabled || soldOut || totalInCart >= stock}
                       onClick={() => changeQuantity(product, inCart + 1)}
                       aria-label={`Adicionar tamanho ${product.size || "único"}`}
                     >
@@ -119,7 +122,7 @@ export default function QuickSalePicker({
                         <button
                           type="button"
                           onClick={() => changeQuantity(product, inCart + 1)}
-                          disabled={disabled || inCart >= stock}
+                          disabled={disabled || totalInCart >= stock}
                           aria-label="Aumentar quantidade"
                         >
                           +
@@ -146,19 +149,21 @@ export default function QuickSalePicker({
           <p className="qs-empty">Nenhuma peça selecionada.</p>
         ) : (
           <ul>
-            {cartLines.map((item) => {
+            {cartLines.map((item, index) => {
               const product = productById.get(item.productId);
               const stock = product
                 ? getVariantStock(product, originalQuantities)
                 : Number(item.quantity || 0);
 
               return (
-                <li key={item.productId}>
+                <li key={index}>
                   <div className="qs-cart-name">
-                    <strong>{product?.name || "Produto"}</strong>
+                    <strong>{item.name || product?.name || "Produto"}</strong>
                     <span>
                       {product?.code ? `Cód. ${product.code} • ` : ""}
-                      <b>Tam. {product?.size || "—"}</b> • {money(item.price)} cada
+                      <b>Tam. {item.size || product?.size || "—"}</b> • {money(item.price)} cada
+                      {(item.color || product?.color) ? ` • ${item.color || product.color}` : ""}
+                      {people.length > 0 ? ` • ${people.find((person) => person.id === item.personId)?.name || "Sem pessoa informada"}` : ""}
                     </span>
                   </div>
                   <div className="qs-stepper">
@@ -166,7 +171,9 @@ export default function QuickSalePicker({
                       type="button"
                       disabled={disabled || !product}
                       onClick={() =>
-                        changeQuantity(product, Number(item.quantity) - 1)
+                        onChange(items.flatMap((line) => line === item
+                          ? Number(item.quantity) > 1 ? [{ ...line, quantity: Number(line.quantity) - 1, subtotal: (Number(line.quantity) - 1) * Number(line.price) }] : []
+                          : [line]))
                       }
                       aria-label="Diminuir quantidade"
                     >
@@ -176,10 +183,10 @@ export default function QuickSalePicker({
                     <button
                       type="button"
                       disabled={
-                        disabled || !product || Number(item.quantity) >= stock
+                        disabled || !product || items.filter((line) => line.productId === item.productId).reduce((sum, line) => sum + Number(line.quantity), 0) >= stock
                       }
                       onClick={() =>
-                        changeQuantity(product, Number(item.quantity) + 1)
+                        onChange(items.map((line) => line === item ? { ...line, quantity: Number(line.quantity) + 1, subtotal: (Number(line.quantity) + 1) * Number(line.price) } : line))
                       }
                       aria-label="Aumentar quantidade"
                     >
@@ -194,7 +201,7 @@ export default function QuickSalePicker({
                     className="qs-remove"
                     disabled={disabled}
                     onClick={() =>
-                      onChange(removeCartProduct(items, item.productId))
+                      onChange(items.filter((line) => line !== item))
                     }
                     aria-label="Remover do carrinho"
                   >
