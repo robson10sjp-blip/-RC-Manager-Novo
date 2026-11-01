@@ -2263,7 +2263,7 @@ export default function SalesPage() {
       </div>
 
       {showReceipt && selectedReceiptSale && createPortal(
-        <div style={styles.receiptModalOverlay}>
+        <div className="sales-receipt-overlay" style={styles.receiptModalOverlay}>
           <div style={styles.receiptModal}>
             <div style={styles.receiptModalHeader}>
               <div>
@@ -2884,14 +2884,14 @@ const styles = {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    padding: "20px",
+    padding: "20px 20px var(--receipt-bottom-space, 20px)",
     background: "rgba(15, 23, 42, 0.82)",
     backdropFilter: "blur(4px)",
   },
 
   receiptModal: {
     width: "min(720px, 100%)",
-    maxHeight: "96vh",
+    maxHeight: "calc(100dvh - 20px - var(--receipt-bottom-space, 20px))",
     display: "flex",
     flexDirection: "column",
     overflow: "hidden",

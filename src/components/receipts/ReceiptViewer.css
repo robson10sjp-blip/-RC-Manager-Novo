@@ -88,11 +88,11 @@
 
 @media (max-width: 600px) {
   .receipt-viewer-overlay {
-    padding: 8px;
+    padding: 8px 8px max(80px, env(safe-area-inset-bottom));
   }
 
   .receipt-viewer {
-    max-height: calc(100dvh - 16px);
+    max-height: calc(100dvh - 8px - max(80px, env(safe-area-inset-bottom)));
   }
 
   .receipt-viewer-preview {

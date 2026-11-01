@@ -10,3 +10,6 @@ button.rcp-image-action {
   cursor: pointer;
 }
 button.rcp-image-action:disabled { opacity: 0.65; cursor: wait; }
+@media (max-width: 600px) {
+  .sales-receipt-overlay { --receipt-bottom-space: max(80px, env(safe-area-inset-bottom)); }
+}
