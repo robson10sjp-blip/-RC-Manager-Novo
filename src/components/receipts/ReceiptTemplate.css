@@ -336,6 +336,16 @@
   border-top: 3px solid #c9a227;
 }
 
+/* Somente a cópia usada na exportação PNG tem altura contínua. */
+.rcp-image { width: 148mm; gap: 0; }
+.rcp-image .rcp-page {
+  height: auto;
+  overflow: visible;
+  zoom: 1;
+  box-shadow: none;
+}
+.rcp-image .rcp-content { height: auto; padding-bottom: 24px; }
+
 /* ---------- Visualização em telas pequenas ---------- */
 @media screen and (max-width: 640px) { .rcp-page { zoom: 0.85; } }
 @media screen and (max-width: 560px) { .rcp-page { zoom: 0.72; } }

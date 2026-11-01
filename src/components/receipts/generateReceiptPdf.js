@@ -226,7 +226,7 @@ function canvasToBlob(canvas) {
   });
 }
 
-// Captura cada página do recibo (mesmo layout da visualização) e empilha em uma única imagem PNG.
+// Reorganiza somente a cópia da captura; visualização, PDF e impressão continuam A5.
 export async function buildReceiptImageFile(element, receiptNumber) {
   if (!element) throw new Error("Recibo não encontrado.");
 
@@ -249,31 +249,44 @@ export async function buildReceiptImageFile(element, receiptNumber) {
     )
   );
 
-  const canvases = [];
-  for (let index = 0; index < pages.length; index += 1) {
-    const canvas = await capturePage(pages[index], index);
-    if (!canvas.width || !canvas.height) {
-      throw new Error("Não foi possível desenhar o recibo.");
-    }
-    canvases.push(canvas);
+  const canvas = await withTimeout(
+    html2canvas(element, {
+      scale: getCaptureScale(),
+      useCORS: true,
+      backgroundColor: "#ffffff",
+      logging: false,
+      scrollX: 0,
+      scrollY: 0,
+      windowWidth: 1280,
+      onclone: (clonedDocument, clonedReceipt) => {
+        const clonedPages = Array.from(clonedReceipt.querySelectorAll("[data-rcp-page]"));
+        const firstPage = clonedPages[0];
+        const content = firstPage?.querySelector(".rcp-content");
+        const body = firstPage?.querySelector(".rcp-table tbody");
+        if (!content || !body) throw new Error("Não foi possível preparar a imagem do recibo.");
+
+        for (const page of clonedPages.slice(1)) {
+          page.querySelectorAll(".rcp-table tbody > tr").forEach((row) => body.appendChild(row));
+          page.querySelectorAll(".rcp-totals, .rcp-thanks, .rcp-signature-area")
+            .forEach((section) => content.appendChild(section));
+          page.remove();
+        }
+        clonedReceipt.querySelectorAll(".rcp-page-number").forEach((number) => number.remove());
+        clonedReceipt.classList.add("rcp-image");
+        clonedDocument.body.style.margin = "0";
+        clonedDocument.body.appendChild(clonedReceipt);
+        Object.assign(clonedReceipt.style, {
+          position: "absolute", top: "0", left: "0", margin: "0", zoom: "1",
+        });
+      },
+    }),
+    "Tempo esgotado ao gerar a imagem do recibo."
+  );
+  if (!canvas.width || !canvas.height) {
+    throw new Error("Não foi possível desenhar o recibo.");
   }
 
-  let finalCanvas = canvases[0];
-  if (canvases.length > 1) {
-    finalCanvas = document.createElement("canvas");
-    finalCanvas.width = Math.max(...canvases.map((c) => c.width));
-    finalCanvas.height = canvases.reduce((sum, c) => sum + c.height, 0);
-    const context = finalCanvas.getContext("2d");
-    context.fillStyle = "#ffffff";
-    context.fillRect(0, 0, finalCanvas.width, finalCanvas.height);
-    let offset = 0;
-    canvases.forEach((c) => {
-      context.drawImage(c, 0, offset);
-      offset += c.height;
-    });
-  }
-
-  const blob = await canvasToBlob(finalCanvas);
+  const blob = await canvasToBlob(canvas);
   return new File([blob], getReceiptImageFileName(receiptNumber), {
     type: "image/png",
   });
