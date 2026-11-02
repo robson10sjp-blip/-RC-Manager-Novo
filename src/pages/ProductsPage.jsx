@@ -26,6 +26,7 @@ import {
 } from "react-icons/lu";
 
 import { auth, db } from "../firebase/config";
+import { formatProductName } from "../domain/productName.js";
 import {
   addDoc,
   deleteDoc,
@@ -91,12 +92,15 @@ export default function ProductsPage() {
 
   useEffect(() => {
     let unsubscribeProducts = null;
+    let attemptedNameMigrations = new Set();
 
     const unsubscribeAuth = onAuthStateChanged(auth, (user) => {
       if (unsubscribeProducts) {
         unsubscribeProducts();
         unsubscribeProducts = null;
       }
+
+      attemptedNameMigrations = new Set();
 
       if (!user) {
         setProducts([]);
@@ -117,7 +121,31 @@ export default function ProductsPage() {
           const productsList = snapshot.docs.map((document) => ({
             id: document.id,
             ...document.data(),
+            name: formatProductName(document.data().name),
           }));
+
+          const productsToMigrate = snapshot.docs.filter((document) => {
+            const currentName = document.data().name;
+            const formattedName = formatProductName(currentName);
+            if (currentName === formattedName || attemptedNameMigrations.has(document.id)) {
+              return false;
+            }
+            attemptedNameMigrations.add(document.id);
+            return true;
+          });
+
+          if (productsToMigrate.length) {
+            Promise.all(
+              productsToMigrate.map((document) =>
+                updateDoc(doc(db, "users", user.uid, "products", document.id), {
+                  name: formatProductName(document.data().name),
+                })
+              )
+            ).catch((error) => {
+              console.error("Erro ao padronizar nomes dos produtos:", error);
+              alert(`Erro ao padronizar nomes dos produtos: ${error.message}`);
+            });
+          }
 
           productsList.sort((firstProduct, secondProduct) =>
             String(firstProduct.name || "").localeCompare(
@@ -288,7 +316,7 @@ export default function ProductsPage() {
 
       const productData = {
         code: form.code.trim(),
-        name: form.name.trim(),
+        name: formatProductName(form.name.trim()),
         category: form.category,
         size: form.size.trim(),
         color: form.color.trim(),

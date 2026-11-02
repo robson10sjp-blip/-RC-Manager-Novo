@@ -59,6 +59,10 @@
 - O build falha explicitamente se uma variavel obrigatoria faltar ou contiver um valor de exemplo. A mensagem mostra apenas nomes de variaveis, nunca valores.
 - O Service Worker usa atualizacao automatica e os arquivos de entrada do PWA exigem revalidacao HTTP. Nenhuma correcao requer apagar IndexedDB, login ou dados locais.
 
+## Produtos
+
+- Nomes sao salvos com a primeira letra de cada palavra em maiuscula, preservando siglas como `TXC` e `GG`. Ao abrir Produtos, nomes antigos sao atualizados somente no campo `name`; novos cadastros e edicoes seguem a mesma regra. Codigos, precos, estoque, vendas e regras do Firestore nao sao alterados.
+
 ## Fornecedores: cheques e correcoes
 
 - Compras e pagamentos de fornecedores continuam usando `users/{uid}/payables` e a subcolecao `payments`, compartilhadas com o Financeiro. Cheques emitidos ficam como obrigacao; somente a compensacao cria o pagamento no caixa, com ID deterministico compartilhado entre as telas para impedir duplicidade.

@@ -110,6 +110,7 @@ test("novo produto grava uma vez; produto duplicado é recusado", async () => {
   await executeAdminOperation(confirmed(text), { user, readOnly: false, products, api });
   assert.equal(api.calls.addDoc[0].path, "users/user-1/products");
   assert.equal(api.calls.addDoc[0].data.quantity, 5);
+  assert.equal(api.calls.addDoc[0].data.name, "Saia Midi");
 
   const duplicate = { ...confirmed(text), id: "outro", fields: { ...confirmed(text).fields, code: "V001" } };
   await assert.rejects(executeAdminOperation(duplicate, { user, readOnly: false, products, api }), { code: "duplicate_product" });

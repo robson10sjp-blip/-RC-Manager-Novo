@@ -3,6 +3,7 @@ import {
   validateNewProduct,
   validateStockEntry,
 } from "../domain/adminOperations.js";
+import { formatProductName } from "../domain/productName.js";
 
 export class AdminOperationError extends Error {
   constructor(message, code = "invalid") {
@@ -101,7 +102,7 @@ export async function executeAdminOperation(draft, { user, readOnly, products = 
     } else if (draft.type === "product") {
       await addDoc(collection(db, "users", user.uid, "products"), {
         code: values.code,
-        name: values.name,
+        name: formatProductName(values.name),
         category: values.category,
         size: values.size,
         color: values.color,
